@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system"
+version = "0.1.0"
+description = "Debian, Ubuntu and macOS workstation setup and portable user configuration"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["typer>=0.27.2,<1", "pydantic>=2.12,<3"]
+
+[project.scripts]
+setup-system = "setup_system.cli.main:app"
+
+[dependency-groups]
+dev = ["mypy>=2.3,<3", "pytest>=9,<10", "ruff>=0.16.4,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_system"]
+
+[tool.hatch.build.targets.wheel.force-include]
+assets = "setup_system/assets"
+manifests = "setup_system/manifests"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/setup_system", "bootstrap.py"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
+markers = ["unit: isolated unit checks", "integration: isolated system integration", "e2e: desktop checks"]

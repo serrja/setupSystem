@@ -1,0 +1,69 @@
+[ubuntu_26_04_x86_64]
+distribution = "ubuntu"
+version = "26.04"
+architecture = "x86_64"
+status = "implemented"
+desktop_verified = false
+
+[ubuntu_24_04_x86_64]
+distribution = "ubuntu"
+version = "24.04"
+architecture = "x86_64"
+status = "implemented"
+locally_verified = false
+
+[ubuntu_24_04_arm64]
+distribution = "ubuntu"
+version = "24.04"
+architecture = "arm64"
+status = "implemented"
+locally_verified = false
+terminalDev = "unsupported: archives not pinned"
+
+[ubuntu_26_04_arm64]
+distribution = "ubuntu"
+version = "26.04"
+architecture = "arm64"
+status = "implemented"
+desktop_verified = false
+terminalDev = "unsupported: archives not pinned"
+
+[debian_12_13_x86_64]
+distribution = "debian"
+versions = ["12", "13"]
+architecture = "x86_64"
+status = "implemented"
+locally_verified = false
+package_path = "explicit Debian provider using shared .deb/APT operations"
+
+[debian_12_13_arm64]
+distribution = "debian"
+versions = ["12", "13"]
+architecture = "arm64"
+status = "implemented"
+locally_verified = false
+terminalDev = "unsupported: archives not pinned"
+
+[macos_arm64]
+versions = ["15", "26", "27"]
+architecture = "arm64"
+status = "implemented"
+locally_verified = false
+package_path = "official release archive plus existing native Homebrew"
+
+[macos_intel]
+versions = ["15", "26", "27"]
+architecture = "x86_64"
+status = "implemented"
+locally_verified = false
+package_path = "official release archive plus existing Intel Homebrew (Tier 3)"
+
+[other_linux]
+status = "unsupported"
+
+[other_debian_family]
+status = "unsupported"
+reason = "ID_LIKE=debian and APT alone do not select an adapter"
+
+[windows]
+status = "unsupported"

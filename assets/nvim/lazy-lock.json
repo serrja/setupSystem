@@ -1,0 +1,10 @@
+{
+  "blink.cmp": {"branch": "v1", "commit": "78336bc89ee5365633bcf754d93df01678b5c08f"},
+  "conform.nvim": {"branch": "master", "commit": "016802de402556da54c36bd7359b441266b01cdd"},
+  "fzf-lua": {"branch": "main", "commit": "9405672f62767695d5f20db171336f7f4911ce86"},
+  "gitsigns.nvim": {"branch": "main", "commit": "fd780920613e541cbdfac41bf711583ed49f9249"},
+  "nvim-lspconfig": {"branch": "master", "commit": "ac062d0d01c019c0dbdb798968f3e5d8b35c3853"},
+  "nvim-treesitter": {"branch": "main", "commit": "ca581c3436fc2b236847f5b739ebc263739e5ca6"},
+  "oil.nvim": {"branch": "master", "commit": "d3733d933833a0e59b813ecec99341527adf0c28"},
+  "which-key.nvim": {"branch": "main", "commit": "3aab2147e74890957785941f0c1ad87d0a44c15a"}
+}

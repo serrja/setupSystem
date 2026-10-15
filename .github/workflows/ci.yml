@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@5a7eac68fb9809dea845d802897dc5c723910fa3 # v7.1.3
+        with:
+          version: "0.12.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv python install 3.14
+      - run: uv lock --check
+      - run: uv sync --locked --python 3.14
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked mypy
+      - run: uv run --locked python -m compileall -q bootstrap.py src
+      - run: python3 bootstrap.py --help
+      - run: python3 bootstrap.py plan
+      - run: uv run --locked pytest -q
+      - run: uv build --wheel

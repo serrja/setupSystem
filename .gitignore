@@ -1,0 +1,11 @@
+backups/
+codex/completions/
+__pycache__/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+# Legacy local material is not part of the portable installer.
+terminal/
+git/config

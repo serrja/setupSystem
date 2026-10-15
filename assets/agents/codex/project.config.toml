@@ -1,0 +1,22 @@
+default_permissions = "project"
+
+[permissions.project]
+description = "Edit only the selected project root without command network access."
+extends = ":workspace"
+
+[permissions.project.filesystem]
+":root" = "deny"
+":minimal" = "read"
+"~/.ssh" = "deny"
+"~/.gnupg" = "deny"
+"~/.aws" = "deny"
+"~/.codex/auth.json" = "deny"
+
+[permissions.project.filesystem.":workspace_roots"]
+"." = "write"
+"*.env" = "deny"
+"*/*.env" = "deny"
+"*/*/*.env" = "deny"
+
+[permissions.project.network]
+enabled = false

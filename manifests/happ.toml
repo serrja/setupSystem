@@ -1,0 +1,19 @@
+version = "4.5.4"
+packageVersion = "4.5.4-333"
+source = "https://github.com/Happ-proxy/happ-desktop/releases/tag/4.5.4"
+publisher = "FlyFrog LLC"
+verification = "GitHub release asset digest and local package metadata; no detached publisher signature was found"
+
+[linux.amd64]
+url = "https://github.com/Happ-proxy/happ-desktop/releases/download/4.5.4/Happ.linux.x64.deb"
+sha256 = "bdc9bb479c519a74faf6b195c10b29eeae094a36c77fb1bd1d2b6e243f51d954"
+packageArchitecture = "amd64"
+
+[linux.arm64]
+url = "https://github.com/Happ-proxy/happ-desktop/releases/download/4.5.4/Happ.linux.arm64.deb"
+sha256 = "ac7902dcf2494c97b109133848c7abd36d24a105aa2732d859fd48d4617af7a1"
+packageArchitecture = "arm64"
+
+[macos.universal]
+url = "https://github.com/Happ-proxy/happ-desktop/releases/download/4.5.4/Happ.macOS.universal.dmg"
+sha256 = "c3c583196968956479755e60cdc5790186ce524df431e31128c17447930b40c8"

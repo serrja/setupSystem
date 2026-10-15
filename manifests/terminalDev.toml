@@ -1,0 +1,89 @@
+version = 1
+
+[neovim]
+version = "0.12.6"
+linux_x86_64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz"
+linux_x86_64_sha256 = "474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87"
+macos_arm64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-arm64.tar.gz"
+macos_arm64_sha256 = "1dbd148222b051ba6c307c4d17a318ed083df018a4f6a5a0ce46955ffc9ab87b"
+macos_x86_64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-x86_64.tar.gz"
+macos_x86_64_sha256 = "481424f1dbc85f637d57e47d27d042aa9c883e5a4fe9ee64fc4ee9573b221998"
+
+[plugins.lazy]
+repo = "folke/lazy.nvim"
+commit = "306a05526ada86a7b30af95c5cc81ffba93fef97"
+
+[plugins.nvim-lspconfig]
+repo = "neovim/nvim-lspconfig"
+commit = "ac062d0d01c019c0dbdb798968f3e5d8b35c3853"
+
+[plugins."blink.cmp"]
+repo = "Saghen/blink.cmp"
+commit = "78336bc89ee5365633bcf754d93df01678b5c08f"
+
+[plugins."fzf-lua"]
+repo = "ibhagwan/fzf-lua"
+commit = "9405672f62767695d5f20db171336f7f4911ce86"
+
+[plugins."oil.nvim"]
+repo = "stevearc/oil.nvim"
+commit = "d3733d933833a0e59b813ecec99341527adf0c28"
+
+[plugins."conform.nvim"]
+repo = "stevearc/conform.nvim"
+commit = "016802de402556da54c36bd7359b441266b01cdd"
+
+[plugins."gitsigns.nvim"]
+repo = "lewis6991/gitsigns.nvim"
+commit = "fd780920613e541cbdfac41bf711583ed49f9249"
+
+[plugins."which-key.nvim"]
+repo = "folke/which-key.nvim"
+commit = "3aab2147e74890957785941f0c1ad87d0a44c15a"
+
+[plugins.nvim-treesitter]
+repo = "nvim-treesitter/nvim-treesitter"
+commit = "ca581c3436fc2b236847f5b739ebc263739e5ca6"
+
+[tools]
+ubuntu_apt = ["zsh", "ripgrep", "fzf", "fd-find", "tmux", "clangd"]
+debian_apt = ["zsh", "ripgrep", "fzf", "fd-find", "tmux", "clangd"]
+macos_brew = ["ripgrep", "fzf", "fd", "tmux", "llvm"]
+
+[userBinary.rg]
+version = "15.2.0"
+url = "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz"
+sha256 = "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
+
+[userBinary.fzf]
+version = "0.74.5"
+url = "https://github.com/junegunn/fzf/releases/download/v0.74.5/fzf-0.74.5-linux_amd64.tar.gz"
+sha256 = "d47d7f882972c7d674dbbba998ffa4116e68379616ffac7695d0671e9a722c5f"
+
+[languageTools]
+basedpyright = "1.40.2"
+ruff = "0.17.1"
+cmake = "3.31.10"
+ninja = "1.13.2"
+
+[parsers]
+# Revisions are pinned by the nvim-treesitter commit above.
+languages = ["python", "lua", "cpp", "json", "markdown", "bash", "toml", "yaml"]
+
+[archiveTools.stylua]
+version = "2.6.0"
+linux_x86_64_url = "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-linux-x86_64-musl.zip"
+linux_x86_64_sha256 = "48ee7db28346f96f4bd545e190ab080a88a7b5a664e97649cf5d5c60426f402d"
+macos_arm64_url = "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-macos-aarch64.zip"
+macos_arm64_sha256 = "dab9b66d340ca5ffc8225211f1dcf89b84783e09b8cbec8c518497eba81f3c42"
+macos_x86_64_url = "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-macos-x86_64.zip"
+macos_x86_64_sha256 = "90779aa873837b2dff8eb3361bd27950303914c24265a59cae0a0d0629d71585"
+
+[archiveTools.tree-sitter]
+version = "0.27.1"
+linux_x86_64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-x64.zip"
+linux_x86_64_sha256 = "c7e686aec16ba17053c2e6fd87600ccb10cf8ba3d055756b17e756d538e11114"
+macos_arm64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-macos-arm64.zip"
+macos_arm64_sha256 = "6362cda144b6e45d92c739d4eafb7e3c322f0545b0b959b4f7ca7d53fb3300fa"
+macos_x86_64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-macos-x64.zip"
+macos_x86_64_sha256 = "fd7e60f57b6e00caecaa055b94da20d7875b05cef2277831588546e08ab8bb29"

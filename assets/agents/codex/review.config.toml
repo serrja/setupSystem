@@ -1,0 +1,22 @@
+default_permissions = "review"
+
+[permissions.review]
+description = "Read the current project and write no source files."
+extends = ":read-only"
+
+[permissions.review.filesystem]
+":root" = "deny"
+":minimal" = "read"
+"~/.ssh" = "deny"
+"~/.gnupg" = "deny"
+"~/.aws" = "deny"
+"~/.codex/auth.json" = "deny"
+
+[permissions.review.filesystem.":workspace_roots"]
+"." = "read"
+"*.env" = "deny"
+"*/*.env" = "deny"
+"*/*/*.env" = "deny"
+
+[permissions.review.network]
+enabled = false

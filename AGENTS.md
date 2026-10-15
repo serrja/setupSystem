@@ -1,0 +1,3 @@
+# setupSystem
+
+This repository owns portable Debian, Ubuntu and macOS workstation configuration, not application business logic. Use English technical docs and concise emoji headings; the practical Neovim guide is Russian. Follow `docs/naming.md` for new owned names and preserve external contracts. Keep `bootstrap.py` stdlib-only and reject unsupported platforms before any side effect. `plan` is strictly read-only. Preserve user fields and local data; back up before replacing managed files. Never source installation code from Zsh or Neovim startup, change the login shell, add a user to the Docker group, or promote a policy file into a sandbox claim. Run narrow syntax, type, lock and dry-run checks after edits.

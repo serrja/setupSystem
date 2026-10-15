@@ -1,0 +1,33 @@
+default_permissions = "network"
+
+[features]
+network_proxy = true
+
+[permissions.network]
+description = "Read selected project and reach approved source/documentation hosts."
+extends = ":read-only"
+
+[permissions.network.filesystem]
+":root" = "deny"
+":minimal" = "read"
+"~/.ssh" = "deny"
+"~/.gnupg" = "deny"
+"~/.aws" = "deny"
+"~/.codex/auth.json" = "deny"
+
+[permissions.network.filesystem.":workspace_roots"]
+"." = "read"
+"*.env" = "deny"
+"*/*.env" = "deny"
+"*/*/*.env" = "deny"
+
+[permissions.network.network]
+enabled = true
+
+[permissions.network.network.domains]
+"github.com" = "allow"
+"*.github.com" = "allow"
+"docs.python.org" = "allow"
+"docs.astral.sh" = "allow"
+"pypi.org" = "allow"
+"files.pythonhosted.org" = "allow"
