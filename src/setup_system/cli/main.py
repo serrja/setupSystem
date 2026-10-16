@@ -29,6 +29,7 @@ from setup_system.application.happ import (
 )
 from setup_system.application.projectLayout import (
     activeProjects,
+    applyMigration,
     formatMigrationPlan,
     loadLayout,
     planMigration,
@@ -591,6 +592,44 @@ def projectsPlanMigration() -> None:
     """Inspect old and target paths without creating directories or touching Git."""
     layout = loadLayout(ROOT)
     typer.echo(formatMigrationPlan(layout, planMigration(layout)))
+
+
+@projectsApp.command("move")
+def projectsMove(
+    name: Annotated[str, typer.Option(help="Exact owner/project ID from projects list.")],
+    backupManifest: Annotated[
+        Path,
+        typer.Option(
+            "--backup-manifest", help="Private manifest for the current full-tree Git backup."
+        ),
+    ],
+    yes: Annotated[bool, typer.Option("--yes", help="Apply one checked relocation.")] = False,
+    acceptOwnerReview: Annotated[
+        bool, typer.Option("--accept-owner-review", help="Keep a reviewed foreign-owner origin.")
+    ] = False,
+) -> None:
+    """Move one ordinary checkout on the same filesystem after backup verification."""
+    layout = loadLayout(ROOT)
+    moves = {move.project.id: move for move in planMigration(layout)}
+    move = moves.get(name)
+    if move is None:
+        raise typer.BadParameter("Choose one exact catalog project ID")
+    typer.echo(f"{name}: {move.source or 'absent'} -> {move.project.target} [{move.status}]")
+    if not yes:
+        raise typer.Exit(2)
+    stateRoot = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+    try:
+        resultPath = applyMigration(
+            layout,
+            name,
+            backupManifest=backupManifest,
+            resultDirectory=stateRoot / "setup-system/moves",
+            acceptOwnerReview=acceptOwnerReview,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        typer.echo(f"relocation blocked: {exc}", err=True)
+        raise typer.Exit(4) from exc
+    typer.echo(f"relocation verified: {resultPath}")
 
 
 @projectsApp.command("prepare")

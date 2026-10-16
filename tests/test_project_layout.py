@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,7 @@ import pytest
 from setup_system.application.configuration import applyConfiguration
 from setup_system.application.projectLayout import (
     activeProjects,
+    applyMigration,
     loadLayout,
     planMigration,
     prepareOwnerDirectories,
@@ -78,6 +82,77 @@ def test_planMigrationKeepsDirtyCheckoutUntouched(tmp_path: Path) -> None:
         == beforeFiles
     )
     assert not (home / "Projects").exists()
+
+
+def test_applyMigrationPreservesGitAndDirtyFiles(tmp_path: Path) -> None:
+    home, root = _layout(tmp_path)
+    source = home / "example"
+    source.mkdir()
+    _git(source, "init", "-q", "-b", "main")
+    (source / "README.md").write_text("original\n")
+    _git(source, "add", "README.md")
+    _git(
+        source,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-qm",
+        "initial",
+    )
+    (source / "README.md").write_text("edited\n")
+    (source / "staged.txt").write_text("staged\n")
+    _git(source, "add", "staged.txt")
+    (source / "untracked.bin").write_bytes(b"\x00\xff")
+    layout = loadLayout(root, home=home)
+    target = home / "Projects/serrja/example"
+    target.parent.mkdir(parents=True)
+    archive = tmp_path / "backup.tar"
+    with tarfile.open(archive, "w") as writer:
+        writer.add(source, arcname="repo")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def output(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(source), *args]).decode()
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "repos": [
+                    {
+                        "root": str(source),
+                        "archive": archive.name,
+                        "sha256": digest,
+                        "head": output("rev-parse", "HEAD").strip(),
+                        "branch": "main",
+                        "refs": output("show-ref"),
+                        "status": output("status", "--porcelain=v1", "--untracked-files=all"),
+                        "indexSha256": hashlib.sha256(
+                            (source / ".git/index").read_bytes()
+                        ).hexdigest(),
+                    }
+                ],
+            }
+        )
+    )
+    beforeIndex = (source / ".git/index").read_bytes()
+    result = applyMigration(
+        layout,
+        "serrja/example",
+        backupManifest=manifest,
+        resultDirectory=tmp_path / "privateResults",
+        currentDirectory=tmp_path,
+    )
+
+    assert result.is_file()
+    assert json.loads(result.read_text())["status"] == "verified"
+    assert not source.exists()
+    assert (target / ".git/index").read_bytes() == beforeIndex
+    assert (target / "README.md").read_text() == "edited\n"
+    assert (target / "untracked.bin").read_bytes() == b"\x00\xff"
 
 
 def test_planMigrationReportsUnbornCheckoutForReview(tmp_path: Path) -> None:

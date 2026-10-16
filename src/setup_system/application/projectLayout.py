@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -368,6 +370,124 @@ def formatMigrationPlan(layout: ProjectLayout, moves: tuple[MovePlan, ...]) -> s
                 f"unstagedPatch={git.unstagedDigest}"
             )
     return "\n".join(lines)
+
+
+def _fileDigest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _backupRecord(manifestPath: Path, source: Path, snapshot: GitSnapshot) -> None:
+    """Check the private full-tree archive before changing a checkout path."""
+    manifest = json.loads(manifestPath.read_text(encoding="utf-8"))
+    if manifest.get("schemaVersion") != 1:
+        raise ValueError("Unsupported relocation backup manifest")
+    matches = [record for record in manifest.get("repos", []) if record.get("root") == str(source)]
+    if len(matches) != 1:
+        raise ValueError("Backup has no unique record for this exact source")
+    record = matches[0]
+    archiveName = record["archive"]
+    if Path(archiveName).name != archiveName or not archiveName.endswith(".tar"):
+        raise ValueError("Unsafe backup archive name")
+    archive = manifestPath.parent / archiveName
+    if archive.is_symlink() or not archive.is_file() or _fileDigest(archive) != record["sha256"]:
+        raise ValueError("Backup archive is missing or its digest differs")
+    if (
+        record["head"] != snapshot.head
+        or record["branch"] != snapshot.branch
+        or ("indexSha256" in record and record["indexSha256"] != _fileDigest(source / ".git/index"))
+        or record["refs"] != _git(source, "show-ref").decode()
+        or record["status"]
+        != _git(source, "status", "--porcelain=v1", "--untracked-files=all").decode()
+    ):
+        raise ValueError("Checkout changed after backup; take a fresh snapshot")
+
+
+def applyMigration(
+    layout: ProjectLayout,
+    projectId: str,
+    *,
+    backupManifest: Path,
+    resultDirectory: Path,
+    currentDirectory: Path | None = None,
+    acceptOwnerReview: bool = False,
+) -> Path:
+    """Atomically relocate one ordinary checkout after a verified private backup."""
+    matches = [
+        move
+        for move in planMigration(layout, currentDirectory=currentDirectory)
+        if move.project.id == projectId
+    ]
+    if len(matches) != 1:
+        raise ValueError("Choose one exact project ID from the catalog")
+    move = matches[0]
+    if move.status == "placed":
+        return move.project.target
+    if move.status == "review" and not (
+        acceptOwnerReview
+        and move.project.reviewOwner
+        and move.reason == "remote owner differs from proposed owner group"
+    ):
+        raise ValueError(f"Relocation needs review: {move.reason}")
+    if (
+        move.status not in {"backupRequired", "review"}
+        or move.source is None
+        or move.snapshot is None
+    ):
+        raise ValueError(f"Relocation is not ready: {move.status}: {move.reason}")
+    source, target, before = move.source, move.project.target, move.snapshot
+    if not target.parent.is_dir() or target.exists() or target.is_symlink():
+        raise ValueError("Destination owner directory must exist and target must be absent")
+    if source.stat().st_dev != target.parent.stat().st_dev:
+        raise ValueError("Cross-filesystem move requires a separate copy/verify/switch procedure")
+    if (
+        before.gitMetadata != "directory"
+        or before.worktrees != 1
+        or before.gitlinks
+        or before.unmerged
+    ):
+        raise ValueError("Linked worktree, submodule or unmerged index needs separate Git review")
+    if move.project.origin is not None and before.origin != move.project.origin:
+        raise ValueError("Origin differs from catalog")
+    _backupRecord(backupManifest, source, before)
+    sourceInode = source.stat().st_ino
+    beforeRefs = _git(source, "show-ref")
+    beforeStatus = _git(source, "status", "--porcelain=v1", "--untracked-files=all")
+    resultDirectory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if resultDirectory.is_symlink() or (resultDirectory.stat().st_mode & 0o077):
+        raise ValueError("Relocation result directory must be private")
+    resultPath = resultDirectory / f"{projectId.replace('/', '-')}-{int(time.time())}.json"
+    if resultPath.exists():
+        raise ValueError("Relocation result path already exists")
+    result = {
+        "project": projectId,
+        "source": str(source),
+        "target": str(target),
+        "backupManifest": str(backupManifest),
+        "head": before.head,
+        "branch": before.branch,
+        "origin": before.origin,
+        "status": "moving",
+    }
+    resultPath.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    resultPath.chmod(0o600)
+    os.rename(source, target)
+    after = _snapshot(target)
+    verified = (
+        target.stat().st_ino == sourceInode
+        and not source.exists()
+        and before == after
+        and beforeRefs == _git(target, "show-ref")
+        and beforeStatus == _git(target, "status", "--porcelain=v1", "--untracked-files=all")
+    )
+    result["status"] = "verified" if verified else "verificationFailed"
+    resultPath.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if not verified:
+        raise RuntimeError(f"Moved checkout needs manual recovery; inspect {resultPath}")
+    return resultPath
 
 
 def prepareOwnerDirectories(layout: ProjectLayout) -> tuple[Path, ...]:
