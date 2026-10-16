@@ -219,6 +219,11 @@ def restore(
     ] = False,
 ) -> None:
     """Verify a backup and optionally restore its files."""
+    if applyChanges:
+        platformAdapter = createPlan(ROOT).platform
+        if not platformAdapter.implemented:
+            typer.echo(platformAdapter.reason, err=True)
+            raise typer.Exit(4)
     if applyChanges and not yes:
         typer.echo("Restore requires --apply --yes.", err=True)
         raise typer.Exit(2)
