@@ -1,0 +1,95 @@
+# This is the sole catalog for owned checkout locations. Paths are literal $HOME
+# references, not shell expressions. A declared destination does not create a repo.
+schemaVersion = 1
+projectsRoot = "$HOME/Projects"
+ownerGroups = ["serrja", "pokerlost"]
+
+[[project]]
+id = "serrja/setupSystem"
+legacyPath = "$HOME/setupSystem"
+origin = "git@github.com:serrja/setupSystem.git"
+state = "existing"
+
+[[project]]
+id = "serrja/pythonTemplate"
+legacyPath = "$HOME/Projects/projectTemplates"
+origin = "git@github.com:serrja/projectTemplates.git"
+state = "existing"
+
+[[project]]
+id = "serrja/fastApiTemplate"
+legacyPath = "$HOME/Projects/fastApiTemplate"
+state = "existing"
+
+[[project]]
+id = "serrja/jobdesk"
+legacyPath = "$HOME/Projects/jobdesk"
+origin = "git@github.com:mloso/jobdesk.git"
+state = "existing"
+reviewOwner = true
+
+[[project]]
+id = "serrja/serrja"
+state = "optional"
+
+[[project]]
+id = "pokerlost/.github"
+legacyPath = "$HOME/pokerlost/organizationProfile"
+origin = "git@github.com:pokerlost/.github.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/pokerlost"
+legacyPath = "$HOME/pokerlost/overview"
+origin = "git@github.com:pokerlost/pokerlost.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/serviceTemplate"
+legacyPath = "$HOME/pokerlost/serviceTemplate"
+origin = "git@github.com:pokerlost/serviceTemplate.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/pypokerlost"
+legacyPath = "$HOME/pokerlost/pypokerlost"
+origin = "git@github.com:pokerlost/pypokerlost.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/pokerengine"
+legacyPath = "$HOME/pokerlost/pokerengine"
+origin = "git@github.com:pokerlost/pokerengine.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/authService"
+legacyPath = "$HOME/pokerlost/authService"
+origin = "git@github.com:pokerlost/authService.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/accountsService"
+legacyPath = "$HOME/pokerlost/accountsService"
+origin = "git@github.com:mloso/accountsService.git"
+state = "existing"
+reviewOwner = true
+
+[[project]]
+id = "pokerlost/virtualMoney"
+state = "sourcePending"
+
+[[project]]
+id = "pokerlost/pokerService"
+legacyPath = "$HOME/pokerlost/pokerService"
+state = "existing"
+
+[[project]]
+id = "pokerlost/pokerClient"
+legacyPath = "$HOME/pokerlost/pokerClient"
+state = "existing"
+
+[[project]]
+id = "pokerlost/cryptoService"
+legacyPath = "$HOME/pokerlost/cryptoService"
+state = "existing"

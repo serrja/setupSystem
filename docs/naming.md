@@ -9,6 +9,7 @@ Python style here is an explicit owner preference, not a claim about PEP 8. Pres
 | Old name | New name | References and check |
 | --- | --- | --- |
 | Earlier `project-templates` candidate | `projectTemplates` | Local folder and GitHub repository use the new name; four profile render/build checks passed. |
+| Current `projectTemplates` checkout | `pythonTemplate` logical/local target | The existing remote remains `serrja/projectTemplates`; the directory move and template split are pending. |
 | Copier `project_name` answer | `projectName` | `copier.yml`, every Jinja file and generated answers; four renders. |
 | Copier `package_name` derived answer | `packageName` | Template path, package metadata, entrypoints, docs, CI; four renders/builds. |
 | New vault section labels without a path convention | `самоОбучение`, `моиПроекты`, `повседневныеДела` paths | `Главная.md`, `project.json`, section links; full-path link check. Existing study paths stay unchanged. |

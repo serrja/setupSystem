@@ -27,6 +27,13 @@ from setup_system.application.happ import (
     restoreHapp,
     setupHapp,
 )
+from setup_system.application.projectLayout import (
+    activeProjects,
+    formatMigrationPlan,
+    loadLayout,
+    planMigration,
+    prepareOwnerDirectories,
+)
 from setup_system.application.terminalDev import (
     installArchiveTool,
     installLanguageTools,
@@ -502,12 +509,26 @@ def agentsLaunch(
     """Open Codex in one allowlisted project root with a named permission profile."""
     if mode not in {"review", "project", "network"}:
         raise typer.BadParameter("Choose review, project or network")
-    config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "agents/scopes.toml"
-    data = tomllib.loads(config.read_text())
-    record = data.get("scope", {}).get(scope)
-    if not record:
-        raise typer.BadParameter("Unknown local scope")
-    root = Path(record["path"]).resolve()
+    layout = loadLayout(ROOT)
+    try:
+        projects = activeProjects(layout)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if scope in {project.id for project in layout.projects}:
+        root = projects.get(scope)
+        if root is None:
+            raise typer.BadParameter("Catalog project is missing or has no exact Git root")
+    else:
+        if scope in {project.id.split("/", 1)[1] for project in layout.projects}:
+            raise typer.BadParameter("Use the owner/project ID from projects list")
+        config = (
+            Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "agents/scopes.toml"
+        )
+        data = tomllib.loads(config.read_text()) if config.is_file() else {}
+        record = data.get("scope", {}).get(scope)
+        if not record:
+            raise typer.BadParameter("Unknown local scope")
+        root = Path(record["path"]).resolve()
     if not root.is_dir() or root == Path.home().resolve():
         raise typer.BadParameter("Scope is missing or too broad")
     git = subprocess.run(
@@ -529,33 +550,118 @@ def agentsLaunch(
 
 @templatesApp.command("list")
 def templatesList() -> None:
-    """Show the separate generic template owner when it exists."""
-    location = Path.home() / "Projects/projectTemplates"
-    typer.echo(f"Generic templates: {location if location.is_dir() else 'not installed'}")
+    """Show the two declared generic template sources and their local state."""
+    layout = loadLayout(ROOT)
+    projects = activeProjects(layout)
+    for name in ("serrja/pythonTemplate", "serrja/fastApiTemplate"):
+        typer.echo(f"{name}: {projects.get(name, 'not installed')}")
+
+
+@templatesApp.command("path")
+def templatesPath(
+    name: Annotated[str, typer.Option(help="pythonTemplate or fastApiTemplate.")],
+) -> None:
+    """Resolve an existing template checkout from the shared project catalog."""
+    if name not in {"pythonTemplate", "fastApiTemplate"}:
+        raise typer.BadParameter("Choose pythonTemplate or fastApiTemplate")
+    source = activeProjects(loadLayout(ROOT)).get(f"serrja/{name}")
+    if source is None:
+        typer.echo("template source is not installed", err=True)
+        raise typer.Exit(4)
+    typer.echo(str(source))
 
 
 def _discoverProjects() -> dict[str, Path]:
-    home = Path.home()
-    result: dict[str, Path] = {}
-    for rootName in ("Projects", "pokerlost"):
-        root = home / rootName
-        if not root.is_dir() or root.is_symlink():
-            continue
-        for child in root.iterdir():
-            if child.is_dir() and not child.is_symlink() and (child / ".git").exists():
-                result[f"{rootName}/{child.name}"] = child
-    for name in ("setupSystem", "Projects/projectTemplates"):
-        candidate = home / name
-        if candidate.is_dir() and not candidate.is_symlink():
-            result[name] = candidate
-    return dict(sorted(result.items()))
+    return dict(sorted(activeProjects(loadLayout(ROOT)).items()))
 
 
 @projectsApp.command("list")
 def projectsList() -> None:
-    """Discover bounded local roots without scanning the home or vault."""
-    for name, path in _discoverProjects().items():
+    """List exact owned Git roots from the canonical project catalog."""
+    try:
+        projects = _discoverProjects()
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    for name, path in projects.items():
         typer.echo(f"{name}: {path}")
+
+
+@projectsApp.command("planMigration")
+def projectsPlanMigration() -> None:
+    """Inspect old and target paths without creating directories or touching Git."""
+    layout = loadLayout(ROOT)
+    typer.echo(formatMigrationPlan(layout, planMigration(layout)))
+
+
+@projectsApp.command("prepare")
+def projectsPrepare(
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Create only owner directories on Debian.")
+    ] = False,
+) -> None:
+    """Explicitly prepare the projects root and owner groups on supported Debian."""
+    from setup_system.planning import detectPlatform
+
+    platform = detectPlatform()
+    if not platform.implemented:
+        typer.echo(platform.reason, err=True)
+        raise typer.Exit(4)
+    layout = loadLayout(ROOT)
+    if not yes:
+        for path in (
+            layout.projectsRoot,
+            *(layout.projectsRoot / group for group in layout.ownerGroups),
+        ):
+            typer.echo(f"would create if absent: {path}")
+        raise typer.Exit(2)
+    try:
+        for path in prepareOwnerDirectories(layout):
+            typer.echo(f"present: {path}")
+    except (OSError, ValueError) as exc:
+        typer.echo(f"layout blocked: {exc}", err=True)
+        raise typer.Exit(4) from exc
+
+
+def _chooseProject(projects: dict[str, Path], name: str | None) -> Path | None:
+    if name is None:
+        if not sys.stdin.isatty():
+            raise typer.BadParameter("Pass --name when stdin is not interactive")
+        selector = shutil.which("fzf")
+        if selector is not None:
+            selected = subprocess.run(
+                [selector, "--prompt", "Project> "],
+                input="\n".join(projects) + "\n",
+                stdout=subprocess.PIPE,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            name = selected.stdout.strip() if selected.returncode == 0 else ""
+        else:
+            for key in projects:
+                typer.echo(key, err=True)
+            sys.stderr.write("Project (empty cancels): ")
+            sys.stderr.flush()
+            name = sys.stdin.readline().strip()
+        if not name:
+            return None
+    root = projects.get(name)
+    if root is None:
+        raise typer.BadParameter("Choose an exact name from projects list")
+    return root
+
+
+@projectsApp.command("path")
+def projectsPath(
+    name: Annotated[str | None, typer.Option(help="Exact name from projects list.")] = None,
+) -> None:
+    """Print one selected path for a shell function without changing the shell cwd."""
+    try:
+        projectRoot = _chooseProject(_discoverProjects(), name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if projectRoot is not None:
+        typer.echo(str(projectRoot))
 
 
 @projectsApp.command("open")
@@ -564,20 +670,13 @@ def projectsOpen(
     tmux: Annotated[bool, typer.Option(help="Open in a named tmux session.")] = False,
 ) -> None:
     """Launch Neovim from one selected project root."""
-    projects = _discoverProjects()
-    if name is None:
-        for key in projects:
-            typer.echo(key)
-        try:
-            name = typer.prompt("Project (empty cancels)", default="", show_default=False)
-        except (EOFError, KeyboardInterrupt):
-            raise typer.Exit(2) from None
-        if not name:
-            typer.echo("cancelled")
-            return
-    projectRoot = projects.get(name)
+    try:
+        projectRoot = _chooseProject(_discoverProjects(), name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     if projectRoot is None:
-        raise typer.BadParameter("Choose an exact name from projects list")
+        typer.echo("cancelled")
+        return
     editor = Path.home() / ".local/bin/nvim"
     if not editor.is_file() and not editor.is_symlink():
         raise typer.BadParameter("Managed Neovim is missing; run apply --profile terminalDev")
@@ -585,7 +684,8 @@ def projectsOpen(
         command = shutil.which("tmux")
         if command is None:
             raise typer.BadParameter("tmux is unavailable")
-        sessionName = "dev-" + "".join(character for character in name if character.isalnum())[:30]
+        label = f"{projectRoot.parent.name}-{projectRoot.name}"
+        sessionName = "dev-" + "".join(character for character in label if character.isalnum())[:30]
         exists = subprocess.run([command, "has-session", "-t", sessionName], timeout=5, check=False)
         if exists.returncode:
             subprocess.run(

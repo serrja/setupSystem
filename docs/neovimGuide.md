@@ -7,7 +7,7 @@
 ```bash
 setup-system doctor --profile terminalDev
 setup-system projects list
-setup-system projects open --name Projects/jobdesk
+setup-system projects open --name serrja/jobdesk
 ```
 
 Для другого проекта подставьте его точное имя из списка. Без `--name` команда предложит выбор; пустой ответ отменяет запуск. `--tmux` создаёт или подключает отдельную сессию, если `tmux` установлен; при его отсутствии команда сообщает об ошибке. Проекты открываются из конкретного корня; `.env` и `.envrc` не исполняются.
@@ -35,7 +35,7 @@ setup-system projects open --name Projects/jobdesk
 
 ## 🔎 Обычная работа
 
-1. Выполните `setup-system projects list`, затем `setup-system projects open --name Projects/jobdesk`. В Neovim нажмите `Space ff`, наберите часть имени файла и Enter.
+1. Выполните `setup-system projects list`, затем `setup-system projects open --name serrja/jobdesk`. В Neovim нажмите `Space ff`, наберите часть имени файла и Enter.
 2. Откройте Python-файл. `gd` перейдёт к определению, когда запущен basedpyright. `gr` покажет ссылки; `Space rn` переименует символ через LSP. Перед сохранением просмотрите изменения. LSP выбирает `.venv/bin/python` из открытого корня, если он существует; окружение не создаётся автоматически.
 3. Нажмите `Space sv` для второго окна, `Ctrl-w w` для перехода между окнами. `:ls` перечислит буферы, `:bnext` перейдёт к следующему. `Space tt` откроет терминал, где можно выполнить штатную команду из README проекта. Выход из terminal mode — два `Esc`.
 4. Посмотрите изменение `Space gh` или `Space gs`, затем в терминале выполните `git diff --check`, `git diff` и адресный `git add <path>`. Commit и push выполняйте вручную после проверки staged diff и outgoing range; редактор их не делает автоматически.

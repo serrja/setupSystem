@@ -101,6 +101,7 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
         )
     home = Path.home()
     xdgConfig = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+    xdgState = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
     codexHome = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     targets = (
         home / ".zshrc",
@@ -109,6 +110,7 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
         codexHome / "AGENTS.md",
         codexHome / "config.toml",
         xdgConfig / "zsh/init.zsh",
+        xdgState / "zsh",
         xdgConfig / "git/setup-system.inc",
     )
     observed = tuple((str(path), _digest(path)) for path in targets)
@@ -133,7 +135,7 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
         ),
         Step(
             "zsh.assets",
-            ("$XDG_CONFIG_HOME/zsh",),
+            ("$XDG_CONFIG_HOME/zsh", "$XDG_STATE_HOME/zsh"),
             (),
             "Install shell-only startup modules",
             "user files",

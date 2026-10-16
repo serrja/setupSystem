@@ -11,6 +11,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+from setup_system.application.projectLayout import activeProjects, loadLayout
 from setup_system.planning import createPlan
 from setup_system.storage import atomicWrite, managedBlock, newBackup
 
@@ -64,19 +65,11 @@ def _mergeCodexConfig(original: str, home: Path) -> str:
     return original
 
 
-def _scopeConfig(home: Path) -> str:
-    projects = {
-        "jobdesk": home / "Projects/jobdesk",
-        "authService": home / "pokerlost/authService",
-        "accountsService": home / "pokerlost/accountsService",
-        "pypokerlost": home / "pokerlost/pypokerlost",
-        "pokerengine": home / "pokerlost/pokerengine",
-        "serviceTemplate": home / "pokerlost/serviceTemplate",
-    }
+def _scopeConfig(root: Path, home: Path) -> str:
+    projects = activeProjects(loadLayout(root, home=home))
     lines = ["# Local paths only. This file stays outside public Git.", "version = 1"]
     for name, path in projects.items():
-        if path.is_dir():
-            lines += ["", f"[scope.{name}]", f"path = {json.dumps(str(path))}"]
+        lines += ["", f"[scope.{json.dumps(name)}]", f"path = {json.dumps(str(path))}"]
     return "\n".join(lines) + "\n"
 
 
@@ -89,12 +82,20 @@ def applyConfiguration(
     home = Path.home()
     xdgConfig = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
     xdgCache = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache"))
+    xdgState = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
     codexHome = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     agentsHome = home / ".agents"
-    if not xdgConfig.absolute().is_relative_to(home) or not xdgCache.absolute().is_relative_to(
-        home
+    if any(
+        not path.resolve().is_relative_to(home.resolve())
+        for path in (xdgConfig, xdgCache, xdgState)
     ):
         raise ValueError("XDG paths outside home require a separate scoped install")
+    historyDirectory = xdgState / "zsh"
+    for parent in (historyDirectory, *historyDirectory.parents):
+        if parent == home:
+            break
+        if parent.is_symlink():
+            raise ValueError("Zsh history path traverses a symlink")
     assets = _assetTargets(root, xdgConfig, codexHome, agentsHome, terminalDev)
     manifestPath = agentsHome / "manifest.json"
     previous = json.loads(manifestPath.read_text()) if manifestPath.exists() else {"assets": {}}
@@ -152,7 +153,7 @@ def applyConfiguration(
     if bashrc.exists() and bashrc.read_text() != bashText:
         desired[bashrc] = bashText.encode()
     if not scopePath.exists():
-        desired[scopePath] = _scopeConfig(home).encode()
+        desired[scopePath] = _scopeConfig(root, home).encode()
 
     command = shutil.which("codex")
     completion: bytes | None = None
@@ -185,6 +186,7 @@ def applyConfiguration(
     manifest = {"version": 1, "assets": {**previousHashes, **assetHashes}}
     desired[manifestPath] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
     backup = newBackup([path for path in desired if path.exists()])
+    historyDirectory.mkdir(parents=True, mode=0o700, exist_ok=True)
     if agentsHome.exists() and agentsHome.stat().st_mode & 0o200 == 0:
         agentsHome.chmod(0o700)
     results: list[tuple[str, str]] = []
