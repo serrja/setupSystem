@@ -24,6 +24,7 @@ Base `apply` prepares pinned `uv` 0.12.15, installs a uv-managed Python 3.14, ch
 - The Typer CLI coordinates use cases; `storage.py` owns atomic files and private backups.
 - `assets/zsh` is sourced by `~/.zshrc`; shell startup runs no installer, network call or `sudo`.
 - `assets/agents` is copied with hashes to `~/.agents`; Codex reads a copy at `$CODEX_HOME/AGENTS.md`. Local scopes stay in `$XDG_CONFIG_HOME/agents/scopes.toml`.
+- [Agent tool inventory](manifests/agentTools.toml) records selected skills, observed plugin/MCP versions and their access limits; it is metadata, not a permission grant or plugin installer.
 - `manifests/applications.toml` documents sources and detection. Only the Ubuntu `zsh` package has an automatic install action. Other entries show current state and an explicit block when an adapter cannot verify the source.
 - `manifests/terminalDev.toml` pins editor archives, plugins and tools. `assets/nvim` and `assets/tmux` are installed under XDG config only by explicit `terminalDev` apply. See the [naming policy](docs/naming.md) and [Neovim guide](docs/neovimGuide.md).
 - `manifests/happ.toml` pins official desktop release assets; Happ owns its private subscriptions, routing and native autostart. `setup-system happ doctor` reports safe categories only.

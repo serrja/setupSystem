@@ -1,0 +1,110 @@
+# Portable inventory of selected agent tools. This file does not install, authorize,
+# or grant access to a tool. Status values describe the observed 2026-10-16 host.
+version = 1
+observedAt = "2026-10-16"
+
+[[skills]]
+name = "workspace-safety"
+source = "assets/agents/skills/workspace-safety/SKILL.md"
+version = "1"
+revision = "sha256:bc24ed7337c468b80d0692aaae483dc71a93e24f49b0f9040925dac0aca4f896"
+scope = "global ~/.agents/skills"
+permissions = "none; task permission profile controls access"
+reason = "Prepare and check a scoped project workspace"
+status = "installed"
+
+[[skills]]
+name = "python-project"
+source = "assets/agents/skills/python-project/SKILL.md"
+version = "1"
+revision = "sha256:41d212346af6022f168505d10b6c80815d56c6bd19a6021744bae1907811a3fd"
+scope = "global ~/.agents/skills"
+permissions = "none; task permission profile controls access"
+reason = "Maintain Python packaging and quality tooling"
+status = "installed"
+
+[[skills]]
+name = "docs-style"
+source = "assets/agents/skills/docs-style/SKILL.md"
+version = "1"
+revision = "sha256:b35b56aa334b21daab0164a9900378b587a3e5bdbbde4aabe9c786c381afdfd9"
+scope = "global ~/.agents/skills"
+permissions = "none; task permission profile controls access"
+reason = "Maintain concise project documentation"
+status = "installed"
+
+[[skills]]
+name = "ci-docker"
+source = "assets/agents/skills/ci-docker/SKILL.md"
+version = "1"
+revision = "sha256:ca2ee4ccbeafd55dbee66613eae7bfa58c2423a995e4df4eec8e2262f51f98ba"
+scope = "global ~/.agents/skills"
+permissions = "none; task permission profile controls access"
+reason = "Prepare repository CI and isolated Docker test environments"
+status = "installed"
+
+[[skills]]
+name = "knowledge-curation"
+source = "assets/agents/skills/knowledge-curation/SKILL.md"
+version = "1"
+revision = "sha256:ae3c1b7b35bac04f8f4f588d44ceff8d1008f727db2bbf32a0110b54e8c312dd"
+scope = "global ~/.agents/skills"
+permissions = "none; task permission profile controls access"
+reason = "Maintain an assigned vault and linked documents"
+status = "installed"
+
+[[tools]]
+name = "gh"
+kind = "cli"
+source = "github.com/cli/cli"
+version = "2.98.0"
+revision = "v2.98.0"
+scope = "explicit repository operations"
+permissions = "existing GitHub CLI account grants; no automatic push"
+reason = "Review repository and CI state"
+status = "verified"
+
+[[tools]]
+name = "documents@openai-primary-runtime"
+kind = "plugin"
+source = "Codex openai-primary-runtime marketplace"
+version = "26.1013.11914"
+revision = "26.1013.11914"
+scope = "Codex runtime, not copied by setupSystem"
+permissions = "current task and client grants"
+reason = "Read and prepare documents when requested"
+status = "installed"
+
+[[tools]]
+name = "pdf@openai-primary-runtime"
+kind = "plugin"
+source = "Codex openai-primary-runtime marketplace"
+version = "26.1013.11914"
+revision = "26.1013.11914"
+scope = "Codex runtime, not copied by setupSystem"
+permissions = "current task and client grants"
+reason = "Inspect PDFs when requested"
+status = "installed"
+
+[[tools]]
+name = "context7"
+kind = "mcp"
+source = "existing user Codex config: @upstash/context7-mcp"
+version = "unlocked"
+revision = "unlocked"
+scope = "user Codex config, not managed by setupSystem"
+permissions = "network access only when the task and client allow it"
+reason = "Library documentation lookup"
+status = "manual"
+note = "Configured, but npx is absent on this host; execution and package revision are unverified."
+
+[[tools]]
+name = "google-drive@openai-curated"
+kind = "plugin"
+source = "Codex openai-curated marketplace"
+version = "0.1.20"
+revision = "0.1.20"
+scope = "connected ChatGPT session only; local Codex plugin not installed"
+permissions = "separate account authorization and selected Drive objects"
+reason = "Knowledge maintenance when explicitly requested"
+status = "manual"
