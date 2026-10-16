@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import os
 import platform as systemPlatform
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,43 +42,11 @@ def detectPlatform(
     osRelease: Path = Path("/etc/os-release"),
     architecture: str | None = None,
     systemName: str | None = None,
-    macVersion: str | None = None,
 ) -> Platform:
     family = systemName or systemPlatform.system()
     arch = architecture or systemPlatform.machine()
     if arch == "aarch64":
         arch = "arm64"
-    if family == "Darwin":
-        version = macVersion if macVersion is not None else systemPlatform.mac_ver()[0]
-        try:
-            major = int(version.split(".", 1)[0])
-        except ValueError:
-            major = 0
-        supported = major in {15, 26, 27} and arch in {"arm64", "x86_64"}
-        rosetta = "unknown"
-        if systemName is None:
-            try:
-                check = subprocess.run(
-                    ["sysctl", "-in", "sysctl.proc_translated"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                check = None
-            if check is not None and check.returncode == 0:
-                rosetta = check.stdout.strip()
-        if rosetta == "1":
-            supported = False
-        reason = (
-            "macOS terminalDev adapter; Homebrew prefix and tools checked at apply"
-            if supported
-            else "UNSUPPORTED: native macOS 15/26/27 on arm64 or Intel x86_64 is required"
-        )
-        if rosetta == "1":
-            reason = "UNSUPPORTED: launch a native architecture shell; Rosetta translation detected"
-        return Platform("macos", version or "unknown", arch, supported, False, reason)
     if family != "Linux":
         return Platform(family.lower(), "unknown", arch, False, False, "UNSUPPORTED platform")
     fields: dict[str, str] = {}
@@ -93,16 +60,18 @@ def detectPlatform(
     distro = fields.get("ID", "unknown")
     version = fields.get("VERSION_ID", "unknown")
     supported = (
-        (distro == "ubuntu" and version in {"24.04", "26.04"})
-        or (distro == "debian" and version in {"12", "13"})
-    ) and arch in {"x86_64", "arm64"}
+        distro == "debian"
+        and version in {"12", "13"}
+        and arch
+        in {
+            "x86_64",
+            "arm64",
+        }
+    )
     reason = (
         f"{distro.title()} {version} {arch} explicit platform adapter"
         if supported
-        else (
-            "UNSUPPORTED: only explicit Debian 12/13, Ubuntu 24.04/26.04, "
-            "and native macOS 15/26/27 are implemented"
-        )
+        else ("UNSUPPORTED: only explicit Debian 12/13 on x86_64 or arm64 is implemented")
     )
     return Platform(distro, version, arch, supported, False, reason)
 
@@ -123,11 +92,7 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
     platform = detectPlatform()
     if not platform.implemented:
         return Plan(platform, (), ())
-    if (
-        profile == "terminalDev"
-        and platform.distribution in {"ubuntu", "debian"}
-        and platform.architecture == "arm64"
-    ):
+    if profile == "terminalDev" and platform.architecture == "arm64":
         return Plan(
             platform,
             (),
@@ -232,7 +197,7 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
                 (),
                 "Preserve installed Happ; otherwise verify the pinned official release",
                 "system package and possible desktop permissions",
-                "targeted sudo on Debian/Ubuntu; user review on macOS",
+                "targeted sudo on Debian only",
                 "setup-system happ setup --yes",
             ),
             Step(

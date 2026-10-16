@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "setup-system"
 version = "0.1.0"
-description = "Debian, Ubuntu and macOS workstation setup and portable user configuration"
+description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["typer>=0.27.2,<1", "pydantic>=2.12,<3"]

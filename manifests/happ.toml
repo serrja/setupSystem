@@ -13,7 +13,3 @@ packageArchitecture = "amd64"
 url = "https://github.com/Happ-proxy/happ-desktop/releases/download/4.5.4/Happ.linux.arm64.deb"
 sha256 = "ac7902dcf2494c97b109133848c7abd36d24a105aa2732d859fd48d4617af7a1"
 packageArchitecture = "arm64"
-
-[macos.universal]
-url = "https://github.com/Happ-proxy/happ-desktop/releases/download/4.5.4/Happ.macOS.universal.dmg"
-sha256 = "c3c583196968956479755e60cdc5790186ce524df431e31128c17447930b40c8"

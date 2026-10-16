@@ -1,1 +1,1 @@
-"""Debian, Ubuntu and macOS workstation setup."""
+"""Debian workstation setup."""

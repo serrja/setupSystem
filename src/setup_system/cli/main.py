@@ -42,9 +42,7 @@ from setup_system.storage import restore as restoreBackup
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 ROOT = SOURCE_ROOT if (SOURCE_ROOT / "manifests/platforms.toml").is_file() else PACKAGE_ROOT
-app = typer.Typer(
-    help="Debian, Ubuntu and macOS workstation setup and recovery.", no_args_is_help=True
-)
+app = typer.Typer(help="Debian workstation setup and recovery.", no_args_is_help=True)
 appsApp = typer.Typer(help="Applications and installation sources.")
 agentsApp = typer.Typer(help="Scoped agent configuration.")
 templatesApp = typer.Typer(help="Generic project templates.")
@@ -252,6 +250,13 @@ def happDoctor() -> None:
         raise typer.Exit(4)
 
 
+def _requireHappPlatform() -> None:
+    platformAdapter = createPlan(ROOT, "happ").platform
+    if not platformAdapter.implemented:
+        typer.echo(platformAdapter.reason, err=True)
+        raise typer.Exit(4)
+
+
 @happApp.command("setup")
 def happSetup(
     yes: Annotated[bool, typer.Option("--yes", help="Apply a missing verified package.")] = False,
@@ -324,12 +329,14 @@ def _handoffLinks(*, routingProfile: bool, repeat: bool) -> None:
 @happApp.command("addSubscription")
 def happAddSubscription() -> None:
     """Offer optional local terminal-to-Happ clipboard handoff, without storing a URL."""
+    _requireHappPlatform()
     _handoffLinks(routingProfile=False, repeat=True)
 
 
 @happApp.command("configureRouting")
 def happConfigureRouting() -> None:
     """Offer a separate routing-profile handoff; never activate a connection here."""
+    _requireHappPlatform()
     typer.echo(formatHappStatus(inspectHapp()))
     _handoffLinks(routingProfile=True, repeat=False)
 
@@ -337,6 +344,7 @@ def happConfigureRouting() -> None:
 @happApp.command("configureAutostart")
 def happConfigureAutostart() -> None:
     """Verify Happ's own setting and registration without editing its private format."""
+    _requireHappPlatform()
     status = inspectHapp()
     typer.echo(formatHappStatus(status))
     if status.nativeAutostart == status.loginRegistration == "enabled":
@@ -371,6 +379,7 @@ def happRestore(
     ] = False,
 ) -> None:
     """Preview or explicitly restore a verified Happ snapshot."""
+    _requireHappPlatform()
     if applyChanges and not yes:
         raise typer.BadParameter("Restore requires --apply --yes")
     try:
@@ -388,7 +397,10 @@ def happRestore(
 def appsList() -> None:
     """Show declared sources and actual installation evidence."""
     for name, entry in catalog(ROOT).items():
-        typer.echo(f"{name}: {appStatus(entry)} | {entry.method} | {entry.source}")
+        versions = ",".join(entry.supportedDebianVersions or ()) or "audit-only"
+        typer.echo(
+            f"{name}: {appStatus(entry)} | Debian {versions} | {entry.method} | {entry.source}"
+        )
 
 
 @appsApp.command("install")
@@ -398,20 +410,43 @@ def appsInstall(
         bool, typer.Option("--yes", help="Confirm the selected package action.")
     ] = False,
 ) -> None:
-    """Install one supported Ubuntu package after checking its current state."""
+    """Install one supported Debian package after checking its current state."""
     result = createPlan(ROOT)
     if not result.platform.implemented:
         typer.echo(result.platform.reason, err=True)
         raise typer.Exit(4)
-    if result.platform.distribution != "ubuntu":
-        typer.echo("UNSUPPORTED: this application adapter is Ubuntu-only.", err=True)
+    if result.platform.distribution != "debian":
+        typer.echo("UNSUPPORTED: this application adapter is Debian-only.", err=True)
         raise typer.Exit(4)
     entries = catalog(ROOT)
     if name not in entries:
         typer.echo("Unknown catalog application.", err=True)
         raise typer.Exit(2)
     entry = entries[name]
+    if (
+        entry.supportedDebianVersions is None
+        or result.platform.version not in entry.supportedDebianVersions
+    ):
+        typer.echo(
+            "UNSUPPORTED: no verified Debian provider for this application/version.", err=True
+        )
+        raise typer.Exit(4)
     status = appStatus(entry)
+    if status == "unknown":
+        typer.echo("blocked: package status could not be established.", err=True)
+        raise typer.Exit(4)
+    if name == "docker" and status.startswith("present ("):
+        typer.echo("blocked: existing Docker binary has no verified package source.", err=True)
+        raise typer.Exit(4)
+    if name == "docker" and status.startswith("deb "):
+        from setup_system.adapters.debian.docker import installDocker
+
+        try:
+            typer.echo(installDocker())
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            typer.echo(f"blocked: {exc}", err=True)
+            raise typer.Exit(4) from exc
+        return
     if status != "absent":
         typer.echo(f"unchanged: {name}: {status}")
         return
@@ -420,13 +455,18 @@ def appsInstall(
     if not yes:
         typer.echo("Use --yes after reviewing the plan.", err=True)
         raise typer.Exit(2)
-    if name != "zsh":
+    if name not in {"zsh", "docker"}:
         typer.echo(
             "blocked: this source requires a separate verified installation adapter.", err=True
         )
         raise typer.Exit(4)
     try:
-        typer.echo(installZsh(entry))
+        if name == "docker":
+            from setup_system.adapters.debian.docker import installDocker
+
+            typer.echo(installDocker())
+        else:
+            typer.echo(installZsh(entry))
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         typer.echo(f"failed: {exc}", err=True)
         raise typer.Exit(5) from exc

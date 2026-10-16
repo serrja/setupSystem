@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency-free entry point for Debian, Ubuntu or macOS setup."""
+"""Dependency-free entry point for Debian workstation setup."""
 
 from __future__ import annotations
 
@@ -18,12 +18,8 @@ from urllib.request import urlopen
 MINIMUM_PYTHON = (3, 10)
 UV_VERSION = "0.12.15"
 UV_PLATFORMS = {
-    ("ubuntu", "x86_64"): "x86_64-unknown-linux-gnu",
-    ("ubuntu", "arm64"): "aarch64-unknown-linux-gnu",
     ("debian", "x86_64"): "x86_64-unknown-linux-gnu",
     ("debian", "arm64"): "aarch64-unknown-linux-gnu",
-    ("macos", "arm64"): "aarch64-apple-darwin",
-    ("macos", "x86_64"): "x86_64-apple-darwin",
 }
 RELEASE_BASE = f"https://releases.astral.sh/github/uv/releases/download/{UV_VERSION}"
 ROOT = Path(__file__).resolve().parent

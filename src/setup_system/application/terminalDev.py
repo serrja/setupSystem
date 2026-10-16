@@ -69,10 +69,12 @@ def _run(argv: list[str], *, cwd: Path | None = None, timeout: int = 180) -> str
 
 
 def _archiveKey(platform: Platform) -> str:
-    if platform.distribution in {"debian", "ubuntu"} and platform.architecture == "x86_64":
+    if (
+        platform.implemented
+        and platform.distribution == "debian"
+        and platform.architecture == "x86_64"
+    ):
         return "linux_x86_64"
-    if platform.distribution == "macos" and platform.architecture in {"arm64", "x86_64"}:
-        return f"macos_{platform.architecture}"
     raise ValueError(platform.reason)
 
 
@@ -124,8 +126,7 @@ def installNeovim(projectRoot: Path, platform: Platform) -> str:
                     output.write(chunk)
             if sha.hexdigest() != digest:
                 raise RuntimeError("Neovim archive digest mismatch")
-            archiveOs = "linux" if platform.distribution in {"debian", "ubuntu"} else "macos"
-            expectedTop = f"nvim-{archiveOs}-{platform.architecture}"
+            expectedTop = f"nvim-linux-{platform.architecture}"
             with tarfile.open(archive, "r:gz") as bundle:
                 for member in bundle.getmembers():
                     parts = Path(member.name).parts
@@ -379,7 +380,7 @@ def installSystemTools(projectRoot: Path, platform: Platform) -> tuple[str, bool
     tools = _manifest(projectRoot)["tools"]
     if not isinstance(tools, dict):
         raise ValueError("Invalid tool manifest")
-    if platform.distribution in {"debian", "ubuntu"}:
+    if platform.implemented and platform.distribution == "debian":
         commands = {
             "zsh": "zsh",
             "ripgrep": "rg",
@@ -388,8 +389,7 @@ def installSystemTools(projectRoot: Path, platform: Platform) -> tuple[str, bool
             "tmux": "tmux",
             "clangd": "clangd",
         }
-        aptKey = f"{platform.distribution}_apt"
-        missing = [name for name in tools[aptKey] if shutil.which(commands[name]) is None]
+        missing = [name for name in tools["debianApt"] if shutil.which(commands[name]) is None]
         if not missing:
             return f"unchanged: {platform.distribution} terminal packages", False
         sudo = shutil.which("sudo")
@@ -405,31 +405,4 @@ def installSystemTools(projectRoot: Path, platform: Platform) -> tuple[str, bool
         if blocked:
             installed.append(f"blocked: targeted sudo unavailable for {', '.join(blocked)}")
         return "; ".join(installed), bool(blocked)
-    if platform.distribution == "macos":
-        brew = shutil.which("brew")
-        if not brew:
-            return (
-                "blocked: Homebrew absent; install official Homebrew and Python before bootstrap",
-                True,
-            )
-        prefix = _run([brew, "--prefix"], timeout=15)
-        expected = "/opt/homebrew" if platform.architecture == "arm64" else "/usr/local"
-        if prefix != expected:
-            return f"blocked: Homebrew prefix {prefix} differs from expected {expected}", True
-        missing = [name for name in tools["macos_brew"] if not _installedBrew(brew, name)]
-        if not missing:
-            return "unchanged: macOS terminal packages", False
-        _run([brew, "install", *missing], timeout=1200)
-        return f"changed: macOS packages {', '.join(missing)}", False
     raise ValueError(platform.reason)
-
-
-def _installedBrew(brew: str, formula: str) -> bool:
-    result = subprocess.run(
-        [brew, "list", "--versions", formula],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    return result.returncode == 0 and bool(result.stdout.strip())

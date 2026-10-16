@@ -6,6 +6,7 @@ import configparser
 import hashlib
 import json
 import os
+import platform as systemPlatform
 import re
 import shutil
 import sqlite3
@@ -94,7 +95,8 @@ def inspectHapp(platformAdapter: Platform | None = None) -> HappStatus:
     routing = "unknown"
     profileCount: int | None = None
     binaryAvailable: bool | None = None
-    if platformAdapter.distribution in {"debian", "ubuntu"}:
+    # Package and settings inspection is read-only even on an unsupported Linux host.
+    if systemPlatform.system() == "Linux":
         binaryAvailable = shutil.which("happ") is not None
         try:
             result = _run(["dpkg-query", "-W", "-f=${Status} ${Version} ${Architecture}", "happ"])
@@ -117,15 +119,6 @@ def inspectHapp(platformAdapter: Platform | None = None) -> HappStatus:
                 profileCount = len(profiles) if isinstance(profiles, list) else None
             except (OSError, ValueError, AttributeError):
                 pass
-    elif platformAdapter.distribution == "macos":
-        found = [
-            path
-            for path in (Path("/Applications/Happ.app"), Path.home() / "Applications/Happ.app")
-            if path.is_dir()
-        ]
-        if found:
-            installed = "desktop app present; channel and version need native verification"
-        binaryAvailable = bool(found)
     return HappStatus(
         installed,
         binaryAvailable,
@@ -207,22 +200,7 @@ def setupHapp(projectRoot: Path, platformAdapter: Platform | None = None) -> str
     manifest = _manifest(projectRoot)
     release = str(manifest["version"])
     packageVersion = str(manifest["packageVersion"])
-    if platformAdapter.distribution == "macos":
-        macos = manifest["macos"]
-        if not isinstance(macos, dict) or not isinstance(macos.get("universal"), dict):
-            raise ValueError("Invalid Happ macOS release asset")
-        asset = macos["universal"]
-        target = stateRoot() / "downloads" / f"Happ.macOS.universal-{release}.dmg"
-        if (
-            not target.is_file()
-            or hashlib.sha256(target.read_bytes()).hexdigest() != asset["sha256"]
-        ):
-            _download(str(asset["url"]), str(asset["sha256"]), target, 250 * 1024 * 1024)
-        return (
-            f"needsManualAction: verified official macOS DMG staged at {target}; "
-            "confirm the desktop channel and code signature in Finder before installation"
-        )
-    if platformAdapter.distribution not in {"debian", "ubuntu"}:
+    if platformAdapter.distribution != "debian":
         return "unsupported: no Happ package provider"
     sudo = shutil.which("sudo")
     if not sudo or _run([sudo, "-n", "true"]).returncode != 0:
@@ -261,7 +239,7 @@ def setupHapp(projectRoot: Path, platformAdapter: Platform | None = None) -> str
 def backupHapp() -> Path:
     """Capture Linux desktop settings and SQLite through its online backup API."""
     platformAdapter = detectPlatform()
-    if platformAdapter.distribution not in {"debian", "ubuntu"} or not platformAdapter.implemented:
+    if platformAdapter.distribution != "debian" or not platformAdapter.implemented:
         raise RuntimeError("Native Happ export is required on this platform")
     if _running():
         raise RuntimeError("Happ is running; use its native export or arrange a separate stop")
@@ -342,8 +320,8 @@ def classifyLink(value: str, *, routingProfile: bool = False) -> str:
 
 def clipboardCommand() -> tuple[list[str], list[str]] | None:
     """Only an explicit user action calls this; clipboard contents may enter system history."""
-    if detectPlatform().distribution == "macos" and shutil.which("pbcopy"):
-        return (["pbcopy"], ["pbcopy"])
+    if not detectPlatform().implemented:
+        return None
     if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
         return (["wl-copy"], ["wl-copy", "--clear"])
     if os.environ.get("DISPLAY") and shutil.which("xclip"):
@@ -379,6 +357,8 @@ def restoreHapp(
     backupId: str, *, apply: bool = False, replaceCurrent: bool = False
 ) -> list[tuple[str, str]]:
     """Restore a reviewed Happ snapshot only while its desktop process is closed."""
+    if not detectPlatform().implemented:
+        raise RuntimeError("UNSUPPORTED: Happ restore requires Debian 12/13")
     statuses = previewHappRestore(backupId)
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backupId):
         raise ValueError("Invalid backup ID")

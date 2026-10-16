@@ -4,10 +4,6 @@ version = 1
 version = "0.12.6"
 linux_x86_64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz"
 linux_x86_64_sha256 = "474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87"
-macos_arm64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-arm64.tar.gz"
-macos_arm64_sha256 = "1dbd148222b051ba6c307c4d17a318ed083df018a4f6a5a0ce46955ffc9ab87b"
-macos_x86_64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-x86_64.tar.gz"
-macos_x86_64_sha256 = "481424f1dbc85f637d57e47d27d042aa9c883e5a4fe9ee64fc4ee9573b221998"
 
 [plugins.lazy]
 repo = "folke/lazy.nvim"
@@ -46,9 +42,7 @@ repo = "nvim-treesitter/nvim-treesitter"
 commit = "ca581c3436fc2b236847f5b739ebc263739e5ca6"
 
 [tools]
-ubuntu_apt = ["zsh", "ripgrep", "fzf", "fd-find", "tmux", "clangd"]
-debian_apt = ["zsh", "ripgrep", "fzf", "fd-find", "tmux", "clangd"]
-macos_brew = ["ripgrep", "fzf", "fd", "tmux", "llvm"]
+debianApt = ["zsh", "ripgrep", "fzf", "fd-find", "tmux", "clangd"]
 
 [userBinary.rg]
 version = "15.2.0"
@@ -74,16 +68,8 @@ languages = ["python", "lua", "cpp", "json", "markdown", "bash", "toml", "yaml"]
 version = "2.6.0"
 linux_x86_64_url = "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-linux-x86_64-musl.zip"
 linux_x86_64_sha256 = "48ee7db28346f96f4bd545e190ab080a88a7b5a664e97649cf5d5c60426f402d"
-macos_arm64_url = "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-macos-aarch64.zip"
-macos_arm64_sha256 = "dab9b66d340ca5ffc8225211f1dcf89b84783e09b8cbec8c518497eba81f3c42"
-macos_x86_64_url = "https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-macos-x86_64.zip"
-macos_x86_64_sha256 = "90779aa873837b2dff8eb3361bd27950303914c24265a59cae0a0d0629d71585"
 
 [archiveTools.tree-sitter]
 version = "0.27.1"
 linux_x86_64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-x64.zip"
 linux_x86_64_sha256 = "c7e686aec16ba17053c2e6fd87600ccb10cf8ba3d055756b17e756d538e11114"
-macos_arm64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-macos-arm64.zip"
-macos_arm64_sha256 = "6362cda144b6e45d92c739d4eafb7e3c322f0545b0b959b4f7ca7d53fb3300fa"
-macos_x86_64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-macos-x64.zip"
-macos_x86_64_sha256 = "fd7e60f57b6e00caecaa055b94da20d7875b05cef2277831588546e08ab8bb29"

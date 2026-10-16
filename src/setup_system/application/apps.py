@@ -1,4 +1,4 @@
-"""Read-only application inventory and narrow Ubuntu installation actions."""
+"""Read-only application inventory and narrow Debian installation actions."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+
+from setup_system.planning import detectPlatform
 
 
 class Application(BaseModel):
@@ -22,6 +24,7 @@ class Application(BaseModel):
     package: str
     privilege: str
     data: str
+    supportedDebianVersions: list[str] | None = None
 
 
 def catalog(root: Path) -> dict[str, Application]:
@@ -58,18 +61,21 @@ def appStatus(app: Application) -> str:
 
 
 def installZsh(app: Application) -> str:
+    platform = detectPlatform()
+    if not platform.implemented or platform.distribution != "debian":
+        raise ValueError(platform.reason)
     if app.package != "zsh":
-        raise ValueError("This installer action is only for Ubuntu zsh")
+        raise ValueError("This installer action is only for Debian zsh")
     existing = appStatus(app)
     if existing != "absent":
         return "unchanged: " + existing
     if not shutil.which("sudo"):
-        raise RuntimeError("sudo is unavailable; install Ubuntu zsh with an administrator")
+        raise RuntimeError("sudo is unavailable; install Debian zsh with an administrator")
     result = subprocess.run(
         ["sudo", "-n", "apt-get", "install", "-y", "zsh"], timeout=300, check=False
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Ubuntu apt installation failed with exit code {result.returncode}")
+        raise RuntimeError(f"Debian apt installation failed with exit code {result.returncode}")
     verified = appStatus(app)
     if not verified.startswith("deb "):
         raise RuntimeError("zsh was not detected after apt installation")
