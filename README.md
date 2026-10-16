@@ -49,3 +49,5 @@ For project editing, launch a separate session from the exact repository root wi
 Backups and manifests are private under `${XDG_STATE_HOME:-$HOME/.local/state}/setup-system/backups`. `restore` checks hashes and previews by default; `--apply --yes` writes verified files. Preserve private application data, auth, vault content and Jobdesk database backups separately. Do not put tokens, browser profiles, cookies, SSH keys or these backups in a public repository.
 
 `Docker`, Compose, Buildx and the official ChatGPT `.deb` are detected without changing their data. Their current installation does not prove GUI or daemon behavior in a restricted session. Use [recovery notes](docs/recovery.md) for manual system packages and the limits of each check.
+
+For account setup and daily prompts, see the [Russian ChatGPT guide](docs/chatgptGuide.md). Its suggested instructions are not applied to the account automatically.
