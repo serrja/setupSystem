@@ -84,6 +84,20 @@ def test_planMigrationKeepsDirtyCheckoutUntouched(tmp_path: Path) -> None:
     assert not (home / "Projects").exists()
 
 
+def test_targetOnlyExistingProjectNeedsNoLegacyPath(tmp_path: Path) -> None:
+    home, root = _layout(tmp_path)
+    manifest = root / "manifests/projects.toml"
+    manifest.write_text(manifest.read_text().replace('legacyPath = "$HOME/example"\n', ""))
+    target = home / "Projects/serrja/example"
+    target.mkdir(parents=True)
+    _git(target, "init", "-q", "-b", "main")
+
+    layout = loadLayout(root, home=home)
+
+    assert activeProjects(layout) == {"serrja/example": target}
+    assert planMigration(layout, currentDirectory=tmp_path)[0].status == "placed"
+
+
 def test_applyMigrationPreservesGitAndDirtyFiles(tmp_path: Path) -> None:
     home, root = _layout(tmp_path)
     source = home / "example"

@@ -103,8 +103,6 @@ def loadLayout(root: Path, *, home: Path | None = None) -> ProjectLayout:
         if state not in {"existing", "planned", "sourcePending", "optional"}:
             raise ValueError(f"Invalid project state: {projectId}")
         legacy = _homePath(record["legacyPath"], home) if "legacyPath" in record else None
-        if state == "existing" and legacy is None:
-            raise ValueError(f"Existing project needs a legacy path: {projectId}")
         target = projectsRoot.joinpath(*parts)
         if legacy == target:
             raise ValueError(f"Legacy and target paths are identical: {projectId}")

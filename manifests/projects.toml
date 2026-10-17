@@ -19,6 +19,7 @@ state = "existing"
 [[project]]
 id = "serrja/fastApiTemplate"
 legacyPath = "$HOME/Projects/fastApiTemplate"
+origin = "git@github.com:serrja/fastApiTemplate.git"
 state = "existing"
 
 [[project]]
@@ -77,19 +78,23 @@ reviewOwner = true
 
 [[project]]
 id = "pokerlost/virtualMoney"
-state = "sourcePending"
+origin = "https://github.com/pokerlost/virtualMoney.git"
+state = "existing"
 
 [[project]]
 id = "pokerlost/pokerService"
 legacyPath = "$HOME/pokerlost/pokerService"
+origin = "git@github.com:pokerlost/pokerService.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/pokerClient"
 legacyPath = "$HOME/pokerlost/pokerClient"
+origin = "git@github.com:pokerlost/pokerClient.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/cryptoService"
 legacyPath = "$HOME/pokerlost/cryptoService"
+origin = "git@github.com:pokerlost/cryptoService.git"
 state = "existing"

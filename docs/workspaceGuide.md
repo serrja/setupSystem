@@ -4,7 +4,7 @@ The [project catalog](../manifests/projects.toml) is the single source for `proj
 
 ## 🧭 Layout and commands
 
-`serrja` holds personal tooling and the two generic template sources. `pokerlost` holds separate Pokerlost repositories. The local `pythonTemplate` directory retains the `serrja/projectTemplates` remote and Git history; renaming that remote is a separate decision. The catalog resolves either a verified target checkout or its historical path during a staged move. `virtualMoney` remains `sourcePending`: its archive does not establish a complete Git history.
+`serrja` holds personal tooling and the two generic template sources. `pokerlost` holds separate Pokerlost repositories. The local `pythonTemplate` directory retains the `serrja/projectTemplates` remote and Git history; renaming that remote is a separate decision. The catalog resolves either a verified target checkout or its historical path during a staged move. `virtualMoney` was cloned from its verified existing remote into the target path; its `main` history has no Alembic revision files despite the older README references to revisions.
 
 From any directory outside a checkout being moved, use the source CLI without applying system configuration:
 
