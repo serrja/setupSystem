@@ -11,37 +11,37 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from setup_system.application.projectLayout import activeProjects, loadLayout
-from setup_system.planning import createPlan
-from setup_system.storage import atomicWrite, managedBlock, newBackup
+from setup_system.application.project_layout import active_projects, load_layout
+from setup_system.planning import create_plan
+from setup_system.storage import atomic_write, managed_block, new_backup
 
 
-def _assetTargets(
-    root: Path, xdgConfig: Path, codexHome: Path, agentsHome: Path, terminalDev: bool
+def _asset_targets(
+    root: Path, xdg_config: Path, codex_home: Path, agents_home: Path, terminal_dev: bool
 ) -> dict[Path, Path]:
     result: dict[Path, Path] = {}
     for source in (root / "assets/zsh").glob("*.zsh"):
-        result[xdgConfig / "zsh" / source.name] = source
-    result[xdgConfig / "git/setup-system.inc"] = root / "assets/git/style.inc"
-    if terminalDev:
+        result[xdg_config / "zsh" / source.name] = source
+    result[xdg_config / "git/setup-system.inc"] = root / "assets/git/style.inc"
+    if terminal_dev:
         for source in (root / "assets/nvim").rglob("*"):
             if source.is_file():
-                result[xdgConfig / "nvim" / source.relative_to(root / "assets/nvim")] = source
+                result[xdg_config / "nvim" / source.relative_to(root / "assets/nvim")] = source
         for source in (root / "assets/tmux").rglob("*"):
             if source.is_file():
-                result[xdgConfig / "tmux" / source.relative_to(root / "assets/tmux")] = source
+                result[xdg_config / "tmux" / source.relative_to(root / "assets/tmux")] = source
     for source in (root / "assets/agents").rglob("*"):
         if not source.is_file():
             continue
         rel = source.relative_to(root / "assets/agents")
         if rel.parts[0] == "codex":
-            result[codexHome / rel.name] = source
+            result[codex_home / rel.name] = source
         else:
-            result[agentsHome / rel] = source
+            result[agents_home / rel] = source
     return result
 
 
-def _mergeCodexConfig(original: str, home: Path) -> str:
+def _merge_codex_config(original: str, home: Path) -> str:
     data = tomllib.loads(original) if original.strip() else {}
     if "sandbox_mode" in data or "sandbox_workspace_write" in data:
         raise ValueError("Remove legacy sandbox settings before enabling permission profiles")
@@ -65,109 +65,111 @@ def _mergeCodexConfig(original: str, home: Path) -> str:
     return original
 
 
-def _scopeConfig(root: Path, home: Path) -> str:
-    projects = activeProjects(loadLayout(root, home=home))
+def _scope_config(root: Path, home: Path) -> str:
+    projects = active_projects(load_layout(root, home=home))
     lines = ["# Local paths only. This file stays outside public Git.", "version = 1"]
     for name, path in projects.items():
         lines += ["", f"[scope.{json.dumps(name)}]", f"path = {json.dumps(str(path))}"]
     return "\n".join(lines) + "\n"
 
 
-def applyConfiguration(
-    root: Path, *, terminalDev: bool = False
+def apply_configuration(
+    root: Path, *, terminal_dev: bool = False
 ) -> tuple[Path, list[tuple[str, str]]]:
-    plan = createPlan(root, "terminalDev" if terminalDev else "base")
+    plan = create_plan(root, "terminalDev" if terminal_dev else "base")
     if not plan.platform.implemented or plan.blocked:
         raise ValueError(plan.platform.reason)
     home = Path.home()
-    xdgConfig = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
-    xdgCache = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache"))
-    xdgState = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
-    codexHome = Path(os.environ.get("CODEX_HOME", home / ".codex"))
-    agentsHome = home / ".agents"
+    xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+    xdg_cache = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache"))
+    xdg_state = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
+    agents_home = home / ".agents"
     if any(
         not path.resolve().is_relative_to(home.resolve())
-        for path in (xdgConfig, xdgCache, xdgState)
+        for path in (xdg_config, xdg_cache, xdg_state)
     ):
         raise ValueError("XDG paths outside home require a separate scoped install")
-    historyDirectory = xdgState / "zsh"
-    for parent in (historyDirectory, *historyDirectory.parents):
+    history_directory = xdg_state / "zsh"
+    for parent in (history_directory, *history_directory.parents):
         if parent == home:
             break
         if parent.is_symlink():
             raise ValueError("Zsh history path traverses a symlink")
-    assets = _assetTargets(root, xdgConfig, codexHome, agentsHome, terminalDev)
-    manifestPath = agentsHome / "manifest.json"
-    previous = json.loads(manifestPath.read_text()) if manifestPath.exists() else {"assets": {}}
-    previousHashes = previous.get("assets", {})
+    assets = _asset_targets(root, xdg_config, codex_home, agents_home, terminal_dev)
+    manifest_path = agents_home / "manifest.json"
+    previous = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"assets": {}}
+    previous_hashes = previous.get("assets", {})
     for target, source in assets.items():
         if target.is_symlink():
             raise ValueError(f"Asset target is a symlink: {target}")
         if not target.exists():
             continue
         actual = hashlib.sha256(target.read_bytes()).hexdigest()
-        expected = previousHashes.get(str(target))
-        sourceHash = hashlib.sha256(source.read_bytes()).hexdigest()
-        if expected is None and actual != sourceHash:
+        expected = previous_hashes.get(str(target))
+        source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+        if expected is None and actual != source_hash:
             raise ValueError(f"Existing unmanaged asset requires review: {target}")
-        if expected is not None and actual not in {expected, sourceHash}:
+        if expected is not None and actual not in {expected, source_hash}:
             raise ValueError(f"Managed asset was locally edited: {target}")
 
     zshrc = home / ".zshrc"
     bashrc = home / ".bashrc"
     gitconfig = home / ".gitconfig"
-    codexConfig = codexHome / "config.toml"
-    codexRules = codexHome / "AGENTS.md"
-    scopePath = xdgConfig / "agents/scopes.toml"
-    cacheCompletion = xdgCache / "setup-system/codex.zsh"
-    cacheVersion = xdgCache / "setup-system/codex.version"
-    zshBody = (
+    codex_config = codex_home / "config.toml"
+    codex_rules = codex_home / "AGENTS.md"
+    scope_path = xdg_config / "agents/scopes.toml"
+    cache_completion = xdg_cache / "setup-system/codex.zsh"
+    cache_version = xdg_cache / "setup-system/codex.version"
+    zsh_body = (
         'if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/init.zsh" ]; then '
         'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/init.zsh"; fi'
     )
-    zshText = managedBlock(zshrc.read_text() if zshrc.exists() else "", zshBody)
-    bashText = bashrc.read_text() if bashrc.exists() else ""
-    if "# >>> setupSystem >>>" in bashText:
-        bashText = managedBlock(bashText, None)
-    gitText = gitconfig.read_text() if gitconfig.exists() else ""
-    gitText = re.sub(
+    zsh_text = managed_block(zshrc.read_text() if zshrc.exists() else "", zsh_body)
+    bash_text = bashrc.read_text() if bashrc.exists() else ""
+    if "# >>> setupSystem >>>" in bash_text:
+        bash_text = managed_block(bash_text, None)
+    git_text = gitconfig.read_text() if gitconfig.exists() else ""
+    git_text = re.sub(
         r"(?m)^\[include\]\n[ \t]*path[ \t]*=[ \t]*~/setupSystem/git/config[ \t]*\n?",
         "",
-        gitText,
+        git_text,
     )
-    gitBody = "[include]\n    path = " + json.dumps(str(xdgConfig / "git/setup-system.inc"))
-    gitText = managedBlock(gitText, gitBody)
-    codexText = _mergeCodexConfig(codexConfig.read_text() if codexConfig.exists() else "", home)
-    policyText = (root / "assets/agents/policy/AGENTS.md").read_text()
-    if codexRules.is_symlink():
+    git_body = "[include]\n    path = " + json.dumps(str(xdg_config / "git/setup-system.inc"))
+    git_text = managed_block(git_text, git_body)
+    codex_text = _merge_codex_config(
+        codex_config.read_text() if codex_config.exists() else "", home
+    )
+    policy_text = (root / "assets/agents/policy/AGENTS.md").read_text()
+    if codex_rules.is_symlink():
         raise ValueError("Existing Codex AGENTS.md symlink requires review")
     desired: dict[Path, bytes] = {target: source.read_bytes() for target, source in assets.items()}
     desired.update(
         {
-            zshrc: zshText.encode(),
-            gitconfig: gitText.encode(),
-            codexConfig: codexText.encode(),
-            codexRules: policyText.encode(),
+            zshrc: zsh_text.encode(),
+            gitconfig: git_text.encode(),
+            codex_config: codex_text.encode(),
+            codex_rules: policy_text.encode(),
         }
     )
-    if bashrc.exists() and bashrc.read_text() != bashText:
-        desired[bashrc] = bashText.encode()
-    if not scopePath.exists():
-        desired[scopePath] = _scopeConfig(root, home).encode()
+    if bashrc.exists() and bashrc.read_text() != bash_text:
+        desired[bashrc] = bash_text.encode()
+    if not scope_path.exists():
+        desired[scope_path] = _scope_config(root, home).encode()
 
     command = shutil.which("codex")
     completion: bytes | None = None
     version: bytes | None = None
     if command:
-        versionRun = subprocess.run(
+        version_run = subprocess.run(
             [command, "--version"], capture_output=True, timeout=15, check=False
         )
-        if versionRun.returncode == 0:
-            version = versionRun.stdout.strip() + b"\n"
+        if version_run.returncode == 0:
+            version = version_run.stdout.strip() + b"\n"
             if (
-                not cacheVersion.exists()
-                or cacheVersion.read_bytes() != version
-                or not cacheCompletion.exists()
+                not cache_version.exists()
+                or cache_version.read_bytes() != version
+                or not cache_completion.exists()
             ):
                 output = subprocess.run(
                     [command, "completion", "zsh"], capture_output=True, timeout=30, check=False
@@ -176,21 +178,21 @@ def applyConfiguration(
                     raise RuntimeError("Codex Zsh completion generation failed")
                 completion = output.stdout
     if completion is not None and version is not None:
-        desired[cacheCompletion] = completion
-        desired[cacheVersion] = version
+        desired[cache_completion] = completion
+        desired[cache_version] = version
 
-    assetHashes = {
+    asset_hashes = {
         str(target): hashlib.sha256(source.read_bytes()).hexdigest()
         for target, source in assets.items()
     }
-    manifest = {"version": 1, "assets": {**previousHashes, **assetHashes}}
-    desired[manifestPath] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
-    backup = newBackup([path for path in desired if path.exists()])
-    historyDirectory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if agentsHome.exists() and agentsHome.stat().st_mode & 0o200 == 0:
-        agentsHome.chmod(0o700)
+    manifest = {"version": 1, "assets": {**previous_hashes, **asset_hashes}}
+    desired[manifest_path] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    backup = new_backup([path for path in desired if path.exists()])
+    history_directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if agents_home.exists() and agents_home.stat().st_mode & 0o200 == 0:
+        agents_home.chmod(0o700)
     results: list[tuple[str, str]] = []
     for target, content in desired.items():
-        status = atomicWrite(target, content, 0o644 if target in assets else 0o600)
+        status = atomic_write(target, content, 0o644 if target in assets else 0o600)
         results.append((str(target), status))
     return backup, results

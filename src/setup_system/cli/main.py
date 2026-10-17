@@ -14,26 +14,26 @@ from typing import Annotated
 
 import typer
 
-from setup_system.application.apps import appStatus, catalog, installZsh
-from setup_system.application.configuration import applyConfiguration
+from setup_system.application.apps import app_status, catalog, install_zsh
+from setup_system.application.configuration import apply_configuration
 from setup_system.application.happ import (
-    backupHapp,
-    classifyLink,
-    clearLinkClipboard,
-    clipboardCommand,
-    copyLinkToClipboard,
-    formatHappStatus,
-    inspectHapp,
-    restoreHapp,
-    setupHapp,
+    backup_happ,
+    classify_link,
+    clear_link_clipboard,
+    clipboard_command,
+    copy_link_to_clipboard,
+    format_happ_status,
+    inspect_happ,
+    restore_happ,
+    setup_happ,
 )
-from setup_system.application.projectLayout import (
-    activeProjects,
-    applyMigration,
-    formatMigrationPlan,
-    loadLayout,
-    planMigration,
-    prepareOwnerDirectories,
+from setup_system.application.project_layout import (
+    active_projects,
+    apply_migration,
+    format_migration_plan,
+    load_layout,
+    plan_migration,
+    prepare_owner_directories,
 )
 from setup_system.application.rtk import inspect_rtk, install_rtk, plan_rtk, restore_rtk
 from setup_system.application.shell import (
@@ -42,34 +42,34 @@ from setup_system.application.shell import (
     plan_shell,
     restore_shell,
 )
-from setup_system.application.terminalDev import (
-    installArchiveTool,
-    installLanguageTools,
-    installNeovim,
-    installParsers,
-    installPlugins,
-    installSystemTools,
+from setup_system.application.terminal_dev import (
+    install_archive_tool,
+    install_language_tools,
+    install_neovim,
+    install_parsers,
+    install_plugins,
+    install_system_tools,
 )
-from setup_system.planning import createPlan, formatPlan
-from setup_system.storage import newBackup
-from setup_system.storage import restore as restoreBackup
+from setup_system.planning import create_plan, format_plan
+from setup_system.storage import new_backup
+from setup_system.storage import restore as restore_backup
 
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 ROOT = SOURCE_ROOT if (SOURCE_ROOT / "manifests/platforms.toml").is_file() else PACKAGE_ROOT
 app = typer.Typer(help="Debian workstation setup and recovery.", no_args_is_help=True)
-appsApp = typer.Typer(help="Applications and installation sources.")
-agentsApp = typer.Typer(help="Scoped agent configuration.")
-templatesApp = typer.Typer(help="Generic project templates.")
-projectsApp = typer.Typer(help="Open one discovered project root.")
-happApp = typer.Typer(help="Happ desktop package and private-state operations.")
+apps_app = typer.Typer(help="Applications and installation sources.")
+agents_app = typer.Typer(help="Scoped agent configuration.")
+templates_app = typer.Typer(help="Generic project templates.")
+projects_app = typer.Typer(help="Open one discovered project root.")
+happ_app = typer.Typer(help="Happ desktop package and private-state operations.")
 shell_app = typer.Typer(help="Portable Zsh setup for the current user.")
 rtk_app = typer.Typer(help="Pinned Rust Token Killer developer tool.")
-app.add_typer(appsApp, name="apps")
-app.add_typer(agentsApp, name="agents")
-app.add_typer(templatesApp, name="templates")
-app.add_typer(projectsApp, name="projects")
-app.add_typer(happApp, name="happ")
+app.add_typer(apps_app, name="apps")
+app.add_typer(agents_app, name="agents")
+app.add_typer(templates_app, name="templates")
+app.add_typer(projects_app, name="projects")
+app.add_typer(happ_app, name="happ")
 app.add_typer(shell_app, name="shell")
 app.add_typer(rtk_app, name="rtk")
 
@@ -217,8 +217,8 @@ def shell_restore(
 @app.command()
 def plan(profile: Annotated[str, typer.Option(help="base, terminalDev or happ.")] = "base") -> None:
     """Show a read-only plan, including unsupported-platform status."""
-    result = createPlan(ROOT, profile)
-    typer.echo(formatPlan(result))
+    result = create_plan(ROOT, profile)
+    typer.echo(format_plan(result))
     if not result.platform.implemented or result.blocked:
         raise typer.Exit(4)
 
@@ -231,16 +231,16 @@ def apply(
     profile: Annotated[str, typer.Option(help="base, terminalDev or happ.")] = "base",
 ) -> None:
     """Apply the freshly checked user configuration plan."""
-    result = createPlan(ROOT, profile)
+    result = create_plan(ROOT, profile)
     if not result.platform.implemented or result.blocked:
-        typer.echo(formatPlan(result), err=True)
+        typer.echo(format_plan(result), err=True)
         raise typer.Exit(4)
     if not yes:
-        typer.echo(formatPlan(result))
+        typer.echo(format_plan(result))
         if not typer.confirm("Apply user configuration?", default=False):
             raise typer.Exit(2)
     try:
-        backup, statuses = applyConfiguration(ROOT, terminalDev=profile == "terminalDev")
+        backup, statuses = apply_configuration(ROOT, terminal_dev=profile == "terminalDev")
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         typer.echo(f"failed: {exc}", err=True)
         raise typer.Exit(5) from exc
@@ -249,16 +249,16 @@ def apply(
         typer.echo(f"{status}: {path}")
     if profile == "terminalDev":
         try:
-            typer.echo(installNeovim(ROOT, result.platform))
-            for status in installPlugins(ROOT):
+            typer.echo(install_neovim(ROOT, result.platform))
+            for status in install_plugins(ROOT):
                 typer.echo(status)
-            for toolName in ("stylua", "tree-sitter"):
-                typer.echo(installArchiveTool(ROOT, result.platform, toolName))
-            for status in installLanguageTools(ROOT):
+            for tool_name in ("stylua", "tree-sitter"):
+                typer.echo(install_archive_tool(ROOT, result.platform, tool_name))
+            for status in install_language_tools(ROOT):
                 typer.echo(status)
-            typer.echo(installParsers(ROOT))
-            toolStatus, blocked = installSystemTools(ROOT, result.platform)
-            typer.echo(toolStatus)
+            typer.echo(install_parsers(ROOT))
+            tool_status, blocked = install_system_tools(ROOT, result.platform)
+            typer.echo(tool_status)
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
             typer.echo(f"terminalDev failed: {exc}", err=True)
             raise typer.Exit(5) from exc
@@ -266,8 +266,8 @@ def apply(
             raise typer.Exit(4)
     if profile == "happ":
         try:
-            typer.echo(setupHapp(ROOT, result.platform))
-            typer.echo(formatHappStatus(inspectHapp(result.platform)))
+            typer.echo(setup_happ(ROOT, result.platform))
+            typer.echo(format_happ_status(inspect_happ(result.platform)))
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
             typer.echo(f"Happ setup failed: {exc}", err=True)
             raise typer.Exit(5) from exc
@@ -278,10 +278,10 @@ def doctor(
     profile: Annotated[str, typer.Option(help="base, terminalDev or happ.")] = "base",
 ) -> None:
     """Inspect the active host without changing it."""
-    result = createPlan(ROOT, profile)
-    typer.echo(formatPlan(result).splitlines()[0])
+    result = create_plan(ROOT, profile)
+    typer.echo(format_plan(result).splitlines()[0])
     for name, entry in catalog(ROOT).items():
-        typer.echo(f"{name}: {appStatus(entry)}")
+        typer.echo(f"{name}: {app_status(entry)}")
     for name in ("docker", "zsh", "codex", "uv"):
         typer.echo(f"command {name}: {shutil.which(name) or 'absent'}")
     if profile == "terminalDev":
@@ -305,14 +305,14 @@ def doctor(
             f"lazy.nvim: {'present' if (data / 'nvim/lazy/lazy.nvim').is_dir() else 'missing'}"
         )
     if profile == "happ":
-        typer.echo(formatHappStatus(inspectHapp(result.platform)))
+        typer.echo(format_happ_status(inspect_happ(result.platform)))
     if not result.platform.implemented or result.blocked:
         raise typer.Exit(4)
 
 
 @app.command()
 def backup(
-    includeVault: Annotated[
+    include_vault: Annotated[
         bool, typer.Option("--include-vault", help="Also capture the selected Obsidian vault.")
     ] = False,
     vault: Annotated[
@@ -323,27 +323,27 @@ def backup(
     """Create a private hash-checked backup of user configuration."""
     if profile == "happ":
         try:
-            typer.echo(str(backupHapp()))
+            typer.echo(str(backup_happ()))
         except (OSError, ValueError, RuntimeError) as exc:
             typer.echo(f"Happ backup blocked: {exc}", err=True)
             raise typer.Exit(4) from exc
         return
     home = Path.home()
     config = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
-    codexHome = Path(os.environ.get("CODEX_HOME", home / ".codex"))
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     files = [
         home / ".zshrc",
         home / ".bashrc",
         home / ".gitconfig",
-        codexHome / "config.toml",
-        codexHome / "AGENTS.md",
+        codex_home / "config.toml",
+        codex_home / "AGENTS.md",
     ]
     files += list((config / "zsh").glob("*.zsh")) + list((config / "git").glob("*.inc"))
     files += list((home / ".agents").rglob("*.md"))
     if profile == "terminalDev":
         files += [item for item in (config / "nvim").rglob("*") if item.is_file()]
         files += [item for item in (config / "tmux").rglob("*") if item.is_file()]
-    if includeVault:
+    if include_vault:
         source = vault or home / "Obsidian Vault/Хранилище"
         if not source.is_dir():
             typer.echo("Vault path does not exist; specify --vault.", err=True)
@@ -355,7 +355,7 @@ def backup(
             if candidate.is_file():
                 files.append(candidate)
     try:
-        folder = newBackup(files)
+        folder = new_backup(files)
     except (OSError, ValueError) as exc:
         typer.echo(f"backup failed: {exc}", err=True)
         raise typer.Exit(5) from exc
@@ -364,106 +364,106 @@ def backup(
 
 @app.command()
 def restore(
-    backupId: Annotated[
+    backup_id: Annotated[
         str, typer.Option("--backup", help="Backup ID from the private backup directory.")
     ],
-    dryRun: Annotated[
+    dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show changes without writing (default).")
     ] = True,
-    applyChanges: Annotated[bool, typer.Option("--apply", help="Restore verified files.")] = False,
+    apply_changes: Annotated[bool, typer.Option("--apply", help="Restore verified files.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Confirm non-interactive restore.")] = False,
-    replaceCurrent: Annotated[
+    replace_current: Annotated[
         bool,
         typer.Option("--replaceCurrent", help="Back up and replace conflicting current files."),
     ] = False,
 ) -> None:
     """Verify a backup and optionally restore its files."""
-    if applyChanges:
-        platformAdapter = createPlan(ROOT).platform
-        if not platformAdapter.implemented:
-            typer.echo(platformAdapter.reason, err=True)
+    if apply_changes:
+        platform_adapter = create_plan(ROOT).platform
+        if not platform_adapter.implemented:
+            typer.echo(platform_adapter.reason, err=True)
             raise typer.Exit(4)
-    if applyChanges and not yes:
+    if apply_changes and not yes:
         typer.echo("Restore requires --apply --yes.", err=True)
         raise typer.Exit(2)
-    if replaceCurrent and not applyChanges:
+    if replace_current and not apply_changes:
         typer.echo("--replaceCurrent requires --apply --yes.", err=True)
         raise typer.Exit(2)
     try:
-        statuses = restoreBackup(backupId, apply=applyChanges, replaceCurrent=replaceCurrent)
+        statuses = restore_backup(backup_id, apply=apply_changes, replace_current=replace_current)
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
         typer.echo(f"restore failed: {exc}", err=True)
         raise typer.Exit(5) from exc
     for path, status in statuses:
         typer.echo(f"{status}: {path}")
-    if applyChanges and any(status == "conflict" for _, status in statuses):
+    if apply_changes and any(status == "conflict" for _, status in statuses):
         typer.echo(
             "Conflicts preserved; use --replaceCurrent only after reviewing dry-run.", err=True
         )
         raise typer.Exit(4)
-    if dryRun and not applyChanges:
+    if dry_run and not apply_changes:
         typer.echo("dry-run: no files changed")
 
 
-@happApp.command("doctor")
-def happDoctor() -> None:
+@happ_app.command("doctor")
+def happ_doctor() -> None:
     """Read safe package, native-autostart and routing categories only."""
-    platformAdapter = createPlan(ROOT, "happ").platform
-    typer.echo(formatHappStatus(inspectHapp(platformAdapter)))
-    if not platformAdapter.implemented:
+    platform_adapter = create_plan(ROOT, "happ").platform
+    typer.echo(format_happ_status(inspect_happ(platform_adapter)))
+    if not platform_adapter.implemented:
         raise typer.Exit(4)
 
 
-def _requireHappPlatform() -> None:
-    platformAdapter = createPlan(ROOT, "happ").platform
-    if not platformAdapter.implemented:
-        typer.echo(platformAdapter.reason, err=True)
+def _require_happ_platform() -> None:
+    platform_adapter = create_plan(ROOT, "happ").platform
+    if not platform_adapter.implemented:
+        typer.echo(platform_adapter.reason, err=True)
         raise typer.Exit(4)
 
 
-@happApp.command("setup")
-def happSetup(
+@happ_app.command("setup")
+def happ_setup(
     yes: Annotated[bool, typer.Option("--yes", help="Apply a missing verified package.")] = False,
     interactive: Annotated[
         bool, typer.Option("--interactive", help="Offer optional local link handoff after setup.")
     ] = False,
 ) -> None:
     """Use the existing app, or install/stage the pinned official package."""
-    result = createPlan(ROOT, "happ")
-    typer.echo(formatPlan(result))
+    result = create_plan(ROOT, "happ")
+    typer.echo(format_plan(result))
     if not result.platform.implemented or result.blocked:
         raise typer.Exit(4)
     if not yes:
         typer.echo("Use --yes after reviewing this plan; no changes were made.")
         return
-    status = setupHapp(ROOT, result.platform)
+    status = setup_happ(ROOT, result.platform)
     typer.echo(status)
-    typer.echo(formatHappStatus(inspectHapp(result.platform)))
+    typer.echo(format_happ_status(inspect_happ(result.platform)))
     if interactive:
-        if clipboardCommand() is None:
+        if clipboard_command() is None:
             typer.echo(
                 "needsManualAction: clipboard handoff unavailable; use Happ's + import UI directly."
             )
         else:
-            _handoffLinks(routingProfile=False, repeat=True)
-            _handoffLinks(routingProfile=True, repeat=False)
+            _handoff_links(routing_profile=False, repeat=True)
+            _handoff_links(routing_profile=True, repeat=False)
 
 
-def _handoffLinks(*, routingProfile: bool, repeat: bool) -> None:
-    if clipboardCommand() is None:
+def _handoff_links(*, routing_profile: bool, repeat: bool) -> None:
+    if clipboard_command() is None:
         typer.echo("needsManualAction: no supported clipboard; enter the link directly in Happ.")
         return
     if not sys.stdin.isatty():
         typer.echo("needsManualAction: private link input requires a local terminal.")
         return
     while True:
-        label = "routing profile" if routingProfile else "subscription or configuration"
+        label = "routing profile" if routing_profile else "subscription or configuration"
         value = getpass.getpass(f"Optional {label} link (empty skips): ")
         if not value:
             typer.echo("skipped: no link entered")
             return
         try:
-            kind = classifyLink(value, routingProfile=routingProfile)
+            kind = classify_link(value, routing_profile=routing_profile)
         except ValueError as exc:
             typer.echo(str(exc), err=True)
             continue
@@ -473,7 +473,7 @@ def _handoffLinks(*, routingProfile: bool, repeat: bool) -> None:
             )
             return
         try:
-            copyLinkToClipboard(value)
+            copy_link_to_clipboard(value)
             typer.echo(f"Clipboard handoff: {kind}. In Happ use + and import from clipboard.")
             typer.echo(
                 "Review name collisions and changed app settings; "
@@ -481,7 +481,7 @@ def _handoffLinks(*, routingProfile: bool, repeat: bool) -> None:
             )
             input("After Happ reports the result, press Enter to clear this clipboard handoff. ")
         finally:
-            clearLinkClipboard()
+            clear_link_clipboard()
             value = ""
         typer.echo(
             "needsManualCheck: verify the object inside Happ; no import result was inferred."
@@ -490,52 +490,52 @@ def _handoffLinks(*, routingProfile: bool, repeat: bool) -> None:
             return
 
 
-@happApp.command("addSubscription")
-def happAddSubscription() -> None:
+@happ_app.command("addSubscription")
+def happ_add_subscription() -> None:
     """Offer optional local terminal-to-Happ clipboard handoff, without storing a URL."""
-    _requireHappPlatform()
-    _handoffLinks(routingProfile=False, repeat=True)
+    _require_happ_platform()
+    _handoff_links(routing_profile=False, repeat=True)
 
 
-@happApp.command("configureRouting")
-def happConfigureRouting() -> None:
+@happ_app.command("configureRouting")
+def happ_configure_routing() -> None:
     """Offer a separate routing-profile handoff; never activate a connection here."""
-    _requireHappPlatform()
-    typer.echo(formatHappStatus(inspectHapp()))
-    _handoffLinks(routingProfile=True, repeat=False)
+    _require_happ_platform()
+    typer.echo(format_happ_status(inspect_happ()))
+    _handoff_links(routing_profile=True, repeat=False)
 
 
-@happApp.command("configureAutostart")
-def happConfigureAutostart() -> None:
+@happ_app.command("configureAutostart")
+def happ_configure_autostart() -> None:
     """Verify Happ's own setting and registration without editing its private format."""
-    _requireHappPlatform()
-    status = inspectHapp()
-    typer.echo(formatHappStatus(status))
-    if status.nativeAutostart == status.loginRegistration == "enabled":
+    _require_happ_platform()
+    status = inspect_happ()
+    typer.echo(format_happ_status(status))
+    if status.native_autostart == status.login_registration == "enabled":
         typer.echo("unchanged: Happ native autostart is enabled; next login needsManualCheck")
     else:
         typer.echo("needsManualAction: enable launch at login inside Happ, then rerun this command")
         raise typer.Exit(4)
 
 
-@happApp.command("backup")
-def happBackup() -> None:
+@happ_app.command("backup")
+def happ_backup() -> None:
     """Back up private Linux Happ state with SQLite's consistent backup API."""
     try:
-        typer.echo(str(backupHapp()))
+        typer.echo(str(backup_happ()))
     except (OSError, ValueError, RuntimeError) as exc:
         typer.echo(f"Happ backup blocked: {exc}", err=True)
         raise typer.Exit(4) from exc
 
 
-@happApp.command("restore")
-def happRestore(
-    backupId: Annotated[str, typer.Option("--backup", help="Private Happ backup ID.")],
-    applyChanges: Annotated[
+@happ_app.command("restore")
+def happ_restore(
+    backup_id: Annotated[str, typer.Option("--backup", help="Private Happ backup ID.")],
+    apply_changes: Annotated[
         bool, typer.Option("--apply", help="Restore while Happ is closed.")
     ] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Confirm restore.")] = False,
-    replaceCurrent: Annotated[
+    replace_current: Annotated[
         bool,
         typer.Option(
             "--replaceCurrent", help="Replace reviewed current settings after backing them up."
@@ -543,39 +543,39 @@ def happRestore(
     ] = False,
 ) -> None:
     """Preview or explicitly restore a verified Happ snapshot."""
-    _requireHappPlatform()
-    if applyChanges and not yes:
+    _require_happ_platform()
+    if apply_changes and not yes:
         raise typer.BadParameter("Restore requires --apply --yes")
     try:
-        actions = restoreHapp(backupId, apply=applyChanges, replaceCurrent=replaceCurrent)
+        actions = restore_happ(backup_id, apply=apply_changes, replace_current=replace_current)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         typer.echo(f"Happ restore blocked: {exc}", err=True)
         raise typer.Exit(4) from exc
     for path, status in actions:
         typer.echo(f"{status}: {path}")
-    if not applyChanges:
+    if not apply_changes:
         typer.echo("dry-run: no files changed")
 
 
-@appsApp.command("list")
-def appsList() -> None:
+@apps_app.command("list")
+def apps_list() -> None:
     """Show declared sources and actual installation evidence."""
     for name, entry in catalog(ROOT).items():
-        versions = ",".join(entry.supportedDebianVersions or ()) or "audit-only"
+        versions = ",".join(entry.supported_debian_versions or ()) or "audit-only"
         typer.echo(
-            f"{name}: {appStatus(entry)} | Debian {versions} | {entry.method} | {entry.source}"
+            f"{name}: {app_status(entry)} | Debian {versions} | {entry.method} | {entry.source}"
         )
 
 
-@appsApp.command("install")
-def appsInstall(
+@apps_app.command("install")
+def apps_install(
     name: str,
     yes: Annotated[
         bool, typer.Option("--yes", help="Confirm the selected package action.")
     ] = False,
 ) -> None:
     """Install one supported Debian package after checking its current state."""
-    result = createPlan(ROOT)
+    result = create_plan(ROOT)
     if not result.platform.implemented:
         typer.echo(result.platform.reason, err=True)
         raise typer.Exit(4)
@@ -588,14 +588,14 @@ def appsInstall(
         raise typer.Exit(2)
     entry = entries[name]
     if (
-        entry.supportedDebianVersions is None
-        or result.platform.version not in entry.supportedDebianVersions
+        entry.supported_debian_versions is None
+        or result.platform.version not in entry.supported_debian_versions
     ):
         typer.echo(
             "UNSUPPORTED: no verified Debian provider for this application/version.", err=True
         )
         raise typer.Exit(4)
-    status = appStatus(entry)
+    status = app_status(entry)
     if status == "unknown":
         typer.echo("blocked: package status could not be established.", err=True)
         raise typer.Exit(4)
@@ -603,10 +603,10 @@ def appsInstall(
         typer.echo("blocked: existing Docker binary has no verified package source.", err=True)
         raise typer.Exit(4)
     if name == "docker" and status.startswith("deb "):
-        from setup_system.adapters.debian.docker import installDocker
+        from setup_system.adapters.debian.docker import install_docker
 
         try:
-            typer.echo(installDocker())
+            typer.echo(install_docker())
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             typer.echo(f"blocked: {exc}", err=True)
             raise typer.Exit(4) from exc
@@ -626,44 +626,44 @@ def appsInstall(
         raise typer.Exit(4)
     try:
         if name == "docker":
-            from setup_system.adapters.debian.docker import installDocker
+            from setup_system.adapters.debian.docker import install_docker
 
-            typer.echo(installDocker())
+            typer.echo(install_docker())
         else:
-            typer.echo(installZsh(entry))
+            typer.echo(install_zsh(entry))
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         typer.echo(f"failed: {exc}", err=True)
         raise typer.Exit(5) from exc
 
 
-@agentsApp.command("doctor")
-def agentsDoctor() -> None:
+@agents_app.command("doctor")
+def agents_doctor() -> None:
     """Inspect installed rules and profiles; no sandbox claim is inferred."""
     home = Path.home()
-    codexHome = Path(os.environ.get("CODEX_HOME", home / ".codex"))
-    rules = codexHome / "AGENTS.md"
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
+    rules = codex_home / "AGENTS.md"
     shared = home / ".agents/policy/AGENTS.md"
     typer.echo(f"Codex entry: {'present' if rules.is_file() else 'missing'}")
     typer.echo(f"Shared policy: {'present' if shared.is_file() else 'missing'}")
     matches = rules.is_file() and shared.is_file() and rules.read_bytes() == shared.read_bytes()
     typer.echo(f"Entry matches policy: {matches}")
     for name in ("review", "project", "network"):
-        path = codexHome / f"{name}.config.toml"
+        path = codex_home / f"{name}.config.toml"
         typer.echo(f"{name} profile: {'present' if path.is_file() else 'missing'}")
     typer.echo("Permission enforcement requires separate sentinel probes in a new scoped session.")
 
 
-@agentsApp.command("launch")
-def agentsLaunch(
+@agents_app.command("launch")
+def agents_launch(
     scope: str,
     mode: Annotated[str, typer.Option(help="review, project or network.")] = "review",
 ) -> None:
     """Open Codex in one allowlisted project root with a named permission profile."""
     if mode not in {"review", "project", "network"}:
         raise typer.BadParameter("Choose review, project or network")
-    layout = loadLayout(ROOT)
+    layout = load_layout(ROOT)
     try:
-        projects = activeProjects(layout)
+        projects = active_projects(layout)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     if scope in {project.id for project in layout.projects}:
@@ -700,119 +700,119 @@ def agentsLaunch(
     )
 
 
-@templatesApp.command("list")
-def templatesList() -> None:
+@templates_app.command("list")
+def templates_list() -> None:
     """Show the two declared generic template sources and their local state."""
-    layout = loadLayout(ROOT)
-    projects = activeProjects(layout)
+    layout = load_layout(ROOT)
+    projects = active_projects(layout)
     for name in ("serrja/pythonTemplate", "serrja/fastApiTemplate"):
         typer.echo(f"{name}: {projects.get(name, 'not installed')}")
 
 
-@templatesApp.command("path")
-def templatesPath(
+@templates_app.command("path")
+def templates_path(
     name: Annotated[str, typer.Option(help="pythonTemplate or fastApiTemplate.")],
 ) -> None:
     """Resolve an existing template checkout from the shared project catalog."""
     if name not in {"pythonTemplate", "fastApiTemplate"}:
         raise typer.BadParameter("Choose pythonTemplate or fastApiTemplate")
-    source = activeProjects(loadLayout(ROOT)).get(f"serrja/{name}")
+    source = active_projects(load_layout(ROOT)).get(f"serrja/{name}")
     if source is None:
         typer.echo("template source is not installed", err=True)
         raise typer.Exit(4)
     typer.echo(str(source))
 
 
-def _discoverProjects() -> dict[str, Path]:
-    return dict(sorted(activeProjects(loadLayout(ROOT)).items()))
+def _discover_projects() -> dict[str, Path]:
+    return dict(sorted(active_projects(load_layout(ROOT)).items()))
 
 
-@projectsApp.command("list")
-def projectsList() -> None:
+@projects_app.command("list")
+def projects_list() -> None:
     """List exact owned Git roots from the canonical project catalog."""
     try:
-        projects = _discoverProjects()
+        projects = _discover_projects()
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     for name, path in projects.items():
         typer.echo(f"{name}: {path}")
 
 
-@projectsApp.command("planMigration")
-def projectsPlanMigration() -> None:
+@projects_app.command("planMigration")
+def projects_plan_migration() -> None:
     """Inspect old and target paths without creating directories or touching Git."""
-    layout = loadLayout(ROOT)
-    typer.echo(formatMigrationPlan(layout, planMigration(layout)))
+    layout = load_layout(ROOT)
+    typer.echo(format_migration_plan(layout, plan_migration(layout)))
 
 
-@projectsApp.command("move")
-def projectsMove(
+@projects_app.command("move")
+def projects_move(
     name: Annotated[str, typer.Option(help="Exact owner/project ID from projects list.")],
-    backupManifest: Annotated[
+    backup_manifest: Annotated[
         Path,
         typer.Option(
             "--backup-manifest", help="Private manifest for the current full-tree Git backup."
         ),
     ],
     yes: Annotated[bool, typer.Option("--yes", help="Apply one checked relocation.")] = False,
-    acceptOwnerReview: Annotated[
+    accept_owner_review: Annotated[
         bool, typer.Option("--accept-owner-review", help="Keep a reviewed foreign-owner origin.")
     ] = False,
 ) -> None:
     """Move one ordinary checkout on the same filesystem after backup verification."""
-    layout = loadLayout(ROOT)
-    moves = {move.project.id: move for move in planMigration(layout)}
+    layout = load_layout(ROOT)
+    moves = {move.project.id: move for move in plan_migration(layout)}
     move = moves.get(name)
     if move is None:
         raise typer.BadParameter("Choose one exact catalog project ID")
     typer.echo(f"{name}: {move.source or 'absent'} -> {move.project.target} [{move.status}]")
     if not yes:
         raise typer.Exit(2)
-    stateRoot = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+    state_root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
     try:
-        resultPath = applyMigration(
+        result_path = apply_migration(
             layout,
             name,
-            backupManifest=backupManifest,
-            resultDirectory=stateRoot / "setup-system/moves",
-            acceptOwnerReview=acceptOwnerReview,
+            backup_manifest=backup_manifest,
+            result_directory=state_root / "setup-system/moves",
+            accept_owner_review=accept_owner_review,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         typer.echo(f"relocation blocked: {exc}", err=True)
         raise typer.Exit(4) from exc
-    typer.echo(f"relocation verified: {resultPath}")
+    typer.echo(f"relocation verified: {result_path}")
 
 
-@projectsApp.command("prepare")
-def projectsPrepare(
+@projects_app.command("prepare")
+def projects_prepare(
     yes: Annotated[
         bool, typer.Option("--yes", help="Create only owner directories on Debian.")
     ] = False,
 ) -> None:
     """Explicitly prepare the projects root and owner groups on supported Debian."""
-    from setup_system.planning import detectPlatform
+    from setup_system.planning import detect_platform
 
-    platform = detectPlatform()
+    platform = detect_platform()
     if not platform.implemented:
         typer.echo(platform.reason, err=True)
         raise typer.Exit(4)
-    layout = loadLayout(ROOT)
+    layout = load_layout(ROOT)
     if not yes:
         for path in (
-            layout.projectsRoot,
-            *(layout.projectsRoot / group for group in layout.ownerGroups),
+            layout.projects_root,
+            *(layout.projects_root / group for group in layout.owner_groups),
         ):
             typer.echo(f"would create if absent: {path}")
         raise typer.Exit(2)
     try:
-        for path in prepareOwnerDirectories(layout):
+        for path in prepare_owner_directories(layout):
             typer.echo(f"present: {path}")
     except (OSError, ValueError) as exc:
         typer.echo(f"layout blocked: {exc}", err=True)
         raise typer.Exit(4) from exc
 
 
-def _chooseProject(projects: dict[str, Path], name: str | None) -> Path | None:
+def _choose_project(projects: dict[str, Path], name: str | None) -> Path | None:
     if name is None:
         if not sys.stdin.isatty():
             raise typer.BadParameter("Pass --name when stdin is not interactive")
@@ -841,30 +841,30 @@ def _chooseProject(projects: dict[str, Path], name: str | None) -> Path | None:
     return root
 
 
-@projectsApp.command("path")
-def projectsPath(
+@projects_app.command("path")
+def projects_path(
     name: Annotated[str | None, typer.Option(help="Exact name from projects list.")] = None,
 ) -> None:
     """Print one selected path for a shell function without changing the shell cwd."""
     try:
-        projectRoot = _chooseProject(_discoverProjects(), name)
+        project_root = _choose_project(_discover_projects(), name)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-    if projectRoot is not None:
-        typer.echo(str(projectRoot))
+    if project_root is not None:
+        typer.echo(str(project_root))
 
 
-@projectsApp.command("open")
-def projectsOpen(
+@projects_app.command("open")
+def projects_open(
     name: Annotated[str | None, typer.Option(help="Name from projects list.")] = None,
     tmux: Annotated[bool, typer.Option(help="Open in a named tmux session.")] = False,
 ) -> None:
     """Launch Neovim from one selected project root."""
     try:
-        projectRoot = _chooseProject(_discoverProjects(), name)
+        project_root = _choose_project(_discover_projects(), name)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-    if projectRoot is None:
+    if project_root is None:
         typer.echo("cancelled")
         return
     editor = Path.home() / ".local/bin/nvim"
@@ -874,9 +874,13 @@ def projectsOpen(
         command = shutil.which("tmux")
         if command is None:
             raise typer.BadParameter("tmux is unavailable")
-        label = f"{projectRoot.parent.name}-{projectRoot.name}"
-        sessionName = "dev-" + "".join(character for character in label if character.isalnum())[:30]
-        exists = subprocess.run([command, "has-session", "-t", sessionName], timeout=5, check=False)
+        label = f"{project_root.parent.name}-{project_root.name}"
+        session_name = (
+            "dev-" + "".join(character for character in label if character.isalnum())[:30]
+        )
+        exists = subprocess.run(
+            [command, "has-session", "-t", session_name], timeout=5, check=False
+        )
         if exists.returncode:
             subprocess.run(
                 [
@@ -884,20 +888,20 @@ def projectsOpen(
                     "new-session",
                     "-d",
                     "-s",
-                    sessionName,
+                    session_name,
                     "-c",
-                    str(projectRoot),
+                    str(project_root),
                     str(editor),
                 ],
                 timeout=10,
                 check=True,
             )
             subprocess.run(
-                [command, "new-window", "-t", sessionName, "-c", str(projectRoot)],
+                [command, "new-window", "-t", session_name, "-c", str(project_root)],
                 timeout=10,
                 check=True,
             )
         raise typer.Exit(
-            subprocess.run([command, "attach-session", "-t", sessionName], check=False).returncode
+            subprocess.run([command, "attach-session", "-t", session_name], check=False).returncode
         )
-    raise typer.Exit(subprocess.run([str(editor)], cwd=projectRoot, check=False).returncode)
+    raise typer.Exit(subprocess.run([str(editor)], cwd=project_root, check=False).returncode)

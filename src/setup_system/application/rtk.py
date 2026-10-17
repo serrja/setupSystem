@@ -16,7 +16,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from setup_system.storage import atomicWrite, newBackup, stateRoot
+from setup_system.storage import atomic_write, new_backup, state_root
 
 
 @dataclass(frozen=True)
@@ -135,9 +135,9 @@ def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
         verified = inspect_rtk(binary)
         if not verified.product_matches or verified.version != manifest["version"]:
             raise ValueError("Downloaded RTK executable failed product/version verification")
-        backup = newBackup([target])
+        backup = new_backup([target])
         target.parent.mkdir(parents=True, exist_ok=True)
-        atomicWrite(target, binary.read_bytes(), 0o755, preserveExistingMode=False)
+        atomic_write(target, binary.read_bytes(), 0o755, preserve_existing_mode=False)
         record = {
             "backup_id": backup.name,
             "path": str(target),
@@ -146,8 +146,8 @@ def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
             "archive_sha256": expected.lower(),
             "source": f"{release}/{archive_name}",
         }
-        record_path = stateRoot() / "rtk-installs" / f"{backup.name}.json"
-        atomicWrite(record_path, (json.dumps(record, indent=2) + "\n").encode())
+        record_path = state_root() / "rtk-installs" / f"{backup.name}.json"
+        atomic_write(record_path, (json.dumps(record, indent=2) + "\n").encode())
         return "changed: verified official RTK archive installed", backup
 
 
@@ -155,23 +155,23 @@ def restore_rtk(backup_id: str) -> str:
     """Restore the prior binary only when the managed one is still unchanged."""
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
         raise ValueError("Invalid RTK backup ID")
-    record = json.loads((stateRoot() / "rtk-installs" / f"{backup_id}.json").read_text())
+    record = json.loads((state_root() / "rtk-installs" / f"{backup_id}.json").read_text())
     target = Path(record["path"])
     if not target.is_relative_to(Path.home().resolve()) or target.is_symlink():
         raise ValueError("Unsafe RTK restore target")
     if hashlib.sha256(target.read_bytes()).hexdigest() != record["installed_sha256"]:
         raise ValueError("RTK changed after apply; review before restoring")
-    manifest = json.loads((stateRoot() / "backups" / backup_id / "manifest.json").read_text())
+    manifest = json.loads((state_root() / "backups" / backup_id / "manifest.json").read_text())
     items = [item for item in manifest["items"] if item["source"] == str(target)]
     if len(items) != len(manifest["items"]):
         raise ValueError("RTK backup contains unexpected files")
     if items:
         item = items[0]
-        saved = stateRoot() / "backups" / backup_id / item["backup"]
+        saved = state_root() / "backups" / backup_id / item["backup"]
         content = saved.read_bytes()
         if hashlib.sha256(content).hexdigest() != item["sha256"]:
             raise ValueError("RTK backup checksum mismatch")
-        atomicWrite(target, content, int(item["mode"]), preserveExistingMode=False)
+        atomic_write(target, content, int(item["mode"]), preserve_existing_mode=False)
     else:
         target.unlink()
     return "restored"

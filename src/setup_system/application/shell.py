@@ -15,7 +15,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from setup_system.storage import atomicWrite, managedBlock, newBackup, stateRoot
+from setup_system.storage import atomic_write, managed_block, new_backup, state_root
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ def _targets(root: Path, status: ShellStatus) -> dict[Path, bytes]:
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError(f"Startup target is not a regular file: {path}")
         original = path.read_text() if path.exists() else ""
-        targets[path] = managedBlock(original, body).encode()
+        targets[path] = managed_block(original, body).encode()
     for path in targets:
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError(f"Managed shell target is not a regular file: {path}")
@@ -173,7 +173,7 @@ def apply_shell(root: Path) -> tuple[Path, list[tuple[Path, str]], ShellStatus]:
     if not history_dir.resolve().is_relative_to(status.home):
         raise ValueError("XDG_STATE_HOME outside home requires a scoped install")
     validate_shell(root, status.zsh)
-    backup = newBackup(list(targets))
+    backup = new_backup(list(targets))
     record = {
         "backup_id": backup.name,
         "login_shell_before": str(status.login_shell),
@@ -183,16 +183,16 @@ def apply_shell(root: Path) -> tuple[Path, list[tuple[Path, str]], ShellStatus]:
             for path, data in targets.items()
         },
     }
-    state_dir = stateRoot() / "shell-applies"
+    state_dir = state_root() / "shell-applies"
     state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     state_dir.chmod(0o700)
     results: list[tuple[Path, str]] = []
     for path, data in targets.items():
-        results.append((path, atomicWrite(path, data, 0o644)))
+        results.append((path, atomic_write(path, data, 0o644)))
     history_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     history_dir.chmod(0o700)
     record_path = state_dir / f"{backup.name}.json"
-    atomicWrite(record_path, (json.dumps(record, indent=2) + "\n").encode())
+    atomic_write(record_path, (json.dumps(record, indent=2) + "\n").encode())
     return backup, results, status
 
 
@@ -225,10 +225,10 @@ def restore_shell(backup_id: str) -> list[tuple[Path, str]]:
     """Restore only files still identical to this apply's managed output."""
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
         raise ValueError("Invalid shell backup ID")
-    record = json.loads((stateRoot() / "shell-applies" / f"{backup_id}.json").read_text())
+    record = json.loads((state_root() / "shell-applies" / f"{backup_id}.json").read_text())
     if record["backup_id"] != backup_id:
         raise ValueError("Shell backup ID mismatch")
-    backup = stateRoot() / "backups" / backup_id
+    backup = state_root() / "backups" / backup_id
     manifest = json.loads((backup / "manifest.json").read_text())
     originals = {entry["source"]: entry for entry in manifest["items"]}
     prepared: list[tuple[Path, bytes | None, int]] = []
@@ -255,6 +255,6 @@ def restore_shell(backup_id: str) -> list[tuple[Path, str]]:
         if content is None:
             path.unlink()
         else:
-            atomicWrite(path, content, mode, preserveExistingMode=False)
+            atomic_write(path, content, mode, preserve_existing_mode=False)
         results.append((path, "restored"))
     return results

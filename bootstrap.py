@@ -25,7 +25,7 @@ RELEASE_BASE = f"https://releases.astral.sh/github/uv/releases/download/{UV_VERS
 ROOT = Path(__file__).resolve().parent
 
 
-def _readLimited(url: str, limit: int) -> bytes:
+def _read_limited(url: str, limit: int) -> bytes:
     with urlopen(url, timeout=30) as response:
         final = urlsplit(response.geturl())
         if final.scheme != "https" or final.hostname not in {
@@ -41,7 +41,7 @@ def _readLimited(url: str, limit: int) -> bytes:
     return data
 
 
-def _managedUv(platformKey: tuple[str, str]) -> Path:
+def _managed_uv(platform_key: tuple[str, str]) -> Path:
     def matches(path: str) -> bool:
         result = subprocess.run(
             [path, "--version"], capture_output=True, text=True, timeout=10, check=False
@@ -53,30 +53,30 @@ def _managedUv(platformKey: tuple[str, str]) -> Path:
     if executable and matches(executable):
         return Path(executable)
 
-    targetDir = (
+    target_dir = (
         Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "setup-system/bin"
     )
-    target = targetDir / "uv"
+    target = target_dir / "uv"
     if target.is_file() and not target.is_symlink() and matches(str(target)):
         return target
 
-    asset = f"uv-{UV_PLATFORMS[platformKey]}.tar.gz"
-    archive = _readLimited(f"{RELEASE_BASE}/{asset}", 80 * 1024 * 1024)
-    checksum = _readLimited(f"{RELEASE_BASE}/{asset}.sha256", 4096).decode("ascii").split()[0]
+    asset = f"uv-{UV_PLATFORMS[platform_key]}.tar.gz"
+    archive = _read_limited(f"{RELEASE_BASE}/{asset}", 80 * 1024 * 1024)
+    checksum = _read_limited(f"{RELEASE_BASE}/{asset}.sha256", 4096).decode("ascii").split()[0]
     if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
         raise RuntimeError("Invalid uv checksum format")
     if hashlib.sha256(archive).hexdigest() != checksum.lower():
         raise RuntimeError("uv archive checksum mismatch")
 
-    targetDir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
     if target.is_symlink() or any(
         parent.is_symlink() for parent in target.parents if parent != Path("/")
     ):
         raise RuntimeError("Refusing to install uv through a symlink")
     with tempfile.TemporaryDirectory(prefix="setup-system-uv-") as staging:
-        archivePath = Path(staging) / asset
-        archivePath.write_bytes(archive)
-        with tarfile.open(archivePath, "r:gz") as bundle:
+        archive_path = Path(staging) / asset
+        archive_path.write_bytes(archive)
+        with tarfile.open(archive_path, "r:gz") as bundle:
             members = [
                 member
                 for member in bundle.getmembers()
@@ -87,7 +87,7 @@ def _managedUv(platformKey: tuple[str, str]) -> Path:
             source = bundle.extractfile(members[0])
             if source is None:
                 raise RuntimeError("Could not read uv binary")
-            candidate = targetDir / f".uv-{os.getpid()}"
+            candidate = target_dir / f".uv-{os.getpid()}"
             with candidate.open("wb") as output:
                 shutil.copyfileobj(source, output)
             candidate.chmod(0o755)
@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(ROOT / "src"))
-    from setup_system.planning import createPlan, formatPlan
+    from setup_system.planning import create_plan, format_plan
 
     if not arguments or arguments[0] in {"-h", "--help"}:
         print(
@@ -124,25 +124,25 @@ def main(argv: list[str] | None = None) -> int:
         profile = arguments[position + 1]
         del arguments[position : position + 2]
     if arguments[0] == "plan" and len(arguments) == 1:
-        plan = createPlan(ROOT, profile)
-        print(formatPlan(plan))
+        plan = create_plan(ROOT, profile)
+        print(format_plan(plan))
         return 0 if plan.platform.implemented and not plan.blocked else 4
     if arguments[0] != "apply" or any(arg != "--yes" for arg in arguments[1:]):
         print("Unknown bootstrap arguments. Use --help.", file=sys.stderr)
         return 2
-    plan = createPlan(ROOT, profile)
+    plan = create_plan(ROOT, profile)
     if not plan.platform.implemented or plan.blocked:
-        print(formatPlan(plan), file=sys.stderr)
+        print(format_plan(plan), file=sys.stderr)
         return 4
     if "--yes" not in arguments:
         if not sys.stdin.isatty():
             print("apply needs --yes in a non-interactive session.", file=sys.stderr)
             return 2
-        print(formatPlan(plan))
+        print(format_plan(plan))
         if input("Apply user configuration? [y/N] ").strip().lower() not in {"y", "yes"}:
             return 2
     try:
-        uv = _managedUv((plan.platform.distribution, plan.platform.architecture))
+        uv = _managed_uv((plan.platform.distribution, plan.platform.architecture))
         subprocess.run([str(uv), "python", "install", "3.14"], cwd=ROOT, timeout=600, check=True)
         with tempfile.TemporaryDirectory(prefix="setup-system-wheel-") as temporary:
             stage = Path(temporary)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import platform as systemPlatform
+import platform as system_platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,20 +38,20 @@ class Plan:
     blocked: tuple[str, ...] = ()
 
 
-def detectPlatform(
-    osRelease: Path = Path("/etc/os-release"),
+def detect_platform(
+    os_release: Path = Path("/etc/os-release"),
     architecture: str | None = None,
-    systemName: str | None = None,
+    system_name: str | None = None,
 ) -> Platform:
-    family = systemName or systemPlatform.system()
-    arch = architecture or systemPlatform.machine()
+    family = system_name or system_platform.system()
+    arch = architecture or system_platform.machine()
     if arch == "aarch64":
         arch = "arm64"
     if family != "Linux":
         return Platform(family.lower(), "unknown", arch, False, False, "UNSUPPORTED platform")
     fields: dict[str, str] = {}
     try:
-        for line in osRelease.read_text(encoding="utf-8").splitlines():
+        for line in os_release.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.startswith("#"):
                 key, value = line.split("=", 1)
                 fields[key] = value.strip().strip('"')
@@ -86,10 +86,10 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def createPlan(root: Path, profile: str = "base") -> Plan:
+def create_plan(root: Path, profile: str = "base") -> Plan:
     if profile not in {"base", "terminalDev", "happ"}:
         raise ValueError("Unknown setup profile")
-    platform = detectPlatform()
+    platform = detect_platform()
     if not platform.implemented:
         return Plan(platform, (), ())
     if profile == "terminalDev" and platform.architecture == "arm64":
@@ -100,18 +100,18 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
             ("terminalDev Linux arm64 archives and parser toolchain are not pinned",),
         )
     home = Path.home()
-    xdgConfig = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
-    xdgState = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
-    codexHome = Path(os.environ.get("CODEX_HOME", home / ".codex"))
+    xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+    xdg_state = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
+    codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     targets = (
         home / ".zshrc",
         home / ".bashrc",
         home / ".gitconfig",
-        codexHome / "AGENTS.md",
-        codexHome / "config.toml",
-        xdgConfig / "zsh/init.zsh",
-        xdgState / "zsh",
-        xdgConfig / "git/setup-system.inc",
+        codex_home / "AGENTS.md",
+        codex_home / "config.toml",
+        xdg_config / "zsh/init.zsh",
+        xdg_state / "zsh",
+        xdg_config / "git/setup-system.inc",
     )
     observed = tuple((str(path), _digest(path)) for path in targets)
     steps: tuple[Step, ...] = (
@@ -215,7 +215,7 @@ def createPlan(root: Path, profile: str = "base") -> Plan:
     return Plan(platform, steps, observed)
 
 
-def formatPlan(plan: Plan) -> str:
+def format_plan(plan: Plan) -> str:
     p = plan.platform
     lines = [f"Platform: {p.distribution} {p.version} {p.architecture} — {p.reason}"]
     if not p.implemented:
