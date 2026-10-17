@@ -1,10 +1,10 @@
-# Terminal profile
+# Терминальный профиль
 
-`assets/zsh/` is the sole source of the managed Zsh modules. Managed blocks in the existing `.zshenv`, `.zprofile`, and `.zshrc` load the appropriate modules; `.zshenv` performs no initialization. `ZDOTDIR` is respected and never changed. Existing text around each block is preserved and is not copied into source assets.
+`assets/zsh/` — единственный источник управляемых модулей Zsh. Блоки в существующих `.zshenv`, `.zprofile` и `.zshrc` подключают нужные модули. `.zshenv` не выполняет инициализацию. Настроенный `ZDOTDIR` сохраняется; текст пользователя вокруг блоков остаётся на месте.
 
-## 🚀 Daily work
+## 🚀 Повседневная работа
 
-The profile adds `$HOME/.local/bin` once to `PATH`, selects working Neovim for `EDITOR`/`VISUAL`, loads local completion definitions without a startup dump file, and uses a small prompt and history policy. An existing `~/.zsh_history` remains in use; a new setup uses `${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history`, whose directory is prepared by explicit shell apply. The Codex completion source is generated at apply time, never when opening a terminal. No project, VPN, installer, package sync or network process starts from the shell files.
+Профиль добавляет `$HOME/.local/bin` в `PATH` без повторов, назначает работающий Neovim для `EDITOR` и `VISUAL`, загружает локальные completions и задаёт короткий prompt и правила истории. Существующий `~/.zsh_history` продолжает использоваться. Для новой установки история находится в `${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history`; каталог создаёт явная команда `shell apply`. Completion для Codex также создаётся во время применения, а не при каждом открытии терминала. Стартовые файлы не запускают проекты, VPN, установщик, синхронизацию пакетов или сетевой процесс.
 
 ```zsh
 setup-system projects list
@@ -14,11 +14,11 @@ setup-system projects open --name serrja/jobdesk
 setup-system projects open --name serrja/jobdesk --tmux
 ```
 
-`projectCd` asks the same catalog-backed picker used by `projects path` and changes cwd only after a valid path is returned. Empty selection leaves cwd unchanged. Paths with spaces or non-ASCII characters are quoted and never passed through `eval`. The Neovim workflow remains in the [Neovim guide](neovimGuide.md); the [workspace guide](workspaceGuide.md) owns layout and relocation.
+`projectCd` использует выбор проекта из того же каталога, что и `projects path`, и меняет текущий каталог только после получения корректного пути. Пустой выбор оставляет каталог прежним. Пути с пробелами и символами вне ASCII передаются без `eval`. Работа в Neovim описана в [руководстве Neovim](neovimGuide.md), размещение и перенос проектов — в [руководстве workspace](workspaceGuide.md).
 
-## 🛠 Installation and diagnosis
+## 🛠 Установка и диагностика
 
-General `setup-system plan` and `apply` keep the Debian 12/13 gate. On Debian, `apply --profile terminalDev --yes` installs Zsh if absent, applies this same managed profile and requests the current user's login shell through `chsh`. `setup-system shell plan` and `shell apply --yes` configure an already installed Zsh for the current Linux user, including Ubuntu. Apply creates a private backup, verifies isolated startup, writes managed files, and attempts `chsh` only when the executable is registered in `/etc/shells`. If PAM asks for interactive credentials, perform the reported `chsh` in your own terminal; never pass a password to this CLI. A new child login shell verifies startup, while a full graphical next login remains a separate check. Existing terminal sessions and Bash/POSIX scripts stay in place.
+Общие `setup-system plan` и `apply` поддерживают Debian 12/13. На Debian `apply --profile terminalDev --yes` при необходимости устанавливает Zsh, применяет этот профиль и запрашивает смену login shell текущего пользователя через `chsh`. Команды `setup-system shell plan` и `shell apply --yes` настраивают уже установленный Zsh текущего пользователя Linux, в том числе на Ubuntu. Применение создаёт приватный backup, проверяет запуск в изоляции, записывает управляемые файлы и вызывает `chsh` только для пути, зарегистрированного в `/etc/shells`. Если PAM требует интерактивную аутентификацию, выполните показанную команду `chsh` в своём терминале; пароль не передаётся через CLI. Новая дочерняя login shell проверяет запуск, а графический вход потребуется проверить отдельно. Открытые терминалы и Bash/POSIX-скрипты остаются как были.
 
 ```bash
 setup-system shell plan
@@ -27,4 +27,4 @@ setup-system shell doctor
 getent passwd "$(id -un)"
 ```
 
-For a broken user profile, start a clean Zsh with `zsh -f` or use the previous login shell. `setup-system shell restore --backup ID --yes` restores selected managed files only if they still match the applied bytes. The prior login shell can be restored with `chsh -s /bin/bash` when that was the recorded previous value. Preserve history and custom user fragments. Do not source installer code from `.zshrc` or use `exec zsh` in Bash startup.
+Если профиль не запускается, откройте чистый Zsh через `zsh -f` либо прежнюю login shell. `setup-system shell restore --backup ID --yes` восстанавливает только выбранные управляемые файлы, если их байты с момента применения не изменились. Если сохранённой прежней shell была `/bin/bash`, верните её командой `chsh -s /bin/bash`. Сохраните историю и пользовательские дополнения. Не подключайте код установщика из `.zshrc` и не добавляйте `exec zsh` в стартовые файлы Bash.
