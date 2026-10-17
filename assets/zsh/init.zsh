@@ -3,11 +3,6 @@
 [[ -n ${SETUP_SYSTEM_ZSH_LOADED:-} ]] && return 0
 typeset -g SETUP_SYSTEM_ZSH_LOADED=1
 
-if [[ -d $HOME/.local/opt/zsh/usr/share/zsh/functions ]]; then
-    module_path=( $HOME/.local/opt/zsh/usr/lib/*/zsh/*(N/) $module_path )
-    fpath=( $HOME/.local/opt/zsh/usr/share/zsh/functions/**/*(N/) )
-fi
-
 source "${0:A:h}/environment.zsh"
 source "${0:A:h}/history.zsh"
 source "${0:A:h}/prompt.zsh"

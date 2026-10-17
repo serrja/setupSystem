@@ -1,10 +1,10 @@
 # Terminal profile
 
-`assets/zsh/` is the sole source of the managed Zsh modules. A managed block in the existing `~/.zshrc` loads `${XDG_CONFIG_HOME:-$HOME/.config}/zsh/init.zsh` for interactive sessions. `ZDOTDIR` is not changed, so the ordinary HOME startup-file discovery remains in place. Existing user text around the managed block is preserved and is not copied into the source assets. There are no custom `.zshenv`, `.zprofile` or `.zlogin` files because this profile needs no global or login-only startup work.
+`assets/zsh/` is the sole source of the managed Zsh modules. Managed blocks in the existing `.zshenv`, `.zprofile`, and `.zshrc` load the appropriate modules; `.zshenv` performs no initialization. `ZDOTDIR` is respected and never changed. Existing text around each block is preserved and is not copied into source assets.
 
 ## 🚀 Daily work
 
-The profile adds `$HOME/.local/bin` once to `PATH`, selects `EDITOR`/`VISUAL` only when unset, loads local completion definitions without a startup dump file, and uses a small prompt and history policy. An existing `~/.zsh_history` remains in use; a new setup uses `${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history`, whose directory is prepared by the explicit Debian apply. The Codex completion source is generated at apply time, never when opening a terminal. No project, VPN, installer, package sync or network process starts from the shell files.
+The profile adds `$HOME/.local/bin` once to `PATH`, selects working Neovim for `EDITOR`/`VISUAL`, loads local completion definitions without a startup dump file, and uses a small prompt and history policy. An existing `~/.zsh_history` remains in use; a new setup uses `${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history`, whose directory is prepared by explicit shell apply. The Codex completion source is generated at apply time, never when opening a terminal. No project, VPN, installer, package sync or network process starts from the shell files.
 
 ```zsh
 setup-system projects list
@@ -18,12 +18,13 @@ setup-system projects open --name serrja/jobdesk --tmux
 
 ## 🛠 Installation and diagnosis
 
-`setup-system plan` and `apply` keep the Debian 12/13 gate. On the current Ubuntu host these source files can be checked in isolation, but system apply, live dotfile replacement and login-shell changes are not performed. On Debian, review the plan and backup before explicit apply; then verify installed Zsh, `/etc/shells`, the account's current login shell, terminal and tmux configuration before a separately authorized `chsh` for this user. An interactive subprocess checks startup syntax but **does not** verify the next login. Existing terminal sessions and Bash/POSIX scripts stay in place.
+General `setup-system plan` and `apply` keep the Debian 12/13 gate. `setup-system shell plan` and `shell apply --yes` configure an already installed Zsh for the current Linux user, including Ubuntu. Apply creates a private backup, verifies isolated startup, writes managed files, and attempts `chsh` only when the executable is registered in `/etc/shells`. If PAM asks for interactive credentials, perform the reported `chsh` in your own terminal; never pass a password to this CLI. A new child login shell verifies startup, while a full graphical next login remains a separate check. Existing terminal sessions and Bash/POSIX scripts stay in place.
 
 ```bash
-for source in assets/zsh/*.zsh; do zsh -f -n "$source"; done
-setup-system doctor
+setup-system shell plan
+setup-system shell apply --yes
+setup-system shell doctor
 getent passwd "$(id -un)"
 ```
 
-For a broken user profile, start a clean Zsh with `zsh -f` or use the previous login shell. Restore only reviewed managed dotfile/config changes from the private backup described in [recovery](recovery.md); preserve history and custom user fragments. Do not source installer code from `.zshrc` or use `exec zsh` in Bash startup.
+For a broken user profile, start a clean Zsh with `zsh -f` or use the previous login shell. `setup-system shell restore --backup ID --yes` restores selected managed files only if they still match the applied bytes. The prior login shell can be restored with `chsh -s /bin/bash` when that was the recorded previous value. Preserve history and custom user fragments. Do not source installer code from `.zshrc` or use `exec zsh` in Bash startup.

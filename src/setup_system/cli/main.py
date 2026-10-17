@@ -35,6 +35,13 @@ from setup_system.application.projectLayout import (
     planMigration,
     prepareOwnerDirectories,
 )
+from setup_system.application.rtk import inspect_rtk, install_rtk, plan_rtk, restore_rtk
+from setup_system.application.shell import (
+    apply_shell,
+    change_login_shell,
+    plan_shell,
+    restore_shell,
+)
 from setup_system.application.terminalDev import (
     installArchiveTool,
     installLanguageTools,
@@ -56,11 +63,155 @@ agentsApp = typer.Typer(help="Scoped agent configuration.")
 templatesApp = typer.Typer(help="Generic project templates.")
 projectsApp = typer.Typer(help="Open one discovered project root.")
 happApp = typer.Typer(help="Happ desktop package and private-state operations.")
+shell_app = typer.Typer(help="Portable Zsh setup for the current user.")
+rtk_app = typer.Typer(help="Pinned Rust Token Killer developer tool.")
 app.add_typer(appsApp, name="apps")
 app.add_typer(agentsApp, name="agents")
 app.add_typer(templatesApp, name="templates")
 app.add_typer(projectsApp, name="projects")
 app.add_typer(happApp, name="happ")
+app.add_typer(shell_app, name="shell")
+app.add_typer(rtk_app, name="rtk")
+
+
+@rtk_app.command("plan")
+def rtk_plan() -> None:
+    """Report the provider action without contacting the network."""
+    try:
+        status, action = plan_rtk(ROOT)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        typer.echo(f"blocked: {exc}", err=True)
+        raise typer.Exit(4) from exc
+    typer.echo(f"product: rtk-ai/rtk; path: {status.path or 'absent'}")
+    typer.echo(f"installed version: {status.version or 'unknown'}")
+    typer.echo(action)
+    if action.startswith("blocked:"):
+        raise typer.Exit(4)
+
+
+@rtk_app.command("doctor")
+def rtk_doctor() -> None:
+    """Check the binary and local Codex hook without reading command history."""
+    rtk_plan()
+    status = inspect_rtk()
+    hook = Path.home() / ".codex/hooks.json"
+    configured = False
+    if hook.is_file():
+        data = json.loads(hook.read_text())
+        configured = any(
+            item.get("command") == "rtk hook codex"
+            for group in data.get("hooks", {}).get("PreToolUse", [])
+            for item in group.get("hooks", [])
+        )
+    typer.echo(f"Codex hook configured: {configured}")
+    if status.path is not None:
+        typer.echo(f"binary owned by current user: {status.path.stat().st_uid == os.getuid()}")
+
+
+@rtk_app.command("apply")
+def rtk_apply(
+    yes: Annotated[bool, typer.Option("--yes", help="Install the pinned RTK release.")] = False,
+    update: Annotated[
+        bool, typer.Option("--update", help="Replace a different RTK version.")
+    ] = False,
+) -> None:
+    """Preserve a suitable binary or install one checked release asset."""
+    if not yes:
+        rtk_plan()
+        typer.echo("Use --yes after reviewing the plan.", err=True)
+        raise typer.Exit(2)
+    try:
+        result, backup = install_rtk(ROOT, update=update)
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        typer.echo(f"failed: {exc}", err=True)
+        raise typer.Exit(5) from exc
+    typer.echo(result)
+    if backup is not None:
+        typer.echo(f"backup: {backup}")
+
+
+@rtk_app.command("restore")
+def rtk_restore(
+    backup_id: Annotated[str, typer.Option("--backup", help="RTK install backup ID.")],
+    yes: Annotated[bool, typer.Option("--yes", help="Restore the prior binary.")] = False,
+) -> None:
+    """Restore the previous RTK binary after checking for later edits."""
+    if not yes:
+        raise typer.BadParameter("Use --yes after reviewing the backup ID")
+    try:
+        typer.echo(restore_rtk(backup_id))
+    except (OSError, ValueError, KeyError) as exc:
+        typer.echo(f"blocked: {exc}", err=True)
+        raise typer.Exit(4) from exc
+
+
+@shell_app.command("plan")
+def shell_plan() -> None:
+    """Inspect Zsh startup changes without modifying the host."""
+    try:
+        status, changes = plan_shell(ROOT)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"blocked: {exc}", err=True)
+        raise typer.Exit(4) from exc
+    typer.echo(f"account: {status.user}; login shell: {status.login_shell}")
+    typer.echo(f"Zsh: {status.zsh or 'absent'}; registered: {status.registered}")
+    typer.echo(f"startup directory: {status.startup_dir}")
+    for path, result in changes:
+        typer.echo(f"{result}: {path}")
+
+
+@shell_app.command("apply")
+def shell_apply(
+    yes: Annotated[bool, typer.Option("--yes", help="Apply the reviewed Zsh plan.")] = False,
+) -> None:
+    """Back up and apply Zsh files, then use chsh when registered."""
+    if not yes:
+        shell_plan()
+        typer.echo("Use --yes after reviewing the plan.", err=True)
+        raise typer.Exit(2)
+    try:
+        backup, results, status = apply_shell(ROOT)
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+        typer.echo(f"failed: {exc}", err=True)
+        raise typer.Exit(5) from exc
+    typer.echo(f"backup: {backup}")
+    for path, result in results:
+        typer.echo(f"{result}: {path}")
+    if status.zsh is None:
+        raise typer.Exit(4)
+    if status.login_shell != status.zsh:
+        try:
+            changed, detail = change_login_shell(status.zsh)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            typer.echo(f"login shell blocked: {exc}", err=True)
+            raise typer.Exit(4) from exc
+        typer.echo(f"login shell: {detail}")
+        if not changed:
+            raise typer.Exit(4)
+
+
+@shell_app.command("doctor")
+def shell_doctor() -> None:
+    """Read back account and startup state without side effects."""
+    shell_plan()
+
+
+@shell_app.command("restore")
+def shell_restore(
+    backup_id: Annotated[str, typer.Option("--backup", help="Shell apply backup ID.")],
+    yes: Annotated[bool, typer.Option("--yes", help="Restore unchanged managed files.")] = False,
+) -> None:
+    """Restore selected Zsh files while protecting edits made after apply."""
+    if not yes:
+        typer.echo("Use --yes after reviewing the backup ID.", err=True)
+        raise typer.Exit(2)
+    try:
+        for path, result in restore_shell(backup_id):
+            typer.echo(f"{result}: {path}")
+    except (OSError, ValueError, KeyError) as exc:
+        typer.echo(f"blocked: {exc}", err=True)
+        raise typer.Exit(4) from exc
+    typer.echo("Login shell is restored separately with chsh to the saved previous path.")
 
 
 @app.command()
