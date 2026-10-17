@@ -13,7 +13,7 @@ state = "existing"
 [[project]]
 id = "serrja/pythonTemplate"
 legacyPath = "$HOME/Projects/projectTemplates"
-origin = "git@github.com:serrja/projectTemplates.git"
+origin = "git@github.com:serrja/pythonTemplate.git"
 state = "existing"
 
 [[project]]
