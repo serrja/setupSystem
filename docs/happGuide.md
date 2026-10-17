@@ -7,8 +7,8 @@ Happ владеет подписками, профилями маршрутиз�
 Единственная матрица платформ находится в [platforms.toml](../manifests/platforms.toml). Установщик принимает только Debian 12/13 на x86_64/arm64. Нужен `python3` версии 3.10+ для stdlib bootstrap; затем основной CLI использует отдельный Python 3.14. На текущем Ubuntu доступна только read-only диагностика: установка, импорт и восстановление через CLI остановятся как `UNSUPPORTED`.
 
 ```bash
-python3 "$HOME/setupSystem/bootstrap.py" plan --profile happ
-python3 "$HOME/setupSystem/bootstrap.py" apply --profile happ --yes
+python3 "$HOME/Projects/serrja/setupSystem/bootstrap.py" plan --profile happ
+python3 "$HOME/Projects/serrja/setupSystem/bootstrap.py" apply --profile happ --yes
 setup-system happ doctor
 ```
 
