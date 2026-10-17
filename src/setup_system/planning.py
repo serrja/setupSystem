@@ -173,6 +173,15 @@ def create_plan(root: Path, profile: str = "base") -> Plan:
     if profile == "terminalDev":
         steps += (
             Step(
+                "zsh.default",
+                ("Debian zsh package or existing executable", "current user's login shell"),
+                ("zsh.assets", "zsh.rc"),
+                "Install and configure Zsh as the current user's default shell",
+                "package privilege and login behavior",
+                "targeted sudo for package; current-user chsh for login shell",
+                "setup-system apply --profile terminalDev --yes",
+            ),
+            Step(
                 "terminalDev.tools",
                 ("$XDG_DATA_HOME/setup-system/neovim", "$XDG_DATA_HOME/nvim/lazy"),
                 (),

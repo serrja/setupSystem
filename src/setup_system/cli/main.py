@@ -74,6 +74,29 @@ app.add_typer(shell_app, name="shell")
 app.add_typer(rtk_app, name="rtk")
 
 
+def _apply_default_shell() -> None:
+    """Apply the portable Zsh profile and request this account's login shell."""
+    try:
+        backup, results, status = apply_shell(ROOT)
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+        typer.echo(f"shell failed: {exc}", err=True)
+        raise typer.Exit(5) from exc
+    typer.echo(f"shell backup: {backup}")
+    for path, result in results:
+        typer.echo(f"{result}: {path}")
+    if status.zsh is None:
+        raise typer.Exit(4)
+    if status.login_shell != status.zsh:
+        try:
+            changed, detail = change_login_shell(status.zsh)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            typer.echo(f"login shell blocked: {exc}", err=True)
+            raise typer.Exit(4) from exc
+        typer.echo(f"login shell: {detail}")
+        if not changed:
+            raise typer.Exit(4)
+
+
 @rtk_app.command("plan")
 def rtk_plan() -> None:
     """Report the provider action without contacting the network."""
@@ -169,25 +192,7 @@ def shell_apply(
         shell_plan()
         typer.echo("Use --yes after reviewing the plan.", err=True)
         raise typer.Exit(2)
-    try:
-        backup, results, status = apply_shell(ROOT)
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
-        typer.echo(f"failed: {exc}", err=True)
-        raise typer.Exit(5) from exc
-    typer.echo(f"backup: {backup}")
-    for path, result in results:
-        typer.echo(f"{result}: {path}")
-    if status.zsh is None:
-        raise typer.Exit(4)
-    if status.login_shell != status.zsh:
-        try:
-            changed, detail = change_login_shell(status.zsh)
-        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            typer.echo(f"login shell blocked: {exc}", err=True)
-            raise typer.Exit(4) from exc
-        typer.echo(f"login shell: {detail}")
-        if not changed:
-            raise typer.Exit(4)
+    _apply_default_shell()
 
 
 @shell_app.command("doctor")
@@ -239,6 +244,12 @@ def apply(
         typer.echo(format_plan(result))
         if not typer.confirm("Apply user configuration?", default=False):
             raise typer.Exit(2)
+    if profile == "terminalDev":
+        try:
+            typer.echo(install_zsh(catalog(ROOT)["zsh"]))
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            typer.echo(f"Zsh installation blocked: {exc}", err=True)
+            raise typer.Exit(4) from exc
     try:
         backup, statuses = apply_configuration(ROOT, terminal_dev=profile == "terminalDev")
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
@@ -248,6 +259,7 @@ def apply(
     for path, status in statuses:
         typer.echo(f"{status}: {path}")
     if profile == "terminalDev":
+        _apply_default_shell()
         try:
             typer.echo(install_neovim(ROOT, result.platform))
             for status in install_plugins(ROOT):

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
 
 from setup_system.application import rtk, shell
+from setup_system.planning import Plan, Platform
 
 
 def _shell_fixture(home: Path, root: Path) -> shell.ShellStatus:
@@ -110,3 +112,47 @@ def test_rtk_blocks_same_named_other_product(
     assert action.startswith("blocked:")
     with pytest.raises(ValueError, match="not rtk-ai/rtk"):
         rtk.install_rtk(root)
+
+
+def test_debian_terminal_apply_configures_current_user_zsh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The explicit Debian dev profile must reach the portable shell apply."""
+    cli = importlib.import_module("setup_system.cli.main")
+    platform = Platform("debian", "13", "x86_64", True, False, "supported")
+    calls: list[str] = []
+    app = object()
+    status = shell.ShellStatus(
+        "test", tmp_path, tmp_path, Path("/bin/bash"), Path("/usr/bin/zsh"), True
+    )
+
+    monkeypatch.setattr(cli, "create_plan", lambda *_args: Plan(platform, (), ()))
+    monkeypatch.setattr(cli, "catalog", lambda _root: {"zsh": app})
+    monkeypatch.setattr(
+        cli, "install_zsh", lambda selected: calls.append("install_zsh") or "installed"
+    )
+    monkeypatch.setattr(
+        cli,
+        "apply_configuration",
+        lambda *_args, **_kwargs: (calls.append("configuration") or tmp_path, []),
+    )
+    monkeypatch.setattr(
+        cli,
+        "apply_shell",
+        lambda _root: (calls.append("shell") or tmp_path, [], status),
+    )
+    monkeypatch.setattr(
+        cli,
+        "change_login_shell",
+        lambda target: (calls.append("chsh") or True, str(target)),
+    )
+    monkeypatch.setattr(cli, "install_neovim", lambda *_args: "unchanged")
+    monkeypatch.setattr(cli, "install_plugins", lambda *_args: [])
+    monkeypatch.setattr(cli, "install_archive_tool", lambda *_args: "unchanged")
+    monkeypatch.setattr(cli, "install_language_tools", lambda *_args: [])
+    monkeypatch.setattr(cli, "install_parsers", lambda *_args: "unchanged")
+    monkeypatch.setattr(cli, "install_system_tools", lambda *_args: ("unchanged", False))
+
+    cli.apply(yes=True, profile="terminalDev")
+
+    assert calls == ["install_zsh", "configuration", "shell", "chsh"]

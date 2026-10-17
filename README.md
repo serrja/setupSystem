@@ -16,7 +16,7 @@ python3 bootstrap.py plan --profile happ
 setup-system doctor
 ```
 
-Run bootstrap from the actual checkout root. On Debian, base `apply` prepares pinned `uv` 0.12.15, installs a uv-managed Python 3.14, checks `uv.lock` with `--locked`, installs a wheel-backed `setup-system` CLI independent of the checkout path, backs up existing files, and installs user configuration. The `terminalDev` profile additionally installs pinned Neovim, plugins, parsers and editor tools; missing Debian packages use targeted `sudo` only when available. The Happ profile preserves an existing client and uses a pinned official package only if absent; see the [Russian Happ guide](docs/happGuide.md). Blocked package steps remain blocked. No profile changes the login shell or Docker state. Re-run after moving the checkout: installed configuration lives under XDG paths.
+Run bootstrap from the actual checkout root. On Debian, base `apply` prepares pinned `uv` 0.12.15, installs a uv-managed Python 3.14, checks `uv.lock` with `--locked`, installs a wheel-backed `setup-system` CLI independent of the checkout path, backs up existing files, and installs user configuration. The `terminalDev` profile additionally installs Zsh as the current user's default login shell and installs pinned Neovim, plugins, parsers and editor tools; missing Debian packages use targeted `sudo` only when available. The Happ profile preserves an existing client and uses a pinned official package only if absent; see the [Russian Happ guide](docs/happGuide.md). Blocked package steps remain blocked. No profile changes Docker state. Re-run after moving the checkout: installed configuration lives under XDG paths.
 
 ## 🧭 Boundaries
 

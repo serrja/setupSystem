@@ -18,7 +18,7 @@ setup-system projects open --name serrja/jobdesk --tmux
 
 ## 🛠 Installation and diagnosis
 
-General `setup-system plan` and `apply` keep the Debian 12/13 gate. `setup-system shell plan` and `shell apply --yes` configure an already installed Zsh for the current Linux user, including Ubuntu. Apply creates a private backup, verifies isolated startup, writes managed files, and attempts `chsh` only when the executable is registered in `/etc/shells`. If PAM asks for interactive credentials, perform the reported `chsh` in your own terminal; never pass a password to this CLI. A new child login shell verifies startup, while a full graphical next login remains a separate check. Existing terminal sessions and Bash/POSIX scripts stay in place.
+General `setup-system plan` and `apply` keep the Debian 12/13 gate. On Debian, `apply --profile terminalDev --yes` installs Zsh if absent, applies this same managed profile and requests the current user's login shell through `chsh`. `setup-system shell plan` and `shell apply --yes` configure an already installed Zsh for the current Linux user, including Ubuntu. Apply creates a private backup, verifies isolated startup, writes managed files, and attempts `chsh` only when the executable is registered in `/etc/shells`. If PAM asks for interactive credentials, perform the reported `chsh` in your own terminal; never pass a password to this CLI. A new child login shell verifies startup, while a full graphical next login remains a separate check. Existing terminal sessions and Bash/POSIX scripts stay in place.
 
 ```bash
 setup-system shell plan
