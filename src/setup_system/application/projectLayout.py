@@ -243,8 +243,11 @@ def _targetBlocker(
             return f"symlink at {symlink}"
         if path.exists() and not path.is_dir():
             return f"non-directory at {path}"
-        if (path / ".git").exists():
-            return f"parent or destination is a Git root: {path}"
+        metadata = path / ".git"
+        if metadata.is_symlink() or (
+            metadata.exists() and (not metadata.is_dir() or any(metadata.iterdir()))
+        ):
+            return f"parent or destination contains Git metadata: {path}"
     return None
 
 

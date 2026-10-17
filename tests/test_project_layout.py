@@ -90,12 +90,15 @@ def test_targetOnlyExistingProjectNeedsNoLegacyPath(tmp_path: Path) -> None:
     manifest.write_text(manifest.read_text().replace('legacyPath = "$HOME/example"\n', ""))
     target = home / "Projects/serrja/example"
     target.mkdir(parents=True)
+    (target.parent / ".git").mkdir()  # An empty permission marker is not a Git superproject.
     _git(target, "init", "-q", "-b", "main")
 
     layout = loadLayout(root, home=home)
 
     assert activeProjects(layout) == {"serrja/example": target}
     assert planMigration(layout, currentDirectory=tmp_path)[0].status == "placed"
+    (target.parent / ".git/HEAD").write_text("ref: refs/heads/main\n")
+    assert planMigration(layout, currentDirectory=tmp_path)[0].status == "blocked"
 
 
 def test_applyMigrationPreservesGitAndDirtyFiles(tmp_path: Path) -> None:
