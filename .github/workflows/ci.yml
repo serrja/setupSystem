@@ -44,7 +44,8 @@ jobs:
           set -eu
           uv venv "$RUNNER_TEMP/setup-wheel" --python 3.14
           uv pip install --python "$RUNNER_TEMP/setup-wheel/bin/python" dist/setup_system-*.whl
-          export EXPECTED_SETUP_VERSION="$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')"
+          EXPECTED_SETUP_VERSION="$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')"
+          export EXPECTED_SETUP_VERSION
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/setup-wheel/bin/setup-system" --help
           "$RUNNER_TEMP/setup-wheel/bin/python" -c "from importlib.metadata import version; import os; from setup_system.application.project_layout import load_layout; from pathlib import Path; import setup_system; root=Path(setup_system.__file__).parent; assert version('setup-system')==os.environ['EXPECTED_SETUP_VERSION']; assert any(p.id=='pokerlost/platformInfra' for p in load_layout(root).projects)"
