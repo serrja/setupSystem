@@ -1,0 +1,30 @@
+{
+  "repository": "https://github.com/serrja/pythonTemplate",
+  "revision": "e23fb44411b971f40a9432a8616ddaf7abf70f93",
+  "files": {
+    ".github/PULL_REQUEST_TEMPLATE.md": {
+      "source": "template/.github/PULL_REQUEST_TEMPLATE.md.jinja",
+      "sha256": "f41a3ecd7c649e4df6933771290f54f3c832188a4b806f1d6c0acbb979ab5bc5"
+    },
+    ".github/ISSUE_TEMPLATE/bug.yml": {
+      "source": "template/.github/ISSUE_TEMPLATE/bug.yml",
+      "sha256": "78feef33d31062d539661a94b267c683934e5c497cda7ee075c2f2f00a49a4b6"
+    },
+    ".github/ISSUE_TEMPLATE/feature.yml": {
+      "source": "template/.github/ISSUE_TEMPLATE/feature.yml",
+      "sha256": "0b80a1e2b30ffc501f321a38b0c60396f309eb73e8aeff0c3a45710009dd23bd"
+    }
+  },
+  "rules": {
+    "contributing": "docs/contributing.md",
+    "naming": "docs/naming.md",
+    "testing": "docs/testing.md",
+    "versioning": "docs/versioning.md"
+  },
+  "codeowners": "Project-specific assignment; not inherited from the template.",
+  "workflow": {
+    "source": ".github/workflows/contribution.yml",
+    "revision": "faa81ff37ac74ae011c6fdbf4a3c251868cf7170",
+    "sha256": "a9dd75c70161f34c4699d490904f721e4d7a4c1c2687e1cc595da0f8b84e0766"
+  }
+}

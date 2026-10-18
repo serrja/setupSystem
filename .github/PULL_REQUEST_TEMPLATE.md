@@ -1,15 +1,30 @@
-## Why and scope
+## Why
 
-State the problem, changed files, and what remains outside this PR.
+State the observed problem or task, with a link when one exists.
 
-## Boundaries and compatibility
+## Scope and architecture
 
-Describe affected platform identity, user data, config/CLI contracts, privileges, and rollback.
+List changed and excluded behavior. Name data owners, dependency direction, and any new abstraction.
+
+## Compatibility
+
+Describe public API, wire/config/package/template/DB impact and migration or deprecation.
 
 ## Checks
 
-List exact commands, environment and `passed` / `failed` / `notRun` / `blocked` outcomes.
+List exact commands, environment, and `passed` / `failed` / `notRun` / `blocked` results. No pre-checked boxes.
 
-## Privacy and release
+Include the tested source SHA, statement/line and branch totals, and missing counts.
 
-Confirm the staged and outgoing diff contains no secrets, private backups or personal data. State documentation and version decisions. Do not pre-check boxes or claim a deploy from a push.
+## Artifacts and deployment
+
+State image input identity, build or reuse decision, verified digest, and cache backend/ACL.
+Describe migrations, deployment target, and rollback by digest; use N/A with a reason.
+
+## Security, docs, and release
+
+Describe logs, secrets, permissions, supply chain, documentation changes, and version/release-note decision.
+
+## Risk and rollback
+
+Give affected users, rollback path, related PRs and order. Add screenshots only for UI work, without personal data.
