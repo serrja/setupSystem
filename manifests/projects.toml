@@ -88,6 +88,7 @@ origin = "git@github.com:pokerlost/pokerService.git"
 state = "existing"
 
 [[project]]
+# Dart/Flutter workspace; no Python-template update or runtime dependency.
 id = "pokerlost/pokerClient"
 legacyPath = "$HOME/pokerlost/pokerClient"
 origin = "git@github.com:pokerlost/pokerClient.git"
