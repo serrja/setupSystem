@@ -58,3 +58,5 @@ Backups and manifests are private under `${XDG_STATE_HOME:-$HOME/.local/state}/s
 For account setup and daily prompts, see the [Russian ChatGPT guide](docs/chatgptGuide.md). Its suggested instructions are not applied to the account automatically.
 
 Contribution and PR commands are in [CONTRIBUTING.md](CONTRIBUTING.md). No production CD target is configured.
+
+[Testing and delivery](docs/testing.md) records the full source coverage policy. [Versioning](docs/versioning.md) and the [release guide](docs/release_guide.md) describe development candidates without activating installation or deployment.

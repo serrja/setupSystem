@@ -9,3 +9,13 @@ dist/
 # Legacy local material is not part of the portable installer.
 terminal/
 git/config
+
+.aws
+.serena/
+.agents/
+.codex/
+.local/
+.coverage
+.coverage.*
+coverage/
+/core.[0-9]*

@@ -98,3 +98,18 @@ id = "pokerlost/cryptoService"
 legacyPath = "$HOME/pokerlost/cryptoService"
 origin = "git@github.com:pokerlost/cryptoService.git"
 state = "existing"
+
+[[project]]
+id = "pokerlost/pokerWeb"
+origin = "git@github.com:pokerlost/pokerWeb.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/pokerGateway"
+origin = "git@github.com:pokerlost/pokerGateway.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/platformInfra"
+origin = "git@github.com:pokerlost/platformInfra.git"
+state = "existing"
