@@ -18,11 +18,11 @@ from urllib.request import urlopen
 from setup_system.planning import Platform
 
 
-def _manifest(projectRoot: Path) -> dict[str, object]:
-    return tomllib.loads((projectRoot / "manifests/terminalDev.toml").read_text())
+def _manifest(project_root: Path) -> dict[str, object]:
+    return tomllib.loads((project_root / "manifests/terminalDev.toml").read_text())
 
 
-def _dataHome() -> Path:
+def _data_home() -> Path:
     home = Path.home().resolve()
     target = Path(os.environ.get("XDG_DATA_HOME", home / ".local/share")).expanduser().absolute()
     if not target.is_relative_to(home) or any(
@@ -33,7 +33,7 @@ def _dataHome() -> Path:
 
 
 def _run(argv: list[str], *, cwd: Path | None = None, timeout: int = 180) -> str:
-    safeEnv = {
+    safe_env = {
         key: value
         for key, value in os.environ.items()
         if key
@@ -57,9 +57,9 @@ def _run(argv: list[str], *, cwd: Path | None = None, timeout: int = 180) -> str
             "no_proxy",
         }
     }
-    safeEnv["GIT_TERMINAL_PROMPT"] = "0"
+    safe_env["GIT_TERMINAL_PROMPT"] = "0"
     result = subprocess.run(
-        argv, cwd=cwd, env=safeEnv, capture_output=True, text=True, timeout=timeout, check=False
+        argv, cwd=cwd, env=safe_env, capture_output=True, text=True, timeout=timeout, check=False
     )
     if result.returncode:
         raise RuntimeError(
@@ -68,7 +68,7 @@ def _run(argv: list[str], *, cwd: Path | None = None, timeout: int = 180) -> str
     return result.stdout.strip()
 
 
-def _archiveKey(platform: Platform) -> str:
+def _archive_key(platform: Platform) -> str:
     if (
         platform.implemented
         and platform.distribution == "debian"
@@ -78,16 +78,16 @@ def _archiveKey(platform: Platform) -> str:
     raise ValueError(platform.reason)
 
 
-def installNeovim(projectRoot: Path, platform: Platform) -> str:
+def install_neovim(project_root: Path, platform: Platform) -> str:
     """Install one official, digest-checked stable archive in user data."""
     if not platform.implemented:
         raise ValueError(platform.reason)
-    config = _manifest(projectRoot)["neovim"]
+    config = _manifest(project_root)["neovim"]
     if not isinstance(config, dict):
         raise ValueError("Invalid Neovim manifest")
-    key = _archiveKey(platform)
+    key = _archive_key(platform)
     version = str(config["version"])
-    target = _dataHome() / "setup-system/neovim" / version
+    target = _data_home() / "setup-system/neovim" / version
     binary = target / "bin/nvim"
     link = Path.home() / ".local/bin/nvim"
     if link.is_symlink() and link.resolve() != binary:
@@ -111,8 +111,8 @@ def installNeovim(projectRoot: Path, platform: Platform) -> str:
             sha = hashlib.sha256()
             size = 0
             with urlopen(url, timeout=30) as response, archive.open("wb") as output:
-                finalUrl = urlsplit(response.geturl())
-                if finalUrl.scheme != "https" or finalUrl.hostname not in {
+                final_url = urlsplit(response.geturl())
+                if final_url.scheme != "https" or final_url.hostname not in {
                     "github.com",
                     "release-assets.githubusercontent.com",
                     "objects.githubusercontent.com",
@@ -126,14 +126,14 @@ def installNeovim(projectRoot: Path, platform: Platform) -> str:
                     output.write(chunk)
             if sha.hexdigest() != digest:
                 raise RuntimeError("Neovim archive digest mismatch")
-            expectedTop = f"nvim-linux-{platform.architecture}"
+            expected_top = f"nvim-linux-{platform.architecture}"
             with tarfile.open(archive, "r:gz") as bundle:
                 for member in bundle.getmembers():
                     parts = Path(member.name).parts
-                    if not parts or parts[0] != expectedTop or ".." in parts:
+                    if not parts or parts[0] != expected_top or ".." in parts:
                         raise RuntimeError("Unsafe Neovim archive path")
                 bundle.extractall(stage, filter="data")
-            staged = stage / expectedTop
+            staged = stage / expected_top
             if not (staged / "bin/nvim").is_file():
                 raise RuntimeError("Neovim archive has no binary")
             os.replace(staged, target)
@@ -149,12 +149,12 @@ def installNeovim(projectRoot: Path, platform: Platform) -> str:
     return f"{status}: Neovim {version} at {binary}"
 
 
-def installPlugins(projectRoot: Path) -> list[str]:
+def install_plugins(project_root: Path) -> list[str]:
     """Check out exact public revisions into Neovim's standard user data path."""
-    plugins = _manifest(projectRoot)["plugins"]
+    plugins = _manifest(project_root)["plugins"]
     if not isinstance(plugins, dict):
         raise ValueError("Invalid plugin manifest")
-    destination = _dataHome() / "nvim/lazy"
+    destination = _data_home() / "nvim/lazy"
     destination.mkdir(parents=True, exist_ok=True)
     results: list[str] = []
     for name, entry in plugins.items():
@@ -166,8 +166,8 @@ def installPlugins(projectRoot: Path) -> list[str]:
             r"[0-9a-f]{40}", commit
         ):
             raise ValueError("Invalid plugin source or commit")
-        folderName = "lazy.nvim" if name == "lazy" else name
-        folder = destination / folderName
+        folder_name = "lazy.nvim" if name == "lazy" else name
+        folder = destination / folder_name
         if folder.is_symlink():
             raise ValueError(f"Plugin path is a symlink: {folder}")
         if folder.exists():
@@ -176,7 +176,7 @@ def installPlugins(projectRoot: Path) -> list[str]:
                 raise ValueError(f"Existing plugin differs from pinned revision: {name}")
             results.append(f"unchanged: {name} {commit[:12]}")
             continue
-        with tempfile.TemporaryDirectory(prefix=f".{folderName}-", dir=destination) as temporary:
+        with tempfile.TemporaryDirectory(prefix=f".{folder_name}-", dir=destination) as temporary:
             stage = Path(temporary) / "checkout"
             stage.mkdir()
             _run(["git", "init", "-q", str(stage)], timeout=15)
@@ -202,8 +202,8 @@ def installPlugins(projectRoot: Path) -> list[str]:
     return results
 
 
-def _verifiedUserBinary(projectRoot: Path, name: str) -> str:
-    binaries = _manifest(projectRoot)["userBinary"]
+def _verified_user_binary(project_root: Path, name: str) -> str:
+    binaries = _manifest(project_root)["userBinary"]
     if not isinstance(binaries, dict):
         raise ValueError("Invalid user binary manifest")
     entry = binaries[name]
@@ -225,8 +225,8 @@ def _verifiedUserBinary(projectRoot: Path, name: str) -> str:
         sha = hashlib.sha256()
         size = 0
         with urlopen(str(entry["url"]), timeout=30) as response, archive.open("wb") as output:
-            finalUrl = urlsplit(response.geturl())
-            if finalUrl.scheme != "https" or finalUrl.hostname not in {
+            final_url = urlsplit(response.geturl())
+            if final_url.scheme != "https" or final_url.hostname not in {
                 "github.com",
                 "release-assets.githubusercontent.com",
                 "objects.githubusercontent.com",
@@ -262,9 +262,9 @@ def _verifiedUserBinary(projectRoot: Path, name: str) -> str:
     return f"changed: {name} {version}"
 
 
-def installArchiveTool(projectRoot: Path, platform: Platform, name: str) -> str:
+def install_archive_tool(project_root: Path, platform: Platform, name: str) -> str:
     """Install one hash-checked upstream zip with no runtime update hook."""
-    tools = _manifest(projectRoot)["archiveTools"]
+    tools = _manifest(project_root)["archiveTools"]
     if not isinstance(tools, dict):
         raise ValueError("Invalid archive tool manifest")
     entry = tools[name]
@@ -277,7 +277,7 @@ def installArchiveTool(projectRoot: Path, platform: Platform, name: str) -> str:
         if version not in observed:
             raise ValueError(f"Existing archive tool has another version: {name}")
         return f"unchanged: {name} {version}"
-    key = _archiveKey(platform)
+    key = _archive_key(platform)
     digest = str(entry[f"{key}_sha256"])
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("Invalid archive tool digest")
@@ -290,8 +290,8 @@ def installArchiveTool(projectRoot: Path, platform: Platform, name: str) -> str:
             urlopen(str(entry[f"{key}_url"]), timeout=30) as response,
             archive.open("wb") as output,
         ):
-            finalUrl = urlsplit(response.geturl())
-            if finalUrl.scheme != "https" or finalUrl.hostname not in {
+            final_url = urlsplit(response.geturl())
+            if final_url.scheme != "https" or final_url.hostname not in {
                 "github.com",
                 "release-assets.githubusercontent.com",
                 "objects.githubusercontent.com",
@@ -324,17 +324,17 @@ def installArchiveTool(projectRoot: Path, platform: Platform, name: str) -> str:
     return f"changed: {name} {version}"
 
 
-def installLanguageTools(projectRoot: Path) -> list[str]:
+def install_language_tools(project_root: Path) -> list[str]:
     """Install pinned Python editor tools with uv, separate from project environments."""
-    versions = _manifest(projectRoot)["languageTools"]
+    versions = _manifest(project_root)["languageTools"]
     if not isinstance(versions, dict):
         raise ValueError("Invalid language tools manifest")
     uv = shutil.which("uv")
     if uv is None:
         raise RuntimeError("uv is required for editor language tools")
     results: list[str] = []
-    for name, versionValue in versions.items():
-        version = str(versionValue)
+    for name, version_value in versions.items():
+        version = str(version_value)
         executable = Path.home() / ".local/bin" / name
         if executable.exists() or executable.is_symlink():
             observed = _run([str(executable), "--version"], timeout=15)
@@ -349,9 +349,9 @@ def installLanguageTools(projectRoot: Path) -> list[str]:
     return results
 
 
-def installParsers(projectRoot: Path) -> str:
+def install_parsers(project_root: Path) -> str:
     """Build only declared Tree-sitter parsers during explicit apply."""
-    settings = _manifest(projectRoot)["parsers"]
+    settings = _manifest(project_root)["parsers"]
     if not isinstance(settings, dict) or not isinstance(settings.get("languages"), list):
         raise ValueError("Invalid parser manifest")
     languages = settings["languages"]
@@ -359,25 +359,25 @@ def installParsers(projectRoot: Path) -> str:
         isinstance(language, str) and re.fullmatch(r"[a-z_]+", language) for language in languages
     ):
         raise ValueError("Invalid parser language")
-    parserRoot = _dataHome() / "nvim/site/parser"
-    missing = [language for language in languages if not (parserRoot / f"{language}.so").is_file()]
+    parser_root = _data_home() / "nvim/site/parser"
+    missing = [language for language in languages if not (parser_root / f"{language}.so").is_file()]
     if not missing:
         return f"unchanged: {len(languages)} Tree-sitter parsers"
     if shutil.which("cc") is None:
         return f"blocked: C compiler unavailable for parsers {', '.join(missing)}"
     editor = Path.home() / ".local/bin/nvim"
-    luaList = "{" + ",".join(f'"{language}"' for language in missing) + "}"
-    command = f"lua require('nvim-treesitter').install({luaList}):wait(300000)"
+    lua_list = "{" + ",".join(f'"{language}"' for language in missing) + "}"
+    command = f"lua require('nvim-treesitter').install({lua_list}):wait(300000)"
     _run([str(editor), "--headless", f"+{command}", "+qa!"], timeout=360)
-    remaining = [language for language in missing if not (parserRoot / f"{language}.so").is_file()]
+    remaining = [language for language in missing if not (parser_root / f"{language}.so").is_file()]
     if remaining:
         raise RuntimeError(f"Parser installation incomplete: {', '.join(remaining)}")
     return f"changed: parsers {', '.join(missing)}"
 
 
-def installSystemTools(projectRoot: Path, platform: Platform) -> tuple[str, bool]:
+def install_system_tools(project_root: Path, platform: Platform) -> tuple[str, bool]:
     """Install only missing terminal packages from the platform's established manager."""
-    tools = _manifest(projectRoot)["tools"]
+    tools = _manifest(project_root)["tools"]
     if not isinstance(tools, dict):
         raise ValueError("Invalid tool manifest")
     if platform.implemented and platform.distribution == "debian":
@@ -400,7 +400,7 @@ def installSystemTools(projectRoot: Path, platform: Platform) -> tuple[str, bool
             if probe.returncode == 0:
                 _run([sudo, "-n", "apt-get", "install", "-y", *missing], timeout=900)
                 return f"changed: {platform.distribution} packages {', '.join(missing)}", False
-        installed = [_verifiedUserBinary(projectRoot, name) for name in ("rg", "fzf")]
+        installed = [_verified_user_binary(project_root, name) for name in ("rg", "fzf")]
         blocked = [name for name in missing if name not in {"ripgrep", "fzf"}]
         if blocked:
             installed.append(f"blocked: targeted sudo unavailable for {', '.join(blocked)}")

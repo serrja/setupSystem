@@ -1,15 +1,34 @@
-## Why and scope
+## Why
 
-State the problem, changed files, and what remains outside this PR.
+Describe the observed problem and intended result.
 
-## Boundaries and compatibility
+## Scope and non-goals
 
-Describe affected platform identity, user data, config/CLI contracts, privileges, and rollback.
+Name the owners, changed behavior and excluded work.
 
-## Checks
+## Compatibility
 
-List exact commands, environment and `passed` / `failed` / `notRun` / `blocked` outcomes.
+Describe API, wire, configuration, package, template and database impact; use N/A with a reason.
 
-## Privacy and release
+## Commands and tests
 
-Confirm the staged and outgoing diff contains no secrets, private backups or personal data. State documentation and version decisions. Do not pre-check boxes or claim a deploy from a push.
+Record exact commands, full tested source SHA and passed / failed / blocked / notRun results.
+
+## Coverage (advisory)
+
+Report statement/line and branch covered/total and missing counts separately, plus uninstrumented
+sources and notMeasured/notApplicable metrics. Below 100% warns; test, build and report errors fail.
+
+## Artifacts and deployment
+
+Identify tested artifact/checksums or OCI digest, build/reuse decision and cache scope/access.
+State the authorized target or N/A. Source verification does not prove deployment.
+
+## Security and documentation
+
+Explain permissions, safe logs, dependency changes, updated documentation and version decision.
+Never attach .env, credentials, keys, live databases or personal data.
+
+## Recovery
+
+Give the previous verified source/artifact identity and recovery command; preserve storage and history.

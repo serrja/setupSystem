@@ -7,9 +7,9 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from setup_system.planning import detectPlatform
+from setup_system.planning import detect_platform
 
 
 class Application(BaseModel):
@@ -24,7 +24,9 @@ class Application(BaseModel):
     package: str
     privilege: str
     data: str
-    supportedDebianVersions: list[str] | None = None
+    supported_debian_versions: list[str] | None = Field(
+        default=None, alias="supportedDebianVersions"
+    )
 
 
 def catalog(root: Path) -> dict[str, Application]:
@@ -32,7 +34,7 @@ def catalog(root: Path) -> dict[str, Application]:
     return {name: Application.model_validate(entry) for name, entry in raw.items()}
 
 
-def _debStatus(package: str) -> str:
+def _deb_status(package: str) -> str:
     try:
         result = subprocess.run(
             ["dpkg-query", "-W", "-f=${Status} ${Version}", package],
@@ -48,25 +50,25 @@ def _debStatus(package: str) -> str:
     return "absent"
 
 
-def appStatus(app: Application) -> str:
-    packageStatus = _debStatus(app.package)
+def app_status(app: Application) -> str:
+    package_status = _deb_status(app.package)
     binary = shutil.which(app.detect)
-    if packageStatus.startswith("deb "):
-        return packageStatus
+    if package_status.startswith("deb "):
+        return package_status
     if binary:
         return f"present ({binary}; package source not established)"
-    if packageStatus == "unknown":
+    if package_status == "unknown":
         return "unknown"
     return "absent"
 
 
-def installZsh(app: Application) -> str:
-    platform = detectPlatform()
+def install_zsh(app: Application) -> str:
+    platform = detect_platform()
     if not platform.implemented or platform.distribution != "debian":
         raise ValueError(platform.reason)
     if app.package != "zsh":
         raise ValueError("This installer action is only for Debian zsh")
-    existing = appStatus(app)
+    existing = app_status(app)
     if existing != "absent":
         return "unchanged: " + existing
     if not shutil.which("sudo"):
@@ -76,7 +78,7 @@ def installZsh(app: Application) -> str:
     )
     if result.returncode != 0:
         raise RuntimeError(f"Debian apt installation failed with exit code {result.returncode}")
-    verified = appStatus(app)
+    verified = app_status(app)
     if not verified.startswith("deb "):
         raise RuntimeError("zsh was not detected after apt installation")
     return "changed: " + verified

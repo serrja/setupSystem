@@ -6,7 +6,7 @@ import configparser
 import hashlib
 import json
 import os
-import platform as systemPlatform
+import platform as system_platform
 import re
 import shutil
 import sqlite3
@@ -17,20 +17,20 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from setup_system.planning import Platform, detectPlatform
-from setup_system.storage import atomicWrite, newBackup, restore, stateRoot
+from setup_system.planning import Platform, detect_platform
+from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 
 @dataclass(frozen=True)
 class HappStatus:
     installed: str
-    binaryAvailable: bool | None
+    binary_available: bool | None
     running: bool
-    nativeAutostart: str
-    loginRegistration: str
-    autoConnect: str
+    native_autostart: str
+    login_registration: str
+    auto_connect: str
     routing: str
-    profileCount: int | None
+    profile_count: int | None
 
 
 def _run(argv: list[str], *, timeout: int = 10) -> subprocess.CompletedProcess[str]:
@@ -86,18 +86,18 @@ def _registration() -> str:
     return "enabled" if Path(executable).name.lower() == "happ" else "unknown"
 
 
-def inspectHapp(platformAdapter: Platform | None = None) -> HappStatus:
-    platformAdapter = platformAdapter or detectPlatform()
+def inspect_happ(platform_adapter: Platform | None = None) -> HappStatus:
+    platform_adapter = platform_adapter or detect_platform()
     installed = "absent"
-    nativeAutostart = "unknown"
-    loginRegistration = "unknown"
-    autoConnect = "unknown"
+    native_autostart = "unknown"
+    login_registration = "unknown"
+    auto_connect = "unknown"
     routing = "unknown"
-    profileCount: int | None = None
-    binaryAvailable: bool | None = None
+    profile_count: int | None = None
+    binary_available: bool | None = None
     # Package and settings inspection is read-only even on an unsupported Linux host.
-    if systemPlatform.system() == "Linux":
-        binaryAvailable = shutil.which("happ") is not None
+    if system_platform.system() == "Linux":
+        binary_available = shutil.which("happ") is not None
         try:
             result = _run(["dpkg-query", "-W", "-f=${Status} ${Version} ${Architecture}", "happ"])
             if result.returncode == 0 and result.stdout.startswith("install ok installed "):
@@ -108,55 +108,55 @@ def inspectHapp(platformAdapter: Platform | None = None) -> HappStatus:
         except OSError:
             installed = "unknown"
         preferences = _preferences()
-        nativeAutostart = _setting(preferences, "advancedsettings\\autostart")
-        autoConnect = _setting(preferences, "subscriptions\\subsconnectonopen")
+        native_autostart = _setting(preferences, "advancedsettings\\autostart")
+        auto_connect = _setting(preferences, "subscriptions\\subsconnectonopen")
         routing = _setting(preferences, "tunnelsettings\\routing\\userouting")
-        loginRegistration = _registration()
-        routeFile = Path.home() / ".config/Happ/routing.json"
-        if routeFile.is_file() and not routeFile.is_symlink():
+        login_registration = _registration()
+        route_file = Path.home() / ".config/Happ/routing.json"
+        if route_file.is_file() and not route_file.is_symlink():
             try:
-                profiles = json.loads(routeFile.read_text(encoding="utf-8")).get("routings")
-                profileCount = len(profiles) if isinstance(profiles, list) else None
+                profiles = json.loads(route_file.read_text(encoding="utf-8")).get("routings")
+                profile_count = len(profiles) if isinstance(profiles, list) else None
             except (OSError, ValueError, AttributeError):
                 pass
     return HappStatus(
         installed,
-        binaryAvailable,
+        binary_available,
         _running(),
-        nativeAutostart,
-        loginRegistration,
-        autoConnect,
+        native_autostart,
+        login_registration,
+        auto_connect,
         routing,
-        profileCount,
+        profile_count,
     )
 
 
-def formatHappStatus(status: HappStatus) -> str:
-    count = "unknown" if status.profileCount is None else str(status.profileCount)
-    binaryStatus = (
+def format_happ_status(status: HappStatus) -> str:
+    count = "unknown" if status.profile_count is None else str(status.profile_count)
+    binary_status = (
         "unknown"
-        if status.binaryAvailable is None
+        if status.binary_available is None
         else "present"
-        if status.binaryAvailable
+        if status.binary_available
         else "absent"
     )
     return "\n".join(
         (
             f"package: {status.installed}",
-            f"desktop executable: {binaryStatus}",
+            f"desktop executable: {binary_status}",
             f"process: {'running' if status.running else 'not observed'}",
-            f"native autostart setting: {status.nativeAutostart}",
-            f"login registration: {status.loginRegistration}",
+            f"native autostart setting: {status.native_autostart}",
+            f"login registration: {status.login_registration}",
             "next-login launch: needsManualCheck",
-            f"automatic connection on open: {status.autoConnect} (preserved)",
+            f"automatic connection on open: {status.auto_connect} (preserved)",
             f"routing setting: {status.routing} (preserved)",
             f"routing profile count: {count}",
         )
     )
 
 
-def _manifest(projectRoot: Path) -> dict[str, object]:
-    return tomllib.loads((projectRoot / "manifests/happ.toml").read_text(encoding="utf-8"))
+def _manifest(project_root: Path) -> dict[str, object]:
+    return tomllib.loads((project_root / "manifests/happ.toml").read_text(encoding="utf-8"))
 
 
 def _download(url: str, sha256: str, target: Path, limit: int) -> None:
@@ -189,18 +189,18 @@ def _download(url: str, sha256: str, target: Path, limit: int) -> None:
         candidate.unlink(missing_ok=True)
 
 
-def setupHapp(projectRoot: Path, platformAdapter: Platform | None = None) -> str:
+def setup_happ(project_root: Path, platform_adapter: Platform | None = None) -> str:
     """Preserve an installed client; install only a missing verified Linux package."""
-    platformAdapter = platformAdapter or detectPlatform()
-    if not platformAdapter.implemented:
-        return "unsupported: " + platformAdapter.reason
-    current = inspectHapp(platformAdapter)
+    platform_adapter = platform_adapter or detect_platform()
+    if not platform_adapter.implemented:
+        return "unsupported: " + platform_adapter.reason
+    current = inspect_happ(platform_adapter)
     if current.installed != "absent":
         return "unchanged: " + current.installed
-    manifest = _manifest(projectRoot)
+    manifest = _manifest(project_root)
     release = str(manifest["version"])
-    packageVersion = str(manifest["packageVersion"])
-    if platformAdapter.distribution != "debian":
+    package_version = str(manifest["packageVersion"])
+    if platform_adapter.distribution != "debian":
         return "unsupported: no Happ package provider"
     sudo = shutil.which("sudo")
     if not sudo or _run([sudo, "-n", "true"]).returncode != 0:
@@ -208,11 +208,11 @@ def setupHapp(projectRoot: Path, platformAdapter: Platform | None = None) -> str
     linux = manifest["linux"]
     if not isinstance(linux, dict):
         raise ValueError("Invalid Happ release manifest")
-    key = "amd64" if platformAdapter.architecture == "x86_64" else "arm64"
+    key = "amd64" if platform_adapter.architecture == "x86_64" else "arm64"
     asset = linux[key]
     if not isinstance(asset, dict):
         raise ValueError("Invalid Happ release asset")
-    target = stateRoot() / "downloads" / f"happ-{release}-{key}.deb"
+    target = state_root() / "downloads" / f"happ-{release}-{key}.deb"
     if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != asset["sha256"]:
         _download(str(asset["url"]), str(asset["sha256"]), target, 200 * 1024 * 1024)
     metadata = _run(["dpkg-deb", "-f", str(target), "Package", "Version", "Architecture"])
@@ -221,7 +221,7 @@ def setupHapp(projectRoot: Path, platformAdapter: Platform | None = None) -> str
         metadata.returncode != 0
         or len(fields) != 3
         or fields[0] != "happ"
-        or fields[1] != packageVersion
+        or fields[1] != package_version
         or fields[2] != asset["packageArchitecture"]
     ):
         raise RuntimeError("Happ .deb package metadata differs from the pinned release")
@@ -230,16 +230,16 @@ def setupHapp(projectRoot: Path, platformAdapter: Platform | None = None) -> str
     )
     if install.returncode != 0:
         raise RuntimeError(f"Happ package installation failed: exit {install.returncode}")
-    verified = inspectHapp(platformAdapter)
-    if not verified.installed.startswith(f"deb {packageVersion} "):
+    verified = inspect_happ(platform_adapter)
+    if not verified.installed.startswith(f"deb {package_version} "):
         raise RuntimeError("Happ package version was not verified after installation")
     return "changed: official Happ .deb installed; GUI, routing and login need separate checks"
 
 
-def backupHapp() -> Path:
+def backup_happ() -> Path:
     """Capture Linux desktop settings and SQLite through its online backup API."""
-    platformAdapter = detectPlatform()
-    if platformAdapter.distribution != "debian" or not platformAdapter.implemented:
+    platform_adapter = detect_platform()
+    if platform_adapter.distribution != "debian" or not platform_adapter.implemented:
         raise RuntimeError("Native Happ export is required on this platform")
     if _running():
         raise RuntimeError("Happ is running; use its native export or arrange a separate stop")
@@ -250,30 +250,30 @@ def backupHapp() -> Path:
         home / ".config/Happ/routing.json",
         home / ".config/autostart/Happ.desktop",
     ]
-    routingCache = home / ".local/share/Happ/routing"
-    if routingCache.is_dir() and not routingCache.is_symlink():
+    routing_cache = home / ".local/share/Happ/routing"
+    if routing_cache.is_dir() and not routing_cache.is_symlink():
         paths.extend(
-            path for path in routingCache.rglob("*") if path.is_file() and not path.is_symlink()
+            path for path in routing_cache.rglob("*") if path.is_file() and not path.is_symlink()
         )
     database = home / ".config/Happ/subs.db"
     if not database.is_file() or database.is_symlink():
         raise RuntimeError("Happ subscription database is missing or unsafe")
-    folder = newBackup(paths)
+    folder = new_backup(paths)
     destination = folder / "files/.config/Happ/subs.db"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    sourceConnection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=10)
-    backupConnection = sqlite3.connect(destination, timeout=10)
+    source_connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=10)
+    backup_connection = sqlite3.connect(destination, timeout=10)
     try:
-        sourceConnection.backup(backupConnection)
-        integrity = backupConnection.execute("PRAGMA integrity_check").fetchone()
+        source_connection.backup(backup_connection)
+        integrity = backup_connection.execute("PRAGMA integrity_check").fetchone()
         if integrity != ("ok",):
             raise RuntimeError("Happ SQLite backup integrity check failed")
     finally:
-        backupConnection.close()
-        sourceConnection.close()
+        backup_connection.close()
+        source_connection.close()
     destination.chmod(0o600)
-    manifestPath = folder / "manifest.json"
-    manifest = json.loads(manifestPath.read_text(encoding="utf-8"))
+    manifest_path = folder / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["application"] = "happ"
     manifest["items"].append(
         {
@@ -285,15 +285,17 @@ def backupHapp() -> Path:
             "kind": "sqliteSnapshot",
         }
     )
-    atomicWrite(manifestPath, (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode())
+    atomic_write(
+        manifest_path, (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    )
     return folder
 
 
-def previewHappRestore(backupId: str) -> list[tuple[str, str]]:
-    return restore(backupId, apply=False)
+def preview_happ_restore(backup_id: str) -> list[tuple[str, str]]:
+    return restore(backup_id, apply=False)
 
 
-def classifyLink(value: str, *, routingProfile: bool = False) -> str:
+def classify_link(value: str, *, routing_profile: bool = False) -> str:
     """Classify locally without fetching or logging a user-supplied link."""
     if not value or len(value) > 16384 or any(char.isspace() or ord(char) < 32 for char in value):
         raise ValueError("Invalid or oversized link; its contents were not logged")
@@ -301,7 +303,7 @@ def classifyLink(value: str, *, routingProfile: bool = False) -> str:
         parts = urlsplit(value)
     except ValueError:
         raise ValueError("Invalid link; its contents were not logged") from None
-    if routingProfile:
+    if routing_profile:
         if parts.scheme != "happ" or parts.netloc != "routing":
             raise ValueError("Expected a Happ routing link; its contents were not logged")
         if parts.path.startswith("/add/") and len(parts.path) > len("/add/"):
@@ -318,9 +320,9 @@ def classifyLink(value: str, *, routingProfile: bool = False) -> str:
     raise ValueError("Unsupported subscription/configuration link; its contents were not logged")
 
 
-def clipboardCommand() -> tuple[list[str], list[str]] | None:
+def clipboard_command() -> tuple[list[str], list[str]] | None:
     """Only an explicit user action calls this; clipboard contents may enter system history."""
-    if not detectPlatform().implemented:
+    if not detect_platform().implemented:
         return None
     if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
         return (["wl-copy"], ["wl-copy", "--clear"])
@@ -330,8 +332,8 @@ def clipboardCommand() -> tuple[list[str], list[str]] | None:
     return None
 
 
-def copyLinkToClipboard(value: str) -> None:
-    command = clipboardCommand()
+def copy_link_to_clipboard(value: str) -> None:
+    command = clipboard_command()
     if command is None:
         raise RuntimeError("No supported clipboard command; enter the link directly in Happ")
     result = subprocess.run(
@@ -341,8 +343,8 @@ def copyLinkToClipboard(value: str) -> None:
         raise RuntimeError("Clipboard transfer failed; no link details were logged")
 
 
-def clearLinkClipboard() -> None:
-    command = clipboardCommand()
+def clear_link_clipboard() -> None:
+    command = clipboard_command()
     if command is None:
         return
     try:
@@ -353,16 +355,16 @@ def clearLinkClipboard() -> None:
         pass
 
 
-def restoreHapp(
-    backupId: str, *, apply: bool = False, replaceCurrent: bool = False
+def restore_happ(
+    backup_id: str, *, apply: bool = False, replace_current: bool = False
 ) -> list[tuple[str, str]]:
     """Restore a reviewed Happ snapshot only while its desktop process is closed."""
-    if not detectPlatform().implemented:
+    if not detect_platform().implemented:
         raise RuntimeError("UNSUPPORTED: Happ restore requires Debian 12/13")
-    statuses = previewHappRestore(backupId)
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backupId):
+    statuses = preview_happ_restore(backup_id)
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
         raise ValueError("Invalid backup ID")
-    folder = stateRoot() / "backups" / backupId
+    folder = state_root() / "backups" / backup_id
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("application") != "happ":
         raise ValueError("Backup is not a Happ snapshot")
@@ -375,7 +377,7 @@ def restoreHapp(
         raise RuntimeError(
             "Happ SQLite WAL/SHM exists; use native export or resolve with app closed"
         )
-    if not replaceCurrent and any(
+    if not replace_current and any(
         status not in {"unchanged", "would-create"} for _, status in statuses
     ):
         raise RuntimeError("Existing Happ state is preserved; review and use --replaceCurrent")
@@ -391,10 +393,10 @@ def restoreHapp(
         if relative not in allowed and not relative.startswith(".local/share/Happ/routing/"):
             raise ValueError("Unexpected Happ restore path")
     if database.is_file():
-        backupHapp()
+        backup_happ()
     else:
         current = [Path.home() / item["home_relative"] for item in manifest["items"]]
-        newBackup([path for path in current if path.is_file() and path != database])
+        new_backup([path for path in current if path.is_file() and path != database])
     actions: list[tuple[str, str]] = []
     for item in manifest["items"]:
         target = Path.home() / item["home_relative"]
@@ -408,6 +410,6 @@ def restoreHapp(
             finally:
                 connection.close()
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        result = atomicWrite(target, content, 0o600, preserveExistingMode=False)
+        result = atomic_write(target, content, 0o600, preserve_existing_mode=False)
         actions.append((str(target), "restored" if result == "changed" else "unchanged"))
     return actions

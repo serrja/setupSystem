@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.adapters.debian.docker import installDocker
-from setup_system.application.happ import classifyLink
-from setup_system.planning import Platform, createPlan, detectPlatform
+from setup_system.adapters.debian.docker import install_docker
+from setup_system.application.happ import classify_link
+from setup_system.planning import Platform, create_plan, detect_platform
 
 
 @pytest.mark.parametrize(
@@ -26,25 +26,25 @@ def test_explicit_linux_platform(
 ) -> None:
     release = tmp_path / "os-release"
     release.write_text(f"ID={distribution}\nVERSION_ID={version}\nID_LIKE=debian\n")
-    platformAdapter = detectPlatform(release, architecture=architecture, systemName="Linux")
-    assert platformAdapter.implemented is implemented
+    platform_adapter = detect_platform(release, architecture=architecture, system_name="Linux")
+    assert platform_adapter.implemented is implemented
     if architecture == "aarch64":
-        assert platformAdapter.architecture == "arm64"
+        assert platform_adapter.architecture == "arm64"
 
 
 def test_macos_is_unsupported() -> None:
-    assert not detectPlatform(systemName="Darwin", architecture="arm64").implemented
+    assert not detect_platform(system_name="Darwin", architecture="arm64").implemented
 
 
 def test_plan_blocks_unpinned_linux_arm64_editor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
-        "setup_system.planning.detectPlatform",
+        "setup_system.planning.detect_platform",
         lambda: Platform("debian", "13", "arm64", True, False, "explicit Debian"),
     )
     monkeypatch.setenv("HOME", str(tmp_path))
-    result = createPlan(tmp_path, "terminalDev")
+    result = create_plan(tmp_path, "terminalDev")
     assert result.blocked
     assert result.steps == ()
     assert list(tmp_path.iterdir()) == []
@@ -53,16 +53,16 @@ def test_plan_blocks_unpinned_linux_arm64_editor(
 def test_bad_link_error_never_repeats_secret() -> None:
     secret = "bad-secret\n"
     with pytest.raises(ValueError) as exc:
-        classifyLink(secret)
+        classify_link(secret)
     assert secret.strip() not in str(exc.value)
-    assert classifyLink("happ://routing/add/YQ==", routingProfile=True) == "routingAdd"
+    assert classify_link("happ://routing/add/YQ==", routing_profile=True) == "routingAdd"
 
 
 def test_docker_provider_stops_before_external_actions_on_unsupported_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "setup_system.adapters.debian.docker.detectPlatform",
+        "setup_system.adapters.debian.docker.detect_platform",
         lambda: Platform("ubuntu", "26.04", "x86_64", False, False, "UNSUPPORTED"),
     )
     monkeypatch.setattr(
@@ -74,4 +74,4 @@ def test_docker_provider_stops_before_external_actions_on_unsupported_host(
         lambda *args, **kwargs: pytest.fail("network ran before platform gate"),
     )
     with pytest.raises(ValueError, match="UNSUPPORTED"):
-        installDocker()
+        install_docker()

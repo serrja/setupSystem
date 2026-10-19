@@ -14,11 +14,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-def stateRoot() -> Path:
+def state_root() -> Path:
     return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "setup-system"
 
 
-def _insideHome(path: Path) -> Path:
+def _inside_home(path: Path) -> Path:
     home = Path.home().resolve()
     candidate = path.expanduser().absolute()
     try:
@@ -33,16 +33,16 @@ def _insideHome(path: Path) -> Path:
     return candidate
 
 
-def atomicWrite(
-    path: Path, content: bytes, mode: int = 0o600, *, preserveExistingMode: bool = True
+def atomic_write(
+    path: Path, content: bytes, mode: int = 0o600, *, preserve_existing_mode: bool = True
 ) -> str:
-    target = _insideHome(path)
+    target = _inside_home(path)
     if target.exists():
         if not target.is_file():
             raise ValueError(f"Managed target is not a regular file: {target}")
         if target.read_bytes() == content:
             return "unchanged"
-        if preserveExistingMode:
+        if preserve_existing_mode:
             mode = stat.S_IMODE(target.stat().st_mode)
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -64,7 +64,7 @@ def atomicWrite(
     return "changed"
 
 
-def managedBlock(original: str, body: str | None) -> str:
+def managed_block(original: str, body: str | None) -> str:
     start, end = "# >>> setupSystem >>>", "# <<< setupSystem <<<"
     if (
         original.count(start) > 1
@@ -81,16 +81,16 @@ def managedBlock(original: str, body: str | None) -> str:
     return original.rstrip("\n") + f"\n\n{start}\n{body.rstrip()}\n{end}\n"
 
 
-def newBackup(paths: list[Path]) -> Path:
-    base = stateRoot() / "backups"
-    runId = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    folder = base / runId
+def new_backup(paths: list[Path]) -> Path:
+    base = state_root() / "backups"
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    folder = base / run_id
     folder.mkdir(parents=True, mode=0o700, exist_ok=False)
     folder.chmod(0o700)
     home = Path.home().resolve()
     items: list[dict[str, str | int]] = []
     for source in sorted(set(paths)):
-        target = _insideHome(source)
+        target = _inside_home(source)
         if not target.exists():
             continue
         if not target.is_file():
@@ -111,7 +111,7 @@ def newBackup(paths: list[Path]) -> Path:
         )
     manifest = folder / "manifest.json"
     manifest.write_text(
-        json.dumps({"run_id": runId, "items": items, "moves": []}, ensure_ascii=False, indent=2)
+        json.dumps({"run_id": run_id, "items": items, "moves": []}, ensure_ascii=False, indent=2)
         + "\n"
     )
     manifest.chmod(0o600)
@@ -119,13 +119,13 @@ def newBackup(paths: list[Path]) -> Path:
 
 
 def restore(
-    backupId: str, *, apply: bool = False, replaceCurrent: bool = False
+    backup_id: str, *, apply: bool = False, replace_current: bool = False
 ) -> list[tuple[str, str]]:
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backupId):
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
         raise ValueError("Invalid backup ID")
-    folder = stateRoot() / "backups" / backupId
+    folder = state_root() / "backups" / backup_id
     manifest = json.loads((folder / "manifest.json").read_text())
-    if manifest.get("run_id") != backupId:
+    if manifest.get("run_id") != backup_id:
         raise ValueError("Backup manifest ID mismatch")
     if manifest.get("application") == "happ" and apply:
         raise ValueError("Use setup-system happ restore for Happ state while the app is closed")
@@ -134,8 +134,8 @@ def restore(
         relative = Path(item.get("home_relative") or Path(item["source"]).relative_to(Path.home()))
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("Unsafe backup path")
-        recordedBackup = Path(item["backup"])
-        source = recordedBackup if recordedBackup.is_absolute() else folder / recordedBackup
+        recorded_backup = Path(item["backup"])
+        source = recorded_backup if recorded_backup.is_absolute() else folder / recorded_backup
         if (
             source.is_symlink()
             or not source.is_file()
@@ -145,7 +145,7 @@ def restore(
         content = source.read_bytes()
         if hashlib.sha256(content).hexdigest() != item["sha256"]:
             raise ValueError("Backup hash mismatch")
-        target = _insideHome(Path.home() / relative)
+        target = _inside_home(Path.home() / relative)
         if target.exists() and not target.is_file():
             raise ValueError(f"Restore target is not a regular file: {target}")
         if item.get("kind") == "sqliteSnapshot" and target.is_file():
@@ -155,8 +155,8 @@ def restore(
         else:
             status = "would-create"
         prepared.append((target, content, int(item["mode"]), status))
-    if apply and replaceCurrent:
-        newBackup(
+    if apply and replace_current:
+        new_backup(
             [
                 target
                 for target, _, _, status in prepared
@@ -165,8 +165,8 @@ def restore(
         )
     actions: list[tuple[str, str]] = []
     for target, content, mode, status in prepared:
-        if apply and (status == "would-create" or (status == "conflict" and replaceCurrent)):
-            atomicWrite(target, content, mode, preserveExistingMode=False)
+        if apply and (status == "would-create" or (status == "conflict" and replace_current)):
+            atomic_write(target, content, mode, preserve_existing_mode=False)
             status = "restored"
         actions.append((str(target), status))
     return actions
