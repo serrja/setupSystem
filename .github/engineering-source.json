@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/serrja/pythonTemplate",
-  "revision": "24847521d2b6a441f332365efca8bbf21f896d1c",
+  "revision": "7853b1df0e267b06978ca03e3eda30ce0e8db754",
   "files": {
     ".github/PULL_REQUEST_TEMPLATE.md": {
       "source": "template/.github/PULL_REQUEST_TEMPLATE.md.jinja",
@@ -28,14 +28,15 @@
     },
     "docker/coverage_report.py": {
       "source": "template/docker/coverage_report.py",
-      "sha256": "c679b3bbfb8f1019f014abcaa973cce5ef094f73eefb125f1fc388963400d3bf"
+      "sha256": "75c5b398842ae3199da118ef5c15ce9616c3b6de921de98056bdcb1744e4c85e"
     }
   },
   "rules": {
-    "contributing": "docs/contributing.md",
-    "naming": "docs/naming.md",
-    "testing": "docs/testing.md",
-    "versioning": "docs/versioning.md"
+    "contributing": "https://github.com/serrja/pythonTemplate/blob/main/docs/contributing.md",
+    "naming": "https://github.com/serrja/pythonTemplate/blob/main/docs/naming.md",
+    "testing": "https://github.com/serrja/pythonTemplate/blob/main/docs/testing.md",
+    "versioning": "https://github.com/serrja/pythonTemplate/blob/main/docs/versioning.md",
+    "engineering": "https://github.com/serrja/pythonTemplate/blob/main/docs/engineering.md"
   },
   "codeowners": "Project-specific assignment; not inherited from the template.",
   "role": "Reviewed portable engineering snapshots; no active scaffold restoration or template-update dependency."

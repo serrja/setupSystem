@@ -17,6 +17,11 @@ origin = "git@github.com:serrja/pythonTemplate.git"
 state = "existing"
 
 [[project]]
+id = "serrja/typerTemplate"
+origin = "git@github.com:serrja/typerTemplate.git"
+state = "existing"
+
+[[project]]
 id = "serrja/fastApiTemplate"
 legacyPath = "$HOME/Projects/fastApiTemplate"
 origin = "git@github.com:serrja/fastApiTemplate.git"

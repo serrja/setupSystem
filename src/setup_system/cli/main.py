@@ -714,20 +714,20 @@ def agents_launch(
 
 @templates_app.command("list")
 def templates_list() -> None:
-    """Show the two declared generic template sources and their local state."""
+    """Show the declared generic template specializations and their local state."""
     layout = load_layout(ROOT)
     projects = active_projects(layout)
-    for name in ("serrja/pythonTemplate", "serrja/fastApiTemplate"):
+    for name in ("serrja/pythonTemplate", "serrja/typerTemplate", "serrja/fastApiTemplate"):
         typer.echo(f"{name}: {projects.get(name, 'not installed')}")
 
 
 @templates_app.command("path")
 def templates_path(
-    name: Annotated[str, typer.Option(help="pythonTemplate or fastApiTemplate.")],
+    name: Annotated[str, typer.Option(help="pythonTemplate, typerTemplate or fastApiTemplate.")],
 ) -> None:
     """Resolve an existing template checkout from the shared project catalog."""
-    if name not in {"pythonTemplate", "fastApiTemplate"}:
-        raise typer.BadParameter("Choose pythonTemplate or fastApiTemplate")
+    if name not in {"pythonTemplate", "typerTemplate", "fastApiTemplate"}:
+        raise typer.BadParameter("Choose pythonTemplate, typerTemplate or fastApiTemplate")
     source = active_projects(load_layout(ROOT)).get(f"serrja/{name}")
     if source is None:
         typer.echo("template source is not installed", err=True)

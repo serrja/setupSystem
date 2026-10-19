@@ -11,9 +11,10 @@ import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
-ProjectState = Literal["existing", "planned", "sourcePending", "optional"]
+from pydantic import ValidationError
+
+from setup_system.application.project_catalog import ProjectCatalog, ProjectState
 
 
 @dataclass(frozen=True)
@@ -77,19 +78,28 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
     """Load one declarative catalog without expanding arbitrary environment data."""
     home = Path.home() if home is None else home
     data = tomllib.loads((root / "manifests/projects.toml").read_text(encoding="utf-8"))
-    if data.get("schemaVersion") != 1:
-        raise ValueError("Unsupported project catalog schema")
-    projects_root = _home_path(data["projectsRoot"], home)
-    groups = tuple(data["ownerGroups"])
+    try:
+        catalog = ProjectCatalog.model_validate(data)
+    except ValidationError as error:
+        locations = [
+            item["loc"] for item in error.errors(include_input=False, include_context=False)
+        ]
+        if any(location and location[0] == "ownerGroups" for location in locations):
+            message = "Invalid owner group"
+        elif any(location and location[-1] == "state" for location in locations):
+            message = "Invalid project state"
+        else:
+            message = "Unsupported project catalog schema or structure"
+        raise ValueError(message) from None
+    projects_root = _home_path(catalog.projects_root, home)
+    groups = tuple(catalog.owner_groups)
     if not groups or len(groups) != len(set(groups)):
         raise ValueError("Owner groups must be unique")
-    if any(not re.fullmatch(r"[a-z][A-Za-z0-9]*", group) for group in groups):
-        raise ValueError("Invalid owner group")
     projects: list[Project] = []
     seen: set[str] = set()
     paths: dict[Path, str] = {}
-    for record in data["project"]:
-        project_id = record["id"]
+    for record in catalog.project:
+        project_id = record.id
         parts = project_id.split("/")
         if (
             len(parts) != 2
@@ -99,10 +109,7 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
         ):
             raise ValueError(f"Invalid or repeated project ID: {project_id}")
         seen.add(project_id)
-        state = record["state"]
-        if state not in {"existing", "planned", "sourcePending", "optional"}:
-            raise ValueError(f"Invalid project state: {project_id}")
-        legacy = _home_path(record["legacyPath"], home) if "legacyPath" in record else None
+        legacy = _home_path(record.legacy_path, home) if record.legacy_path is not None else None
         target = projects_root.joinpath(*parts)
         if legacy == target:
             raise ValueError(f"Legacy and target paths are identical: {project_id}")
@@ -117,9 +124,9 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
                 project_id,
                 target,
                 legacy,
-                record.get("origin"),
-                state,
-                record.get("reviewOwner", False),
+                record.origin,
+                record.state,
+                record.review_owner,
             )
         )
     return ProjectLayout(projects_root, groups, tuple(projects))

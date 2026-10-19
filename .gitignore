@@ -19,3 +19,4 @@ git/config
 .coverage.*
 coverage/
 /core.[0-9]*
+.vscode/

@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import sys
 import xml.etree.ElementTree as ET
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+import typer
+
+app = typer.Typer(
+    help=__doc__,
+    pretty_exceptions_show_locals=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+
+
+class ReportFormat(StrEnum):
+    COVERAGE_PY = "coveragepy"
+    COBERTURA = "cobertura"
 
 
 def counter(hit: Any, total: Any) -> tuple[int, int]:
@@ -83,19 +96,18 @@ def report(path: Path, report_format: str, output: Path, after: Path | None) -> 
     return text
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path)
-    parser.add_argument(
-        "--format",
-        choices=["coveragepy", "cobertura"],
-        default="coveragepy",
-    )
-    parser.add_argument("--output", type=Path, default=Path("coverage/summary.md"))
-    parser.add_argument("--after", type=Path)
-    args = parser.parse_args()
-    report(args.path, args.format, args.output, args.after)
+@app.command(name="report")
+def main(
+    path: Annotated[Path, typer.Argument()],
+    report_format: Annotated[
+        ReportFormat,
+        typer.Option("--format"),
+    ] = ReportFormat.COVERAGE_PY,
+    output: Annotated[Path, typer.Option("--output")] = Path("coverage/summary.md"),
+    after: Annotated[Path | None, typer.Option("--after")] = None,
+) -> None:
+    report(path, report_format.value, output, after)
 
 
 if __name__ == "__main__":
-    main()
+    app()

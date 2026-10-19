@@ -34,6 +34,7 @@ def catalog(tmp_path: Path, text: str = CATALOG) -> tuple[Path, Path]:
     ("before", "after", "message"),
     [
         ("schemaVersion = 1", "schemaVersion = 2", "schema"),
+        ("schemaVersion = 1", "schemaVersion = true", "schema"),
         ("$HOME/Projects", "/tmp/Projects", "literal"),
         ("$HOME/Projects", "$HOME/../Projects", "unsafe"),
         ("$HOME/Projects", "$HOME/Projects/", "unsafe"),
@@ -161,6 +162,36 @@ def test_noninteractive_picker_requires_an_explicit_name(monkeypatch: pytest.Mon
     monkeypatch.setattr(main.sys, "stdin", StringIO(""))
     with pytest.raises(main.typer.BadParameter, match="--name"):
         main._choose_project({}, None)
+
+
+def test_template_catalog_includes_cli_specialization_without_installing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    runner = CliRunner()
+    listed = runner.invoke(main.app, ["templates", "list"], input="")
+    selected = runner.invoke(main.app, ["templates", "path", "--name", "typerTemplate"])
+    assert listed.exit_code == 0 and selected.exit_code == 4
+    assert "typerTemplate" in listed.stdout
+    assert "not installed" in selected.stderr
+    assert not list(home.iterdir())
+    source = home / "Projects/serrja/typerTemplate"
+    source.mkdir(parents=True)
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True, capture_output=True)
+    selected = runner.invoke(main.app, ["templates", "path", "--name", "typerTemplate"])
+    assert selected.exit_code == 0 and selected.stdout.strip() == str(source)
+    assert not (source / ".git/index").exists()
+
+
+def test_catalog_structure_errors_do_not_expose_input(tmp_path: Path) -> None:
+    text = CATALOG + '\nreviewOwner = "SYNTHETIC_PRIVATE_INPUT"\n'
+    root, home = catalog(tmp_path, text)
+    with pytest.raises(ValueError, match="schema") as failure:
+        load_layout(root, home=home)
+    assert "SYNTHETIC_PRIVATE_INPUT" not in str(failure.value)
+    assert not list(home.iterdir())
 
 
 @pytest.mark.parametrize("command", ["list", "path", "open"])
