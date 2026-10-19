@@ -15,11 +15,9 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           LEGACY_BRANCH: ${{ vars.LEGACY_PUBLISHED_BRANCH }}
         run: |
-          python3 - <<'PYTHON'
-          import os, re
-          types = r'(?:feat|fix|test|refactor|docs|build|ci|chore|perf|style|revert)'
-          branch = os.environ['HEAD_REF']
-          legacy = os.environ['LEGACY_BRANCH']
-          assert (legacy and branch == legacy) or re.fullmatch(types + r'/[a-z][A-Za-z0-9]*', branch), 'New branches use type/shortCamelCase; preserve only the explicitly recorded published legacy branch'
-          assert re.fullmatch(types + r'\([a-z][a-z0-9-]*\)!?: [^\r\n]+', os.environ['PR_TITLE']), 'Use type(scope): intent in the PR title'
-          PYTHON
+          set -euo pipefail
+          types='(feat|fix|test|refactor|docs|build|ci|chore|perf|style|revert)'
+          [[ ( -n "$LEGACY_BRANCH" && "$HEAD_REF" == "$LEGACY_BRANCH" ) || "$HEAD_REF" =~ ^$types/[a-z][A-Za-z0-9]*$ ]]
+          [[ "$PR_TITLE" != *$'\n'* && "$PR_TITLE" != *$'\r'* ]]
+          pattern="^$types\\([a-z][a-z0-9-]*\\)!?: .+$"
+          [[ "$PR_TITLE" =~ $pattern ]]

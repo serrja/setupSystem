@@ -1,30 +1,34 @@
 ## Why
 
-State the observed problem or task, with a link when one exists.
+Describe the observed problem and intended result.
 
-## Scope and architecture
+## Scope and non-goals
 
-List changed and excluded behavior. Name data owners, dependency direction, and any new abstraction.
+Name the owners, changed behavior and excluded work.
 
 ## Compatibility
 
-Describe public API, wire/config/package/template/DB impact and migration or deprecation.
+Describe API, wire, configuration, package, template and database impact; use N/A with a reason.
 
-## Checks
+## Commands and tests
 
-List exact commands, environment, and `passed` / `failed` / `notRun` / `blocked` results. No pre-checked boxes.
+Record exact commands, full tested source SHA and passed / failed / blocked / notRun results.
 
-Include the tested source SHA, statement/line and branch totals, and missing counts.
+## Coverage (advisory)
+
+Report statement/line and branch covered/total and missing counts separately, plus uninstrumented
+sources and notMeasured/notApplicable metrics. Below 100% warns; test, build and report errors fail.
 
 ## Artifacts and deployment
 
-State image input identity, build or reuse decision, verified digest, and cache backend/ACL.
-Describe migrations, deployment target, and rollback by digest; use N/A with a reason.
+Identify tested artifact/checksums or OCI digest, build/reuse decision and cache scope/access.
+State the authorized target or N/A. Source verification does not prove deployment.
 
-## Security, docs, and release
+## Security and documentation
 
-Describe logs, secrets, permissions, supply chain, documentation changes, and version/release-note decision.
+Explain permissions, safe logs, dependency changes, updated documentation and version decision.
+Never attach .env, credentials, keys, live databases or personal data.
 
-## Risk and rollback
+## Recovery
 
-Give affected users, rollback path, related PRs and order. Add screenshots only for UI work, without personal data.
+Give the previous verified source/artifact identity and recovery command; preserve storage and history.

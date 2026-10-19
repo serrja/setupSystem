@@ -1,10 +1,10 @@
 {
   "repository": "https://github.com/serrja/pythonTemplate",
-  "revision": "e23fb44411b971f40a9432a8616ddaf7abf70f93",
+  "revision": "24847521d2b6a441f332365efca8bbf21f896d1c",
   "files": {
     ".github/PULL_REQUEST_TEMPLATE.md": {
       "source": "template/.github/PULL_REQUEST_TEMPLATE.md.jinja",
-      "sha256": "f41a3ecd7c649e4df6933771290f54f3c832188a4b806f1d6c0acbb979ab5bc5"
+      "sha256": "ace4038d79b02d6aacf779739ae7c9bd7179fbf9e57d5e2d1d14e08466858544"
     },
     ".github/ISSUE_TEMPLATE/bug.yml": {
       "source": "template/.github/ISSUE_TEMPLATE/bug.yml",
@@ -13,6 +13,22 @@
     ".github/ISSUE_TEMPLATE/feature.yml": {
       "source": "template/.github/ISSUE_TEMPLATE/feature.yml",
       "sha256": "0b80a1e2b30ffc501f321a38b0c60396f309eb73e8aeff0c3a45710009dd23bd"
+    },
+    ".github/workflows/contribution.yml": {
+      "source": "template/.github/workflows/contribution.yml",
+      "sha256": "5ffc172c7c0881ae18e7243ee718dcc2693922f4864cafd73ab895054e30d272"
+    },
+    "docker/quality.mk": {
+      "source": "template/docker/quality.mk",
+      "sha256": "881cd3677effdf37503bd4c1980c0ce11403a6306bb8cdb2974779ff601fa6a4"
+    },
+    "docker/quality-python.mk": {
+      "source": "template/docker/quality-python.mk",
+      "sha256": "65cc6b6a47ebead0dc56466f88fbc507d61556119f7c38de2ef61f6a6f449224"
+    },
+    "docker/coverage_report.py": {
+      "source": "template/docker/coverage_report.py",
+      "sha256": "c679b3bbfb8f1019f014abcaa973cce5ef094f73eefb125f1fc388963400d3bf"
     }
   },
   "rules": {
@@ -22,9 +38,5 @@
     "versioning": "docs/versioning.md"
   },
   "codeowners": "Project-specific assignment; not inherited from the template.",
-  "workflow": {
-    "source": ".github/workflows/contribution.yml",
-    "revision": "faa81ff37ac74ae011c6fdbf4a3c251868cf7170",
-    "sha256": "a9dd75c70161f34c4699d490904f721e4d7a4c1c2687e1cc595da0f8b84e0766"
-  }
+  "role": "Reviewed portable engineering snapshots; no active scaffold restoration or template-update dependency."
 }
