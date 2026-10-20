@@ -3,14 +3,11 @@
 Git, Make and Docker suffice from this exact root:
 
 ```bash
-make check
+make ci-local
 make coverage
-make build
-make verify
-make image
 ```
 
-`check` runs locked Ruff, strict mypy, compilation, bootstrap help/plan and all 71 tests once.
+`check` runs locked Ruff, strict mypy, compilation, bootstrap help/plan and the complete source suite once.
 `coverage` reports the fresh result without rerunning tests. The collector covers the whole
 `setup_system` package and stdlib bootstrap, including unimported modules. Statements and
 branches are separate; below 100% warns. Assertions, types, builds and missing/corrupt/stale
@@ -21,7 +18,14 @@ private permissions, hashes, conflict preservation and symlink/traversal rejecti
 loading does not create directories or initialize Git. No source check applies workstation
 settings, invokes sudo, mounts the user HOME/socket, relocates projects or repeats Zsh/RTK.
 
-`build` exports the canonical wheel/sdist. `verify` runs the installed CLI outside the source
+Template tests use real annotated Git fixtures and official Copier copy/update.
+They cover offline cache, immutable source checks, user code/settings/tests/migration
+preservation, unchanged project HEAD/refs, conflicts, interactive choices, task
+suppression and rejection before destination writes. They do not fetch fixture
+sources over the network. Actual catalog sources are separately checked when
+recommending a newly published tag.
+
+`build` exports the canonical wheel/sdist under `coverage/artifacts/`; older `dist/` outputs are retained. `verify` runs the installed CLI outside the source
 checkout and verifies its metadata and bundled platform layout resources. `image` creates a
 local non-root CLI candidate and never publishes. CI uses the same pinned Debian Docker graph
 and retains reports/distributions for 14 days. This does not establish another OS or GUI target.

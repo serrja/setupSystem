@@ -4,19 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system"
-version = "0.1.1.dev0"
+version = "0.2.0.dev0"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
-dependencies = ["typer>=0.27.2,<1", "pydantic>=2.12,<3"]
+dependencies = ["typer>=0.27.2,<1", "pydantic>=2.12,<3", "copier==9.17.2", "pyyaml>=6,<7", "plumbum>=2,<3", "packaging>=25,<27"]
 
 [project.scripts]
 setup-system = "setup_system.cli.main:app"
 
 [dependency-groups]
-dev = ["mypy>=2.3,<3", "pytest>=9,<10", "pytest-cov>=7,<8", "ruff>=0.16.4,<1"]
+dev = ["mypy>=2.3,<3", "pytest>=9,<10", "pytest-cov>=7,<8", "ruff>=0.16.4,<1", "types-pyyaml>=6,<7"]
 
 [tool.hatch.build]
 exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", ".codex", ".codex/**", ".local", ".local/**", "backups", "backups/**", ".env", ".env.*", "/core.[0-9]*", "/.coverage", "/.coverage.*", ".vscode", ".vscode/**"]
@@ -31,6 +31,10 @@ manifests = "setup_system/manifests"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+
+[tool.ruff.format]
+# This snapshot retains its canonical owner's 88-column formatting; Make checks it separately.
+exclude = ["docker/release.py"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "N", "RUF", "UP", "TID252"]

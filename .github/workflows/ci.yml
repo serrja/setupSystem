@@ -28,7 +28,7 @@ jobs:
           cache-from: type=gha,scope=${{ github.repository_id }}-installed-test-python314-linux-amd64-${{ github.event_name == 'pull_request' && 'review' || 'trusted' }}
           cache-to: type=gha,mode=max,scope=${{ github.repository_id }}-installed-test-python314-linux-amd64-${{ github.event_name == 'pull_request' && 'review' || 'trusted' }}
       - name: Mandatory checks, canonical distributions and installed acceptance
-        run: make check build verify
+        run: make ci-local
       - name: Numeric advisory coverage table
         if: always()
         run: test ! -f coverage/summary.md || cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"

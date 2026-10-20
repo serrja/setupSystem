@@ -1,5 +1,25 @@
 # Release guide
 
-No merge, tag, package release or workstation apply is authorized by this change. Before an independently approved release, require source/static checks, valid coverage reports with exact missing counts and advisory percentages, clean wheel/sdist resource verification, supported Debian acceptance and backup/restore regressions. Coverage below 100% is advisory; real check failures remain blockers.
+Review application compatibility and evidence before integrating or tagging a version.
 
-Review only task files and staged paths, scan for credentials and generated state, verify the exact source SHA and CI artifacts, and preserve the previous installed wheel and private backup. Apply only in the explicitly authorized platform and scope. Restore uses hash verification and dry-run by default; user conflicts and application databases require explicit recovery decisions. Never rerun relocation, shell configuration or grants as a delivery shortcut.
+1. Decide compatibility and update the one packaging version plus changelog.
+   Refresh `uv.lock`; review CLI/config/generated-project compatibility and any
+   required migration separately from workstation installation.
+2. Run `make ci-local` and `make release-check`; review the exact content digest,
+   artifact versions/checksums, staged paths and outgoing diff. Coverage below
+   100% warns; missing or failed mandatory checks block delivery.
+3. Open and review the PR, then merge only after its required checks succeed.
+   A billing-blocked hosted check remains blocked even when local CI passes.
+4. At the exact clean, checked commit on main, inspect tag-triggered workflows.
+   Create one new annotated `v<version>` tag, push that exact ref and verify its
+   remote tag object and peeled commit. Never move an existing tag or use a
+   blanket `git push --tags`.
+5. Publish a package/image, create a GitHub Release, deploy or apply workstation
+   configuration only through a separately authorized workflow. Version tags
+   alone do not authorize those actions. Current CI runs for main and PRs, not
+   tag pushes; check that condition again immediately before a tag push.
+
+Preserve the preceding installed wheel and private recovery backups. File restore
+uses hash checks and dry-run by default; application databases and user conflicts
+need separate recovery decisions. A release is never a reason to rerun relocation,
+Zsh configuration, permissions or installation against an unsupported host.

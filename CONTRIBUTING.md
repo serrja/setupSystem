@@ -2,6 +2,8 @@
 
 Start a short `type/shortCamelCaseIntent` branch from the actual default branch. Keep platform changes separate from dotfile styling, review the complete diff and outgoing commits, and use a `type(scope): intent` PR title.
 
+See [development](docs/development.md) for the canonical Docker CI path and [versioning](docs/versioning.md) before changing a public contract.
+
 ## 🧪 Local checks
 
 ```bash
