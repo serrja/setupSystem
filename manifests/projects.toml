@@ -119,3 +119,14 @@ state = "existing"
 id = "pokerlost/platformInfra"
 origin = "git@github.com:pokerlost/platformInfra.git"
 state = "existing"
+
+# Explicitly approved public rule sources; catalog metadata grants no filesystem access.
+[[project]]
+id = "serrja/baseRules"
+origin = "git@github.com:serrja/baseRules.git"
+state = "existing"
+
+[[project]]
+id = "pokerlost/projectRules"
+origin = "git@github.com:pokerlost/projectRules.git"
+state = "existing"

@@ -60,3 +60,9 @@ For account setup and daily prompts, see the [Russian ChatGPT guide](docs/chatgp
 Contribution and PR commands are in [CONTRIBUTING.md](CONTRIBUTING.md). No production CD target is configured.
 
 [Testing and delivery](docs/testing.md) records the full source coverage policy. [Versioning](docs/versioning.md) and the [release guide](docs/release_guide.md) describe development candidates without activating installation or deployment.
+
+## 📄 License
+
+Original source/documentation uses [MIT](LICENSE). Preserve the
+[third-party notices](THIRD_PARTY_NOTICES.md); upstream assets, distributions and
+private data retain their own terms and access boundaries.
