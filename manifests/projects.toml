@@ -16,16 +16,68 @@ legacyPath = "$HOME/Projects/projectTemplates"
 origin = "git@github.com:serrja/pythonTemplate.git"
 state = "existing"
 
+[project.template]
+alias = "python"
+recommendedVersion = "0.3.0.dev2"
+
+[[project.template.versions]]
+version = "0.3.0.dev0"
+tag = "v0.3.0.dev0"
+commit = "ddf2e1adc43bd8fcbfd253fa7aa6d10287bb3be8"
+
+[[project.template.versions]]
+version = "0.3.0.dev1"
+tag = "v0.3.0.dev1"
+commit = "4344094debaf2d39bc219302ccc489f0c6e92e3b"
+
+[[project.template.versions]]
+version = "0.3.0.dev2"
+tag = "v0.3.0.dev2"
+commit = "4609fba54be0fe26645233aa221efca65ebf2b59"
+
 [[project]]
 id = "serrja/typerTemplate"
 origin = "git@github.com:serrja/typerTemplate.git"
 state = "existing"
+
+[project.template]
+alias = "typer"
+recommendedVersion = "0.1.0.dev2"
+
+[[project.template.versions]]
+version = "0.1.0.dev0"
+tag = "v0.1.0.dev0"
+commit = "a3b35d6dace6eda9dfe6c9750bfadbd6271ca276"
+
+[[project.template.versions]]
+version = "0.1.0.dev1"
+tag = "v0.1.0.dev1"
+commit = "95acfa2a8a1a0e88864d71b3d930b88f06ec6353"
+
+[[project.template.versions]]
+version = "0.1.0.dev2"
+tag = "v0.1.0.dev2"
+commit = "5b0559f82bf247362cf67e12497e82c280e857c3"
 
 [[project]]
 id = "serrja/fastApiTemplate"
 legacyPath = "$HOME/Projects/fastApiTemplate"
 origin = "git@github.com:serrja/fastApiTemplate.git"
 state = "existing"
+
+[project.template]
+alias = "fastapi"
+recommendedVersion = "0.3.0.dev1"
+
+[[project.template.versions]]
+version = "0.3.0.dev0"
+tag = "v0.3.0.dev0"
+commit = "be054a55739bc843d00866ed4b2ab2f20c63830b"
+
+[[project.template.versions]]
+version = "0.3.0.dev1"
+tag = "v0.3.0.dev1"
+commit = "50b920bc597529d50fab2f207523bf0cb65b76bf"
 
 [[project]]
 id = "serrja/jobdesk"
@@ -55,6 +107,9 @@ id = "pokerlost/serviceTemplate"
 legacyPath = "$HOME/pokerlost/serviceTemplate"
 origin = "git@github.com:pokerlost/serviceTemplate.git"
 state = "existing"
+
+[project.template]
+alias = "service"
 
 [[project]]
 id = "pokerlost/pypokerlost"

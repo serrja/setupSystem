@@ -18,6 +18,22 @@ setup-system doctor
 
 Run bootstrap from the actual checkout root. On Debian, base `apply` prepares pinned `uv` 0.12.15, installs a uv-managed Python 3.14, checks `uv.lock` with `--locked`, installs a wheel-backed `setup-system` CLI independent of the checkout path, backs up existing files, and installs user configuration. The `terminalDev` profile additionally installs Zsh as the current user's default login shell and installs pinned Neovim, plugins, parsers and editor tools; missing Debian packages use targeted `sudo` only when available. The Happ profile preserves an existing client and uses a pinned official package only if absent; see the [Russian Happ guide](docs/happGuide.md). Blocked package steps remain blocked. No profile changes Docker state. Re-run after moving the checkout: installed configuration lives under XDG paths.
 
+## Project templates
+
+The portable templates CLI uses the existing trusted catalog and official Copier;
+it does not require the Debian installer or a neighboring template checkout.
+
+```bash
+setup-system templates list
+setup-system templates versions fastapi
+setup-system templates create --template fastapi --destination ../exampleApi
+```
+
+Omitting `--version` selects the reviewed catalog recommendation. For unattended
+creation, add `--defaults --data answers.json`; required template answers belong
+in that JSON file. See [versioned templates](docs/templates.md) for cache, update
+and preservation checks, and [development](docs/development.md) for local CI.
+
 ## 🧭 Boundaries
 
 - `bootstrap.py` is stdlib-only. `src/setup_system/planning.py` is the read-only platform gate.
