@@ -1,0 +1,29 @@
+# Pinned optional user font; explicit installation only. No binary is stored in Git.
+[jetbrains_mono_nerd_font]
+version = "3.4.0"
+url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip"
+sha256 = "76f05ff3ace48a464a6ca57977998784ff7bdbb65a6d915d7e401cd3927c493c"
+license = "SIL-OFL-1.1"
+license_file = "OFL.txt"
+family = "JetBrainsMono Nerd Font Mono"
+emoji_fallback = "Noto Color Emoji"
+
+[[jetbrains_mono_nerd_font.files]]
+name = "JetBrainsMonoNerdFontMono-Regular.ttf"
+sha256 = "f01031f40e48dc29e1112e6b0b0450a2c6cd097f3f35cfff05c55cb311f8034c"
+
+[[jetbrains_mono_nerd_font.files]]
+name = "JetBrainsMonoNerdFontMono-Bold.ttf"
+sha256 = "5bdd4a873f3cd32f882d2c55545089123926e27707d5880fc9eaf84eb01b6686"
+
+[[jetbrains_mono_nerd_font.files]]
+name = "JetBrainsMonoNerdFontMono-Italic.ttf"
+sha256 = "ccd88b36d325e6a905edc8dd3f2522718d9690d9bed3fbb4684c7e746c34f846"
+
+[[jetbrains_mono_nerd_font.files]]
+name = "JetBrainsMonoNerdFontMono-BoldItalic.ttf"
+sha256 = "d931df2928b3216892d35980cddcad9edade1b9c9cd2e09a6c2937139f474742"
+
+[[jetbrains_mono_nerd_font.files]]
+name = "OFL.txt"
+sha256 = "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad"

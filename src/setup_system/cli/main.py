@@ -17,6 +17,8 @@ import typer
 from copier.errors import CopierError
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from setup_system.adapters.debian.desktop import install_packages
+from setup_system.application import workstation
 from setup_system.application.apps import app_status, catalog, install_zsh
 from setup_system.application.configuration import apply_configuration
 from setup_system.application.happ import (
@@ -82,6 +84,8 @@ app.add_typer(projects_app, name="projects")
 app.add_typer(happ_app, name="happ")
 app.add_typer(shell_app, name="shell")
 app.add_typer(rtk_app, name="rtk")
+workstation_app = typer.Typer(help="Explicit portable fonts and versioned Debian desktop profile.")
+app.add_typer(workstation_app, name="workstation")
 
 
 def _apply_default_shell() -> None:
@@ -1106,3 +1110,45 @@ def projects_open(
             subprocess.run([command, "attach-session", "-t", session_name], check=False).returncode
         )
     raise typer.Exit(subprocess.run([str(editor)], cwd=project_root, check=False).returncode)
+
+
+@workstation_app.command("plan")
+@workstation_app.command("doctor")
+def workstation_plan(profile: workstation.Profile = "fonts") -> None:
+    """Print a read-only plan; real GUI verification is a separate manual step."""
+    typer.echo(workstation.plan(ROOT, profile).model_dump_json(indent=2))
+
+
+@workstation_app.command("apply")
+def workstation_apply(
+    profile: workstation.Profile = "fonts",
+    yes: bool = False,
+    install_debian_packages: bool = False,
+    gnome: bool = False,
+    terminal_profile: str | None = None,
+) -> None:
+    """Back up and apply selected files; package installation requires its own flag."""
+    if not yes:
+        raise typer.BadParameter("Review workstation plan, then pass --yes to apply")
+    if install_debian_packages:
+        if profile != "hyprland":
+            raise typer.BadParameter("Debian desktop packages require --profile hyprland")
+        install_packages()
+    try:
+        folder = workstation.apply(ROOT, profile, gnome=gnome, terminal_profile=terminal_profile)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"backup: {folder}; GUI login/validation: not performed")
+
+
+@workstation_app.command("backup")
+def workstation_backup(profile: workstation.Profile = "fonts") -> None:
+    """Back up existing profile files without applying them."""
+    typer.echo(str(workstation.backup(ROOT, profile)))
+
+
+@workstation_app.command("restore")
+def workstation_restore(backup_id: str, apply: bool = False) -> None:
+    """Preview rollback; --apply restores only unchanged managed targets."""
+    for path, status in workstation.restore_profile(backup_id, apply_changes=apply):
+        typer.echo(f"{status}: {path}")

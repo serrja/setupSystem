@@ -89,3 +89,19 @@ base-dependency provenance. Review settings, code, tests and migrations with the
 resulting diff, then run the project's native checks. A merge conflict returns
 exit 3 and remains in the working tree for review; other failures return nonzero.
 No update commits the project or changes its remote.
+
+## Dev source candidates
+
+The following source snapshots have lint evidence only. The catalog's existing
+recommendations remain unchanged; these new candidates are not silently selected
+by generation or a stable channel. Full render/update acceptance was not run.
+
+| Source | Candidate tag | Exact source commit |
+| --- | --- | --- |
+| pythonTemplate | v0.3.0.dev3 | 4c7e003099d7f2af2b86d4133ec4fe46e1863a4a |
+| fastApiTemplate | v0.3.0.dev2 | cdd052c039682bd9782daab0fb0dcca17c7218ca |
+| typerTemplate | v0.1.0.dev3 | 1080470759f689f0ded8eff3bc52c4c7ece8e7c1 |
+| serviceTemplate | v0.3.0.dev2 | 62e43ff7438c855964b625535f3ebdac50b09ee3 |
+
+Promoting a candidate into the trusted catalog is a separate reviewed update after
+manual template acceptance. A published annotated tag alone is not that evidence.

@@ -1,3 +1,12 @@
+ifeq ($(CONTAINERIZED),1)
+RUFF ?= ruff
+else
+RUFF ?= uvx --from ruff==0.17.1 ruff
+endif
+# Quick dev commands never prepare a product/build image.
+ifneq ($(filter lint format format-check check,$(MAKECMDGOALS)),)
+override CONTAINERIZED := 1
+endif
 ifneq ($(CONTAINERIZED),1)
 QUALITY_IMAGE := setupsystem:quality
 RUNTIME_IMAGE := setupsystem:candidate
@@ -16,6 +25,8 @@ RELEASE_CHECK_COMMAND = $(QUALITY_RUN) python docker/release.py release-check --
 OFFLINE_PREFLIGHT_COMMAND = $(MAKE) setup-offline-preflight
 VERIFY_COMMAND = $(MAKE) verify-cli-installed
 IMAGE_COMMAND = $(DOCKER) buildx build --file Dockerfile.quality $(DOCKER_BUILD_ARGS) $(LOCAL_BUILD_NETWORK) --target runtime --load --tag $(RUNTIME_IMAGE) .
+QUALITY_EXTRA_TARGETS += acceptance
+CI_LOCAL_TARGETS ?= acceptance coverage build verify release-check
 include docker/quality-python.mk
 
 .PHONY: setup-offline-preflight verify-cli-installed
@@ -43,9 +54,9 @@ help:
 install:
 	$(UV) sync --locked
 lint:
-	$(UV) run --locked ruff check .
-	$(UV) run --locked ruff format --check .
-	$(UV) run --locked ruff format --check --line-length 88 docker/release.py
+	$(RUFF) check .
+	$(RUFF) format --check .
+	$(RUFF) format --check --line-length 88 docker/release.py
 typecheck:
 	$(UV) run --locked mypy
 test:
@@ -57,8 +68,17 @@ lock-check:
 bootstrap-check:
 	python bootstrap.py --help
 	python bootstrap.py plan
-check: lint typecheck compile lock-check bootstrap-check test
+check: lint ## Fast lint-only gate; no tests/build.
+
+acceptance: lint typecheck compile lock-check bootstrap-check test
 build:
 	$(UV) build --no-build-isolation --wheel --sdist --out-dir coverage/artifacts
 
 endif
+
+.PHONY: dev-policy-help
+help: dev-policy-help
+dev-policy-help:
+	@printf '%s\n' 'Daily: make lint; explicit git push origin dev.' \
+	  'Manual only: test, typecheck, coverage, build, acceptance, ci-local.' \
+	  'Native lint tools must be installed; lint never syncs/builds the application.'

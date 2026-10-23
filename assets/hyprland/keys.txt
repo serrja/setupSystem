@@ -1,0 +1,11 @@
+Hyprland 0.55.2 — setupSystem
+Super+Return terminal | Super+F1 applications | Super+F12 help
+Super+arrows focus | +Shift move | +Ctrl resize (20 px)
+Super+1..0 workspaces 1..10 | +Shift move window there
+Super+F4 close | Super+F5 floating | Super+F11 fullscreen
+Super+mouse left move | right resize
+Super+Space RU/EN | Super+Escape lock
+Super+Print screenshot area to clipboard | Super+F8 clipboard
+Super+F2 sound | Super+F3 network | Super+F9 power menu
+Volume/brightness hardware keys work without Super.
+Normal application shortcuts remain unchanged. q exits this help.

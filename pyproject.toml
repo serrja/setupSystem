@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system"
-version = "0.2.0.dev0"
+version = "0.2.0.dev1"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"

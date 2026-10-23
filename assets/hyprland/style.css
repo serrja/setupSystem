@@ -1,0 +1,7 @@
+* { font-family: "Noto Sans", "Noto Color Emoji"; font-size: 14px; border: none; border-radius: 0; }
+window#waybar, window { background: #1e1e2e; color: #cdd6f4; }
+#workspaces button { padding: 0 8px; color: #bac2de; }
+#workspaces button.active { background: #313244; color: #89b4fa; }
+#input, #entry { padding: 8px; margin: 4px; }
+#entry:selected { background: #313244; }
+#tray { padding-right: 8px; }
