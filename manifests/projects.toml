@@ -60,9 +60,9 @@ tag = "v0.1.0.dev2"
 commit = "5b0559f82bf247362cf67e12497e82c280e857c3"
 
 [[project]]
-id = "serrja/fastApiTemplate"
-legacyPath = "$HOME/Projects/fastApiTemplate"
-origin = "git@github.com:serrja/fastApiTemplate.git"
+id = "serrja/fastapiTemplate"
+legacyPath = "$HOME/Projects/serrja/fastApiTemplate"
+origin = "git@github.com:serrja/fastapiTemplate.git"
 state = "existing"
 
 [project.template]
