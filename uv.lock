@@ -891,7 +891,7 @@ wheels = [
 
 [[package]]
 name = "setup-system"
-version = "0.2.0.dev1"
+version = "0.2.0.dev2"
 source = { editable = "." }
 dependencies = [
     { name = "copier" },

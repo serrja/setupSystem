@@ -1114,9 +1114,19 @@ def projects_open(
 
 @workstation_app.command("plan")
 @workstation_app.command("doctor")
-def workstation_plan(profile: workstation.Profile = "fonts") -> None:
+def workstation_plan(
+    profile: workstation.Profile = "fonts", terminal_profile: str | None = None
+) -> None:
     """Print a read-only plan; real GUI verification is a separate manual step."""
-    typer.echo(workstation.plan(ROOT, profile).model_dump_json(indent=2))
+    typer.echo(
+        workstation.plan(ROOT, profile, terminal_profile=terminal_profile).model_dump_json(indent=2)
+    )
+
+
+@workstation_app.command("font-probe")
+def workstation_font_probe() -> None:
+    """Print literal comparison text in the current terminal without changing settings."""
+    typer.echo("\n".join(workstation.FONT_PROBE))
 
 
 @workstation_app.command("apply")
@@ -1126,6 +1136,8 @@ def workstation_apply(
     install_debian_packages: bool = False,
     gnome: bool = False,
     terminal_profile: str | None = None,
+    reset_terminal_cell_spacing: bool = False,
+    refresh_terminal_font: bool = False,
 ) -> None:
     """Back up and apply selected files; package installation requires its own flag."""
     if not yes:
@@ -1135,7 +1147,14 @@ def workstation_apply(
             raise typer.BadParameter("Debian desktop packages require --profile hyprland")
         install_packages()
     try:
-        folder = workstation.apply(ROOT, profile, gnome=gnome, terminal_profile=terminal_profile)
+        folder = workstation.apply(
+            ROOT,
+            profile,
+            gnome=gnome,
+            terminal_profile=terminal_profile,
+            reset_terminal_cell_spacing=reset_terminal_cell_spacing,
+            refresh_terminal_font=refresh_terminal_font,
+        )
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"backup: {folder}; GUI login/validation: not performed")

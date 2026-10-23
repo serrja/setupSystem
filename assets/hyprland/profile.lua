@@ -37,7 +37,11 @@ bind("F5", hl.dsp.window.float({ action = "toggle" }), "Floating")
 bind("F11", hl.dsp.window.fullscreen(), "Fullscreen")
 bind("Escape", exec("loginctl lock-session"), "Lock")
 bind("Print", exec("sh '" .. cfg .. "/screenshot.sh'"), "Screenshot area to clipboard")
-bind("F8", exec("cliphist list | wofi --dmenu | cliphist decode | wl-copy"), "Clipboard history")
+bind(
+  "F8",
+  exec("cliphist list | wofi --dmenu --style '" .. cfg .. "/style.css' | cliphist decode | wl-copy"),
+  "Clipboard history"
+)
 bind("F9", exec("sh '" .. cfg .. "/power.sh'"), "Power menu")
 bind("F12", exec("foot -c '" .. cfg .. "/foot.ini' -e less '" .. cfg .. "/keys.txt'"), "Help")
 for _, direction in ipairs({ "left", "right", "up", "down" }) do

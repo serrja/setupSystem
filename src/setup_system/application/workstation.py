@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import tomllib
 import zipfile
 from pathlib import Path
@@ -22,12 +24,74 @@ from setup_system.adapters.debian.desktop import HYPRLAND_VERSION, package_argum
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 Profile = Literal["fonts", "hyprland"]
-GNOME_FONTS = (
-    ("org.gnome.desktop.interface", "font-name", "Noto Sans 11"),
-    ("org.gnome.desktop.interface", "document-font-name", "Noto Sans 11"),
-    ("org.gnome.desktop.interface", "monospace-font-name", "JetBrainsMono Nerd Font Mono 11"),
-    ("org.gnome.desktop.wm.preferences", "titlebar-font", "Noto Sans Bold 11"),
+GNOME_FONT_KEYS = (
+    ("org.gnome.desktop.interface", "font-name"),
+    ("org.gnome.desktop.interface", "document-font-name"),
+    ("org.gnome.desktop.interface", "monospace-font-name"),
+    ("org.gnome.desktop.wm.preferences", "titlebar-font"),
 )
+FONT_PROBE = (
+    "Latin:     ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz",
+    "Cyrillic:  АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    "Digits:    0123456789012345678901234567890123456789",
+    "No spaces: |iiiiiiiiii|WWWWWWWWWW|0000000000|ЖЖЖЖЖЖЖЖЖЖ|",
+    "Spaces:    |i i i i i |W W W W W |0 0 0 0 0 |Ж Ж Ж Ж Ж |",
+    "Boxes:     ┌──────────┬──────────┐ │ └──────────┴──────────┘",
+    "Icons:     \ue620 \uf07c \ue0b0  Emoji: 😀 👩\u200d💻",
+)
+
+
+class FontPolicy(BaseModel):
+    """Validated values used by every generated font asset and desktop setting."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    family: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._-]+$")
+    emoji_fallback: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._-]+$")
+    ui_size: int = Field(ge=6, le=48)
+    terminal_size: int = Field(ge=6, le=48)
+    panel_size: int = Field(ge=6, le=64)
+    previous_fontconfig_sha256: tuple[str, ...] = ()
+
+    def render(self, source: Path) -> bytes:
+        """Render only the explicit font placeholders, keeping other user syntax intact."""
+        content = source.read_text()
+        values = {
+            "PRIMARY_FAMILY": self.family,
+            "EMOJI_FAMILY": self.emoji_fallback,
+            "UI_SIZE": self.ui_size,
+            "TERMINAL_SIZE": self.terminal_size,
+            "PANEL_SIZE": self.panel_size,
+        }
+        for key, value in values.items():
+            content = content.replace("@" + key + "@", str(value))
+        if re.search(r"@[A-Z_]+@", content):
+            raise ValueError(f"Unknown font placeholder: {source}")
+        return content.encode()
+
+
+class TerminalFontRefresh(BaseModel):
+    """Private receipt for a real monitor notification and equivalent font re-selection."""
+
+    model_config = ConfigDict(extra="forbid")
+    profile_id: str
+    settings_schema: str
+    font: str
+    equivalent_font: str
+    font_directory: str
+    timestamp_before: int
+    timestamp_after: int | None = None
+    status: Literal["prepared", "monitor-notified", "complete", "failed"] = "prepared"
+    error: str | None = None
+    gui_verified: bool = False
+
+
+def font_policy(root: Path) -> FontPolicy:
+    """Read the one font-policy manifest; do not download or apply anything."""
+    manifest = tomllib.loads((root / "manifests/fonts.toml").read_text())
+    font = manifest["jetbrains_mono_nerd_font"]
+    return FontPolicy(
+        family=font["family"], emoji_fallback=font["emoji_fallback"], **manifest["profile"]
+    )
 
 
 class WorkstationPlan(BaseModel):
@@ -78,17 +142,187 @@ def _hyprland_version() -> str | None:
     return _run(["Hyprland", "--version"]).splitlines()[0]
 
 
+def _terminal_schema(profile_id: str) -> str:
+    if not re.fullmatch(r"[0-9a-f-]{36}", profile_id):
+        raise ValueError("Expected an existing GNOME Terminal profile UUID")
+    return (
+        "org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:"
+        + profile_id
+        + "/"
+    )
+
+
+def _terminal_profiles() -> list[str]:
+    value = _run(["gsettings", "get", "org.gnome.Terminal.ProfilesList", "list"])
+    profiles = ast.literal_eval(value.removeprefix("@as "))
+    if not isinstance(profiles, list) or not all(isinstance(item, str) for item in profiles):
+        raise ValueError("Cannot read GNOME Terminal profile list")
+    return profiles
+
+
+def _fontconfig_timestamp() -> int:
+    """Read GNOME's monitor-owned property; never synthesize its D-Bus notification."""
+    if not shutil.which("gdbus"):
+        raise ValueError("Terminal refresh requires gdbus and GNOME's running font monitor")
+    value = _run(
+        [
+            "gdbus",
+            "call",
+            "--session",
+            "--timeout",
+            "3",
+            "--dest",
+            "org.gtk.Settings",
+            "--object-path",
+            "/org/gtk/Settings",
+            "--method",
+            "org.freedesktop.DBus.Properties.Get",
+            "org.gtk.Settings",
+            "FontconfigTimestamp",
+        ]
+    )
+    match = re.fullmatch(r"\(<int64 ([0-9]+)>,\)", value)
+    if match is None:
+        raise ValueError("Cannot read GNOME's real FontconfigTimestamp")
+    return int(match.group(1))
+
+
+def _prepare_terminal_refresh(policy: FontPolicy, profile_id: str | None) -> TerminalFontRefresh:
+    if not profile_id:
+        raise ValueError("Terminal font refresh requires an explicitly selected terminal profile")
+    schema = _terminal_schema(profile_id)
+    current = _run(["gsettings", "get", schema, "font"])
+    pattern = "'" + re.escape(policy.family) + r"(?: Regular)? ([0-9]+(?:\.[0-9]+)?)'"
+    match = re.fullmatch(pattern, current)
+    if match is None:
+        raise ValueError("Refresh requires this profile to already use the primary Regular font")
+    size = match.group(1)
+    data = _safe(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")))
+    directory = _safe(data / "fonts")
+    if not directory.is_dir() or not shutil.which("fc-cache"):
+        raise ValueError("Refresh requires an installed user font directory and fc-cache")
+    return TerminalFontRefresh(
+        profile_id=profile_id,
+        settings_schema=schema,
+        font=f"'{policy.family} {size}'",
+        equivalent_font=f"'{policy.family} Regular {size}'",
+        font_directory=str(directory),
+        timestamp_before=_fontconfig_timestamp(),
+    )
+
+
+def _refresh_terminal_font(refresh: TerminalFontRefresh, folder: Path) -> None:
+    """Notify the existing font monitor, then re-select only one backed-up profile font."""
+    receipt = folder / "terminal-refresh.json"
+
+    def save() -> None:
+        atomic_write(receipt, (refresh.model_dump_json(indent=2) + "\n").encode())
+
+    try:
+        if _run(["gsettings", "get", refresh.settings_schema, "font"]) != refresh.font:
+            raise ValueError("Terminal font changed after backup; refusing refresh")
+        refresh.timestamp_before = _fontconfig_timestamp()
+        save()
+        # A real directory event wakes gsd's existing file monitor. Exclusive creation
+        # never overwrites a user file; the non-font marker is removed immediately.
+        with tempfile.NamedTemporaryFile(
+            mode="w", prefix=".setup-system-font-refresh-", dir=refresh.font_directory
+        ) as marker:
+            marker.write("setupSystem font monitor notification; not a font\n")
+        _run(["fc-cache", "-f", refresh.font_directory])
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            timestamp = _fontconfig_timestamp()
+            if timestamp != refresh.timestamp_before:
+                refresh.timestamp_after = timestamp
+                break
+            time.sleep(0.25)
+        if refresh.timestamp_after is None:
+            raise ValueError("GNOME's font monitor did not acknowledge the directory change")
+        refresh.status = "monitor-notified"
+        save()
+        if _run(["gsettings", "get", refresh.settings_schema, "font"]) != refresh.font:
+            raise ValueError("Terminal font changed while waiting; refusing re-selection")
+        try:
+            _run(["gsettings", "set", refresh.settings_schema, "font", refresh.equivalent_font])
+            if (
+                _run(["gsettings", "get", refresh.settings_schema, "font"])
+                != refresh.equivalent_font
+            ):
+                raise ValueError("Equivalent terminal font readback failed")
+        finally:
+            _run(["gsettings", "set", refresh.settings_schema, "font", refresh.font])
+        if _run(["gsettings", "get", refresh.settings_schema, "font"]) != refresh.font:
+            raise ValueError("Terminal font restoration readback failed")
+        refresh.status = "complete"
+        save()
+    except BaseException as exc:
+        refresh.status = "failed"
+        refresh.error = str(exc)
+        save()
+        raise
+
+
+def _font_observations(root: Path) -> dict[str, str]:
+    policy = font_policy(root)
+    observations = {
+        "font-policy:primary": policy.family,
+        "font-policy:fallback": policy.emoji_fallback + " (missing glyphs only)",
+        "terminal:active-profile": "not inferred from the default profile or sandbox environment",
+        "terminal:zoom": "window-local; not observable through GNOME Terminal profile GSettings",
+        "terminal:geometry": "pixel cell dimensions require the actual terminal window",
+    }
+    if shutil.which("fc-match"):
+        for name, pattern in {
+            "sans-serif": "sans-serif",
+            "monospace": "monospace",
+            "primary": policy.family + ":style=Regular",
+            "latin": policy.family + ":charset=0041",
+            "cyrillic": policy.family + ":charset=0416",
+            "box": policy.family + ":charset=2502",
+            "icon": policy.family + ":charset=e620",
+            "emoji": policy.family + ":charset=1f600",
+        }.items():
+            observations["fontconfig:" + name] = _run(
+                [
+                    "fc-match",
+                    "-f",
+                    "family=%{family}; style=%{style}; spacing=%{spacing}; file=%{file}",
+                    pattern,
+                ]
+            )
+    # Process names only: arguments/environment can contain project data or credentials.
+    pid = os.getpid()
+    ancestry: list[str] = []
+    for _ in range(32):
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+            end = stat.rindex(")")
+            ancestry.append(stat[stat.index("(") + 1 : end])
+            pid = int(stat[end + 2 :].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+        if pid <= 0:
+            break
+    observations["process-ancestry:namespace-local"] = " <- ".join(ancestry)
+    observations["process-ancestry:limitation"] = (
+        "A sandbox can hide the host terminal/tmux; absence here is not evidence of absence."
+    )
+    return observations
+
+
 def _targets(root: Path, profile: Profile) -> dict[Path, bytes]:
     config = _config()
+    policy = font_policy(root)
     if profile == "fonts":
         return {
-            _safe(config / "fontconfig/conf.d/60-setup-system-fonts.conf"): (
+            _safe(config / "fontconfig/conf.d/60-setup-system-fonts.conf"): policy.render(
                 root / "assets/fonts/60-setup-system-fonts.conf"
-            ).read_bytes()
+            )
         }
     folder = root / "assets/hyprland"
     targets = {
-        config / "hypr/setup-system" / path.relative_to(folder): path.read_bytes()
+        config / "hypr/setup-system" / path.relative_to(folder): policy.render(path)
         for path in folder.rglob("*")
         if path.is_file()
     }
@@ -107,7 +341,7 @@ def _targets(root: Path, profile: Profile) -> dict[Path, bytes]:
     return {_safe(path): content for path, content in targets.items()}
 
 
-def plan(root: Path, profile: Profile) -> WorkstationPlan:
+def plan(root: Path, profile: Profile, *, terminal_profile: str | None = None) -> WorkstationPlan:
     """Inspect OS and files without creating cache, backup or package state."""
     release = platform.freedesktop_os_release()
     blockers: list[str] = []
@@ -127,34 +361,50 @@ def plan(root: Path, profile: Profile) -> WorkstationPlan:
             blockers.append("Configuration apply requires installed Hyprland 0.55.2")
     observations = {
         key: os.environ.get(key, "unset")
-        for key in ("XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "LANG", "LC_ALL", "TERM")
+        for key in (
+            "XDG_SESSION_TYPE",
+            "XDG_CURRENT_DESKTOP",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "TERM",
+            "TERM_PROGRAM",
+            "TERM_PROGRAM_VERSION",
+            "VTE_VERSION",
+            "GNOME_TERMINAL_SCREEN",
+        )
     }
-    for name, argv in {
-        "monospace": ["fc-match", "-f", "%{family}", "monospace"],
-        "emoji": ["fc-match", "-f", "%{family}", "emoji"],
-    }.items():
-        if shutil.which(argv[0]):
-            observations[name] = _run(argv)
+    observations.update(_font_observations(root))
+    observations["TMUX"] = "present" if os.environ.get("TMUX") else "unset"
     if shutil.which("gsettings"):
         schemas = _run(["gsettings", "list-schemas"]).splitlines()
-        for schema, key, _ in GNOME_FONTS:
+        for schema, key in GNOME_FONT_KEYS:
             if schema in schemas:
                 observations[f"{schema}:{key}"] = _run(["gsettings", "get", schema, key])
         if "org.gnome.desktop.interface" in schemas:
             for key in ("text-scaling-factor", "scaling-factor"):
                 observations[key] = _run(["gsettings", "get", "org.gnome.desktop.interface", key])
         if "org.gnome.Terminal.ProfilesList" in schemas:
-            profile_id = _run(
+            observations["terminal:default-profile"] = _run(
                 ["gsettings", "get", "org.gnome.Terminal.ProfilesList", "default"]
-            ).strip("'")
-            if re.fullmatch(r"[0-9a-f-]{36}", profile_id):
-                schema = (
-                    "org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:"
-                    + profile_id
-                    + "/"
-                )
-                for key in ("font", "use-system-font", "cell-width-scale", "cell-height-scale"):
-                    observations["terminal:" + key] = _run(["gsettings", "get", schema, key])
+            )
+            profiles = _terminal_profiles()
+            if terminal_profile and terminal_profile not in profiles:
+                blockers.append("Requested GNOME Terminal profile does not exist")
+            for profile_id in profiles:
+                schema = _terminal_schema(profile_id)
+                for key in (
+                    "visible-name",
+                    "font",
+                    "use-system-font",
+                    "cell-width-scale",
+                    "cell-height-scale",
+                ):
+                    observations[f"terminal:profiles:{profile_id}:{key}"] = _run(
+                        ["gsettings", "get", schema, key]
+                    )
+            if terminal_profile:
+                observations["terminal:requested-profile"] = terminal_profile
     for connector in sorted(Path("/sys/class/drm").glob("card*-*/status")):
         observations[connector.parent.name] = connector.read_text().strip()
     for key in ("GTK_THEME", "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "GDK_SCALE"):
@@ -216,26 +466,35 @@ def _font_files(root: Path) -> dict[Path, bytes]:
             return result
 
 
-def _settings(gnome: bool, terminal_profile: str | None) -> list[tuple[str, str, str]]:
-    settings = list(GNOME_FONTS) if gnome else []
+def _settings(
+    policy: FontPolicy,
+    gnome: bool,
+    terminal_profile: str | None,
+    reset_terminal_cell_spacing: bool,
+) -> list[tuple[str, str, str]]:
+    settings = []
+    if gnome:
+        for schema, key in GNOME_FONT_KEYS:
+            style = " Bold" if key == "titlebar-font" else ""
+            settings.append((schema, key, f"'{policy.family}{style} {policy.ui_size}'"))
+    if reset_terminal_cell_spacing and not terminal_profile:
+        raise ValueError("Reset cell spacing requires an explicitly selected terminal profile")
     if terminal_profile:
-        if not re.fullmatch(r"[0-9a-f-]{36}", terminal_profile):
-            raise ValueError("Expected an existing GNOME Terminal profile UUID")
-        available = _run(["gsettings", "get", "org.gnome.Terminal.ProfilesList", "list"])
-        if f"'{terminal_profile}'" not in available:
+        schema = _terminal_schema(terminal_profile)
+        if terminal_profile not in _terminal_profiles():
             raise ValueError("Terminal profile does not exist")
-        schema = (
-            "org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:"
-            + terminal_profile
-            + "/"
-        )
         if _run(["gsettings", "get", schema, "use-system-font"]) != "false":
             raise ValueError("Terminal uses system font; review that choice before overriding it")
         old = _run(["gsettings", "get", schema, "font"]).strip("'")
         size = old.rsplit(" ", 1)[-1]
         if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", size):
             raise ValueError("Cannot preserve terminal font size")
-        settings.append((schema, "font", "JetBrainsMono Nerd Font Mono " + size))
+        settings.append((schema, "font", f"'{policy.family} {size}'"))
+        if reset_terminal_cell_spacing:
+            # Verified GNOME Terminal profile keys; not screen scaling or a zoom reset.
+            settings.extend(
+                (schema, key, "1.0") for key in ("cell-width-scale", "cell-height-scale")
+            )
     return settings
 
 
@@ -245,35 +504,50 @@ def backup(root: Path, profile: Profile) -> Path:
 
 
 def apply(
-    root: Path, profile: Profile, *, gnome: bool = False, terminal_profile: str | None = None
+    root: Path,
+    profile: Profile,
+    *,
+    gnome: bool = False,
+    terminal_profile: str | None = None,
+    reset_terminal_cell_spacing: bool = False,
+    refresh_terminal_font: bool = False,
 ) -> Path:
     """Apply portable files with conflict checks and a recoverable per-write receipt."""
-    report = plan(root, profile)
+    report = plan(root, profile, terminal_profile=terminal_profile)
     if report.blockers:
         raise ValueError("; ".join(report.blockers))
-    if profile != "fonts" and (gnome or terminal_profile):
+    if profile != "fonts" and (
+        gnome or terminal_profile or reset_terminal_cell_spacing or refresh_terminal_font
+    ):
         raise ValueError("GNOME options belong to the fonts profile")
+    policy = font_policy(root)
     desired = _targets(root, profile)
     if profile == "fonts":
-        for family in ("Noto Sans", "Noto Color Emoji"):
+        for family in (policy.emoji_fallback,):
             if family not in _run(["fc-match", "-f", "%{family}", family]):
-                raise ValueError("Install the distro's Noto fonts before applying this profile")
+                raise ValueError("Install the distro's emoji fallback before applying this profile")
         desired.update(_font_files(root))
     receipt_path = _receipt()
     previous = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
     for path, content in desired.items():
         if path.exists() and path.read_bytes() != content:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            if previous.get(str(path)) != digest:
+            known_alias = (
+                profile == "fonts"
+                and path == _config() / "fontconfig/conf.d/60-setup-system-fonts.conf"
+                and digest in policy.previous_fontconfig_sha256
+            )
+            if previous.get(str(path)) != digest and not known_alias:
                 raise ValueError(f"Locally edited/unmanaged file requires review: {path}")
-    settings = _settings(gnome, terminal_profile)
+    settings = _settings(policy, gnome, terminal_profile, reset_terminal_cell_spacing)
+    refresh = _prepare_terminal_refresh(policy, terminal_profile) if refresh_terminal_font else None
     setting_rows = []
     for schema, key, value in settings:
         old = _run(["gsettings", "get", schema, key])
-        if old != "'" + value + "'":
-            setting_rows.append(
-                {"schema": schema, "key": key, "before": old, "after": "'" + value + "'"}
-            )
+        if old != value or (
+            refresh is not None and schema == refresh.settings_schema and key == "font"
+        ):
+            setting_rows.append({"schema": schema, "key": key, "before": old, "after": value})
     changed = {
         path: content
         for path, content in desired.items()
@@ -302,14 +576,23 @@ def apply(
         "settings": setting_rows,
     }
     atomic_write(folder / "workstation.json", (json.dumps(operation, indent=2) + "\n").encode())
+    if refresh is not None:
+        atomic_write(
+            folder / "terminal-refresh.json", (refresh.model_dump_json(indent=2) + "\n").encode()
+        )
     for path, content in changed.items():
         atomic_write(path, content, 0o600 if path == receipt_path else 0o644)
     for row in setting_rows:
         _run(["gsettings", "set", row["schema"], row["key"], row["after"]])
         if _run(["gsettings", "get", row["schema"], row["key"]]) != row["after"]:
             raise RuntimeError("GSettings readback failed; backup contains rollback values")
-    if profile == "fonts" and changed:
+    if profile == "fonts" and changed and refresh is None:
         _run(["fc-cache", "-f"])
+    if refresh is not None:
+        try:
+            _refresh_terminal_font(refresh, folder)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            raise ValueError(f"Terminal refresh failed: {exc}; backup: {folder}") from exc
     return folder
 
 

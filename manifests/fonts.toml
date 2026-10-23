@@ -1,4 +1,12 @@
 # Pinned optional user font; explicit installation only. No binary is stored in Git.
+# This manifest is the only font-policy owner. Assets contain rendered placeholders.
+[profile]
+ui_size = 11
+terminal_size = 12
+panel_size = 14
+# Exact setupSystem 0.2.0.dev1 alias file; a reviewed migration, never an arbitrary overwrite.
+previous_fontconfig_sha256 = ["701c99d84ce0f5782fbed54101327058c35f2a6e5d4be6af17d91d52065069c0"]
+
 [jetbrains_mono_nerd_font]
 version = "3.4.0"
 url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip"

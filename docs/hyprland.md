@@ -71,7 +71,10 @@ WirePlumber используют штатные user units; их не отклю
 Polkit autostart. XWayland и GTK/Qt Wayland-пакеты сохранены; приложения не принуждаются
 к глобальному backend. Keyring остаётся существующим системным компонентом.
 
-Единые шрифты задаются [отдельным профилем](fonts.md). Палитра тёмная, отступы 4/8 px,
+Единые шрифты задаются [одним manifest-профилем](fonts.md): JetBrainsMono Nerd Font
+Mono для foot, Waybar/Wofi, Mako и Hyprlock; emoji — только fallback. `apply`
+подставляет значения в assets, поэтому исходные файлы с placeholders не копируют
+вручную. Clipboard/power menus используют тот же Wofi style. Палитра тёмная, отступы 4/8 px,
 без blur и анимаций. Это ограничение эффектов для предсказуемого профиля, не заявление
 о замеренном ускорении текущего компьютера. Sysctl, security updates, firewall,
 журналирование, CPU-защита и энергосбережение не отключаются.
