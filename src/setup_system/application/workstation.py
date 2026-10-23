@@ -559,10 +559,7 @@ def apply(
     receipt_content = (json.dumps(previous, indent=2) + "\n").encode()
     if not receipt_path.exists() or receipt_path.read_bytes() != receipt_content:
         changed[receipt_path] = receipt_content
-    folder = new_backup(
-        [path for path in changed if path.exists()]
-        + ([receipt_path] if receipt_path.exists() else [])
-    )
+    folder = new_backup([path for path in changed if path.exists()])
     operation = {
         "profile": profile,
         "files": [
@@ -603,16 +600,34 @@ def restore_profile(backup_id: str, *, apply_changes: bool = False) -> list[tupl
     folder = _safe(state_root() / "backups" / backup_id)
     operation = json.loads((folder / "workstation.json").read_text())
     paths: list[Path] = []
+    checked: set[Path] = set()
     for item in operation["files"]:
         path = _safe(Path(item["path"]))
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item["after"]:
             raise ValueError(f"Rollback conflicts with a later edit: {path}")
+        checked.add(path)
         if item["created"]:
             paths.append(path)
+    # Older operations also backed up an unchanged ownership receipt. It has no
+    # operation-after hash, so only its unchanged backup-before hash is safe.
+    manifest = json.loads((folder / "manifest.json").read_text())
+    for item in manifest["items"]:
+        relative = Path(item.get("home_relative") or Path(item["source"]).relative_to(Path.home()))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("Unsafe backup path")
+        path = _safe(Path.home() / relative)
+        if path not in checked and (
+            not path.is_file()
+            or hashlib.sha256(path.read_bytes()).hexdigest() != item.get("sha256")
+        ):
+            raise ValueError(f"Rollback lacks unchanged-target evidence: {path}")
     for row in operation["settings"]:
         if _run(["gsettings", "get", row["schema"], row["key"]]) != row["after"]:
             raise ValueError("Rollback conflicts with a later GSettings edit")
-    results = restore(backup_id, apply=False)
+    results = [
+        (path, "would-restore" if status == "conflict" else status)
+        for path, status in restore(backup_id, apply=False)
+    ]
     if apply_changes:
         new_backup(paths)
         results = restore(backup_id, apply=True, replace_current=True)

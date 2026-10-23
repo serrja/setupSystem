@@ -135,3 +135,11 @@ Each apply prints its private backup ID. Restore previews by default, refuses
 later file/settings edits, restores previous values and removes only unchanged
 new files. The separate `workstation backup` snapshots existing profile files;
 use the general `setup-system restore --backup ID --dry-run` for that snapshot.
+
+`would-restore` means the current file still matches the operation's recorded
+after-hash and can return to its backed-up before-state. A later edit is a blocking
+error, not a successful preview. Restore newer operations before older ones when
+they changed the same files. Legacy backups can include an unchanged ownership
+receipt: that target must still match its backup hash or rollback is refused.
+A refresh-only backup does not undo the font monitor's cache update; its before
+and after font values can be identical. No restore command recreates stale cells.
