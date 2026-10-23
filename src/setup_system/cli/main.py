@@ -62,6 +62,7 @@ from setup_system.application.terminal_dev import (
     install_plugins,
     install_system_tools,
 )
+from setup_system.cli.git_profiles import app as git_app
 from setup_system.planning import create_plan, format_plan
 from setup_system.storage import new_backup
 from setup_system.storage import restore as restore_backup
@@ -84,6 +85,7 @@ app.add_typer(projects_app, name="projects")
 app.add_typer(happ_app, name="happ")
 app.add_typer(shell_app, name="shell")
 app.add_typer(rtk_app, name="rtk")
+app.add_typer(git_app, name="git")
 workstation_app = typer.Typer(help="Explicit portable fonts and versioned Debian desktop profile.")
 app.add_typer(workstation_app, name="workstation")
 

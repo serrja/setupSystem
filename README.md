@@ -19,6 +19,7 @@ startup never installs or upgrades software.
 - [Recovery](docs/recovery.md) · [Project templates](docs/templates.md)
 - [Development](docs/development.md) · [Versions](docs/versioning.md)
 - [Workspace boundaries](docs/workspaceGuide.md) · [Happ](docs/happGuide.md)
+- [Git author profiles](docs/git-profiles.md)
 
 New work lives in `dev`: `make lint`, review the diff, `git push origin dev`.
 Full acceptance is manual. `main` remains the previously accepted version.
