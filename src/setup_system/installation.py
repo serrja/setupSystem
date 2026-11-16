@@ -174,6 +174,12 @@ def _system_path(path: Path) -> None:
         raise ValueError("System target/parent is not privately controlled by this user")
     if existing == path and not stat.S_ISREG(details.st_mode):
         raise ValueError("System file is not regular")
+    directory = path.parent
+    while not directory.exists():
+        directory = directory.parent
+    parent_details = directory.stat()
+    if parent_details.st_uid != os.geteuid() or parent_details.st_mode & 0o022:
+        raise ValueError("System parent is not privately controlled by this user")
 
 
 def _write_system(path: Path, content: bytes, mode: int = 0o600) -> None:
@@ -209,6 +215,12 @@ def _check_service_policy(path: Path) -> None:
         b"#!/bin/sh\nexit 101",
     }:
         raise ValueError("Existing service policy needs review before safe package deferral")
+    if (
+        path.exists()
+        and path.read_bytes() != DEFER_POLICY
+        and not path.stat().st_mode & stat.S_IXUSR
+    ):
+        raise ValueError("Existing service policy is not executable; review it before installation")
 
 
 @contextlib.contextmanager
@@ -219,10 +231,20 @@ def _defer_services(path: Path) -> Iterator[None]:
     created = path.exists() and path.read_bytes() == content
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o755)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o755)
         created = True
+    elif created:
+        # Recognized interrupted setupSystem policy; restore its usable executable mode.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fchmod(descriptor, 0o755)
+        finally:
+            os.close(descriptor)
     try:
         yield
     finally:

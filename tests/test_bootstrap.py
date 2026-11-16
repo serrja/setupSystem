@@ -524,3 +524,58 @@ def test_user_config_stage_refuses_root_and_propagates_apply_result(
     output = capsys.readouterr()
     assert ("User configuration complete" in output.out) is (case == "success")
     assert not list(tmp_path.iterdir())
+
+
+def test_nonexecutable_administrator_policy_stops_before_mutation(tmp_path: Path) -> None:
+    paths = install.SystemPaths(
+        tmp_path / "sources",
+        tmp_path / "journal",
+        tmp_path / "keyring",
+        tmp_path / "run",
+        tmp_path / "policy",
+    )
+    paths.keyring.write_bytes(b"trust")
+    paths.policy.write_bytes(b"#!/bin/sh\nexit 101\n")
+    paths.policy.chmod(0o644)
+    with pytest.raises(ValueError, match="executable"):
+        install.install_system(
+            ROOT,
+            paths=paths,
+            run=lambda *a, **kw: pytest.fail("APT ran before policy validation"),
+            release=RELEASE,
+            architecture="amd64",
+        )
+    assert not paths.journal.exists()
+    assert paths.policy.stat().st_mode & 0o777 == 0o644
+
+
+def test_new_service_deferral_is_executable_with_restrictive_umask(tmp_path: Path) -> None:
+    path = tmp_path / "policy"
+    previous = os.umask(0o777)
+    try:
+        with install._defer_services(path):
+            assert path.stat().st_mode & 0o100
+    finally:
+        os.umask(previous)
+    assert not path.exists()
+
+
+def test_owned_interrupted_policy_repairs_executable_mode_before_use(tmp_path: Path) -> None:
+    path = tmp_path / "policy"
+    path.write_bytes(install.DEFER_POLICY)
+    path.chmod(0o644)
+    with install._defer_services(path):
+        assert path.stat().st_mode & 0o100
+    assert not path.exists()
+
+
+def test_privileged_existing_file_requires_controlled_parent(tmp_path: Path) -> None:
+    parent = tmp_path / "shared-parent"
+    parent.mkdir()
+    parent.chmod(0o777)
+    path = parent / "system-file"
+    path.write_bytes(b"original")
+    path.chmod(0o600)
+    with pytest.raises(ValueError, match="privately controlled"):
+        install._write_system(path, b"replacement")
+    assert path.read_bytes() == b"original"
