@@ -253,10 +253,19 @@ while True:time.sleep(1)
     session, observed = controller(tmp_path, monkeypatch, script)
     session.start(SUBSCRIPTION)
     pid: int | None = None
+    leader = observed["process"]
+    assert isinstance(leader, subprocess.Popen)
     try:
+        # STOP first creates the covered descendant. Observe the exact dead-leader
+        # state before testing close; a scheduler-dependent short timeout does not.
+        session._send({"operation": "stop"})
+        leader.wait(timeout=5)
+        assert leader.returncode == 0
+        pid = int((session.target.home / "descendant.pid").read_text())
+        assert Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
+        assert os.getpgid(pid) == leader.pid
         with pytest.raises(RuntimeError, match="cleanup"):
             session.close()
-        pid = int((session.target.home / "descendant.pid").read_text())
         deadline = time.monotonic() + 3
         while True:
             proc = Path(f"/proc/{pid}/stat")
@@ -266,6 +275,11 @@ while True:time.sleep(1)
             time.sleep(0.01)
         assert observed["process"].poll() is not None
     finally:
+        try:
+            os.killpg(leader.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        leader.wait(timeout=3)
         marker = session.target.home / "descendant.pid"
         if pid is None and marker.exists():
             pid = int(marker.read_text())
