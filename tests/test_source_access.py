@@ -6,6 +6,7 @@ import json
 import os
 import pwd
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def test_root_probe_drops_identity_and_groups_with_closed_environment(
 
     def probe(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
-        assert argv[:4] == ["/usr/bin/python3", "-I", "-B", "-c"]
+        assert argv[:4] == [sys.executable, "-I", "-B", "-c"]
         assert len(argv) == 5
         assert options["user"] == target.uid
         assert options["group"] == target.gid
@@ -207,7 +208,7 @@ def test_system_interpreter_failure_is_actionable_and_does_not_write_files(
     before = snapshot(root)
 
     def unavailable(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
-        assert argv[0] == "/usr/bin/python3"
+        assert argv[0] == sys.executable
         if kind == "missing":
             raise FileNotFoundError("fixture missing system Python")
         if kind == "denied":
@@ -222,7 +223,7 @@ def test_system_interpreter_failure_is_actionable_and_does_not_write_files(
 def test_command_runner_delivers_text_input_without_executing_it() -> None:
     content = "fixture input with quotes ' and shell characters $(false)\n"
     result = installation.run_command(
-        ["/usr/bin/python3", "-I", "-B", "-c", "import sys; sys.stdout.write(sys.stdin.read())"],
+        [sys.executable, "-I", "-B", "-c", "import sys; sys.stdout.write(sys.stdin.read())"],
         input=content,
         timeout=10,
     )
@@ -232,3 +233,19 @@ def test_command_runner_delivers_text_input_without_executing_it() -> None:
 def test_command_runner_refuses_competing_stdin_before_starting_a_process() -> None:
     with pytest.raises(ValueError, match="separate stdin"):
         installation.run_command(["/does/not/exist"], input="fixture", stdin=subprocess.DEVNULL)
+
+
+def test_source_probe_reuses_managed_interpreter_without_system_python(
+    source: tuple[Path, list[tuple[Path, bool]], installation.TargetUser],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, paths, target = source
+    interpreter = "/fixture/user runtime/bin/python"
+    monkeypatch.setattr(installation.sys, "executable", interpreter)
+
+    def execute(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        assert argv[:4] == [interpreter, "-I", "-B", "-c"]
+        assert "/usr/bin/python3" not in argv[-1]
+        return subprocess.CompletedProcess(argv, 0, '{"ok":true}', "")
+
+    installation.validate_source_access(root, target, paths, run=execute)
