@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import shlex
@@ -14,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from setup_system import installation as install
+from setup_system.application.installer import InstallationService, InstallRequest, Operation
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
@@ -102,8 +102,8 @@ def prerequisite(
 ) -> tuple[subprocess.CompletedProcess[str], list[dict[str, object]]]:
     source = (ROOT / "setup.sh").read_text()
     start = source.index("setup_python_prerequisite() (")
-    function = source[start : source.index("\nsetup_main()", start)]
-    staging = tmp_path / "bootstrap-run"
+    function = source[start : source.index("\nsetup_handoff()", start)]
+    staging = tmp_path / "prerequisite-run"
     staging.mkdir()
     log = tmp_path / "external-calls.jsonl"
     timeout = tmp_path / "fixture-timeout"
@@ -120,8 +120,8 @@ def prerequisite(
     # Remap fixed host paths at the test boundary, then execute the production body.
     function = function.replace("/usr/share/keyrings/", str(directory) + "/")
     function = function.replace(
-        "/run/setup-system-bootstrap.XXXXXXXX",
-        shlex.quote(str(staging / "setup-system-bootstrap.XXXXXXXX")),
+        "/run/setup-system-prerequisites.XXXXXXXX",
+        shlex.quote(str(staging / "setup-system-prerequisites.XXXXXXXX")),
     )
     function = function.replace("/usr/bin/timeout", shlex.quote(str(timeout)))
     script = (
@@ -171,10 +171,6 @@ def test_no_python_shell_rejects_missing_or_symlink_canonical_keyring(
 def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    spec = importlib.util.spec_from_file_location("keyring_bootstrap", ROOT / "bootstrap.py")
-    assert spec is not None and spec.loader is not None
-    boot = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(boot)
     home = tmp_path / "target home"
     home.mkdir()
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
@@ -182,6 +178,7 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     monkeypatch.setattr(install, "SystemPaths", lambda: paths)
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     reason = "canonical Debian archive keyring is missing"
 
@@ -190,7 +187,9 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
 
     monkeypatch.setattr(install, "install_system", fail)
     monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("User stage reached"))
-    assert boot.main(["apply", "--yes", "--user", "alice"]) == 5
+    assert (
+        InstallationService(ROOT).run(InstallRequest(Operation.APPLY, user="alice", yes=True)) == 5
+    )
     error = capsys.readouterr().err
     assert reason in error
     assert "journal" in error.lower() and "not created" in error.lower()
@@ -205,10 +204,6 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     capsys: pytest.CaptureFixture[str],
     kind: str,
 ) -> None:
-    spec = importlib.util.spec_from_file_location("keyring_error_bootstrap", ROOT / "bootstrap.py")
-    assert spec is not None and spec.loader is not None
-    boot = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(boot)
     home = tmp_path / "target home"
     home.mkdir()
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
@@ -216,6 +211,7 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     monkeypatch.setattr(install, "SystemPaths", lambda: paths)
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()
     reason = "archive signature validation failed"
@@ -250,7 +246,9 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
 
     monkeypatch.setattr(install, "install_system", fail)
     monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("User stage reached"))
-    assert boot.main(["apply", "--yes", "--user", "alice"]) == 5
+    assert (
+        InstallationService(ROOT).run(InstallRequest(Operation.APPLY, user="alice", yes=True)) == 5
+    )
     error = capsys.readouterr().err
     assert reason in error and marker not in error
     assert "\x1b" not in error and len(error) < 3000

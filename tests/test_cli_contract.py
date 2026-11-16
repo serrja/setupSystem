@@ -21,6 +21,7 @@ def test_command_groups_and_public_option_names_remain_available() -> None:
         "doctor",
         "git",
         "happ",
+        "install",
         "plan",
         "projects",
         "restore",
@@ -30,6 +31,7 @@ def test_command_groups_and_public_option_names_remain_available() -> None:
         "workstation",
     }
     groups = {
+        "install": {"plan", "apply"},
         "apps": {"install", "list"},
         "projects": {"list", "planMigration", "move", "prepare", "path", "open"},
         "templates": {"list", "path", "versions", "create", "update", "cache"},
@@ -49,7 +51,9 @@ def test_command_groups_and_public_option_names_remain_available() -> None:
     }
 
 
-@pytest.mark.parametrize("path", [[], ["apps"], ["projects"], ["templates"], ["workstation"]])
+@pytest.mark.parametrize(
+    "path", [[], ["apps"], ["projects"], ["templates"], ["workstation"], ["install"]]
+)
 def test_help_does_not_enter_an_executor(monkeypatch: pytest.MonkeyPatch, path: list[str]) -> None:
     def fail(*args: object, **kwargs: object) -> None:
         pytest.fail("help entered an executor")

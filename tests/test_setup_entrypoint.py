@@ -97,7 +97,7 @@ setpriv() {{
         $6 == /usr/bin/test && ( $7 == -x || $7 == -r ) ]] || return 2
     [[ {shlex.quote(invalid_identity or "")} != source-denied ]] || return 1
     if [[ {shlex.quote(invalid_identity or "")} == source-file-denied &&
-        $7 == -r && $8 == */bootstrap.py ]]; then return 1; fi
+        $7 == -r && $8 == */src/setup_system/_installer_entry.py ]]; then return 1; fi
     builtin test "$7" "$8"
 }}
 env() {{
@@ -141,7 +141,10 @@ def test_one_apply_prepares_missing_python_and_forwards_verified_account(
     result = invoke(tmp_path, "--yes", "--xdg-config-home", str(config), python=python)
     assert result.process.returncode == 0, result.process.stderr
     assert result.calls.count("prerequisite") == (0 if python else 1)
-    assert result.read_checks and str(ROOT / "bootstrap.py") in result.read_checks
+    assert (
+        result.read_checks
+        and str(ROOT / "src/setup_system/_installer_entry.py") in result.read_checks
+    )
     assert result.read_checks[:5] == (
         "env",
         "-i",
@@ -156,11 +159,21 @@ def test_one_apply_prepares_missing_python_and_forwards_verified_account(
     forwarded = result.calls[executable + 1 :]
     assert forwarded[:2] == ("env", "-i")
     assert "HOME=" + str(result.home) in forwarded
-    assert str(ROOT / "bootstrap.py") in forwarded
-    assert forwarded[forwarded.index(str(ROOT / "bootstrap.py")) + 1] == "apply"
-    assert forwarded[forwarded.index("--user") + 1] == "alice"
-    assert forwarded[forwarded.index("--xdg-config-home") + 1] == str(config)
-    assert forwarded[-1] == "--yes"
+    assert str(ROOT / "src/setup_system/_installer_entry.py") in forwarded
+    assert (
+        forwarded[forwarded.index(str(ROOT / "src/setup_system/_installer_entry.py")) + 1]
+        == "apply"
+    )
+    handoff = forwarded[forwarded.index(str(ROOT / "src/setup_system/_installer_entry.py")) + 1 :]
+    assert handoff == (
+        "apply",
+        "alice",
+        str(config),
+        str(result.home / ".local/share"),
+        str(result.home / ".local/state"),
+        str(result.home / ".cache"),
+        "1",
+    )
     assert not any(value.startswith(("APT_CONFIG=", "SUDO_", "GH_TOKEN=")) for value in forwarded)
     assert list(result.home.iterdir()) == []
 
@@ -176,8 +189,11 @@ def test_read_only_modes_do_not_prepare_dependencies_or_touch_home(
     if mode == "--help":
         assert not result.calls
     elif python:
-        assert result.calls[result.calls.index(str(ROOT / "bootstrap.py")) + 1] == "plan"
-        assert "--yes" not in result.calls
+        assert (
+            result.calls[result.calls.index(str(ROOT / "src/setup_system/_installer_entry.py")) + 1]
+            == "plan"
+        )
+        assert result.calls[-1] == "0"
     else:
         assert not result.calls and "Preliminary plan" in result.process.stdout
     assert list(result.home.iterdir()) == []
@@ -235,7 +251,10 @@ def test_invalid_identity_or_default_xdg_path_fails_before_prerequisites(
     ("case", "message"),
     [
         ("source-denied", "not accessible to the target user"),
-        ("source-file-denied", "not readable by the target user: bootstrap.py"),
+        (
+            "source-file-denied",
+            "not readable by the target user: src/setup_system/_installer_entry.py",
+        ),
         ("setpriv-missing", "requires Debian util-linux setpriv"),
     ],
 )

@@ -272,11 +272,16 @@ def run_command(
     check: bool = True,
     capture_output: bool = True,
     text: bool = True,
+    input: str | None = None,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
     """Bound each process group and propagate cancellation through nested supervisors."""
     if not capture_output or not text:
         raise ValueError("Installer command capture must be textual")
+    if input is not None:
+        if "stdin" in kwargs:
+            raise ValueError("Installer input cannot be combined with a separate stdin")
+        kwargs["stdin"] = subprocess.PIPE
 
     def interrupted(signum: int, frame: Any) -> None:
         raise KeyboardInterrupt("Installer command interrupted")
@@ -293,7 +298,7 @@ def run_command(
             **kwargs,
         )
         try:
-            stdout, stderr = process.communicate(timeout=timeout)
+            stdout, stderr = process.communicate(input=input, timeout=timeout)
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
             # A parent may exit and close its pipes while a TERM-ignoring child lives.
             # Always escalate the remaining group, even when communicate returns early.
@@ -322,11 +327,153 @@ def run_command(
         return result
     finally:
         if process is not None:
+            if process.stdin is not None:
+                process.stdin.close()
             if process.stdout is not None:
                 process.stdout.close()
             if process.stderr is not None:
                 process.stderr.close()
         signal.signal(signal.SIGTERM, previous)
+
+
+def validate_source_access(
+    root: Path,
+    target: TargetUser,
+    paths: list[tuple[Path, bool]],
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
+) -> None:
+    """Probe bounded build inputs with the target account and trusted system Python."""
+    if target.uid <= 0 or target.gid < 0:
+        raise ValueError("Source access requires a non-root target account")
+    try:
+        account = pwd.getpwnam(target.name)
+    except KeyError as exc:
+        raise ValueError("Source access target account does not exist") from exc
+    if account.pw_name != target.name or (account.pw_uid, account.pw_gid) != (
+        target.uid,
+        target.gid,
+    ):
+        raise ValueError("Source access target UID/GID do not match the passwd account")
+    privileged = os.geteuid() == 0
+    if not privileged and (target.uid != os.getuid() or target.uid != os.geteuid()):
+        raise ValueError("An unprivileged source probe can inspect only the current account")
+    if (
+        not root.is_absolute()
+        or ".." in root.parts
+        or any(ord(character) < 32 or 127 <= ord(character) < 160 for character in str(root))
+    ):
+        raise ValueError("Source root must be a safe absolute path")
+    if len(paths) > 4096:
+        raise ValueError("Source access input exceeds its entry limit")
+    entries: list[tuple[str, bool]] = []
+    seen: set[Path] = set()
+    for relative, directory in paths:
+        if (
+            not isinstance(relative, Path)
+            or relative.is_absolute()
+            or relative == Path(".")
+            or ".." in relative.parts
+            or type(directory) is not bool
+            or relative in seen
+            or len(str(relative)) > 4096
+            or any(
+                ord(character) < 32 or 127 <= ord(character) < 160 for character in str(relative)
+            )
+        ):
+            raise ValueError("Source access needs unique safe relative files and directories")
+        seen.add(relative)
+        entries.append((str(relative), directory))
+    payload = json.dumps({"root": str(root), "paths": entries})
+    if len(payload) > 1024 * 1024:
+        raise ValueError("Source access input exceeds its serialized size limit")
+    # All executable code is fixed. Source paths are bounded JSON data on stdin.
+    program = r"""
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+
+
+def deny(reason):
+    print(json.dumps({"error": reason}))
+    raise SystemExit(1)
+
+
+text = sys.stdin.read(1024 * 1024 + 1)
+if len(text) > 1024 * 1024:
+    deny("source input exceeds its size limit")
+request = json.loads(text)
+root = Path(request["root"])
+if not os.access("/usr/bin/python3", os.X_OK, effective_ids=True):
+    deny("system Python is not executable")
+if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK, effective_ids=True):
+    deny("source directory is not readable/searchable: " + str(root))
+for path in (root, *root.parents):
+    if path.is_symlink():
+        deny("source root traverses a symlink")
+for relative, directory in request["paths"]:
+    path = root / relative
+    for parent in (path, *path.parents):
+        if parent.is_symlink():
+            deny("source path traverses a symlink: " + relative)
+        if parent == root:
+            break
+    permissions = os.R_OK | os.X_OK if directory else os.R_OK
+    if not os.access(path, permissions, effective_ids=True):
+        deny("source path is not readable/searchable: " + relative)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            mode = os.fstat(descriptor).st_mode
+            if not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)):
+                deny("source path has an unexpected file/directory type: " + relative)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        deny("source path is not accessible: " + relative)
+print(json.dumps({"ok": True}))
+"""
+    options: dict[str, Any] = {
+        "cwd": Path("/"),
+        "env": {
+            "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+            "HOME": str(target.home),
+            "USER": target.name,
+            "LOGNAME": target.name,
+            "LANG": "C",
+            "LC_ALL": "C",
+        },
+        "input": payload,
+        "umask": 0o077,
+        "timeout": 30,
+        "check": False,
+    }
+    if privileged:
+        options.update(
+            user=target.uid,
+            group=target.gid,
+            extra_groups=os.getgrouplist(target.name, target.gid),
+        )
+    try:
+        result = run(["/usr/bin/python3", "-I", "-B", "-c", program], **options)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(
+            "Target user source access probe could not run with system Python"
+        ) from exc
+    try:
+        response = json.loads(result.stdout)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "System Python source probe did not return a valid acknowledgement"
+        ) from exc
+    if result.returncode or response != {"ok": True}:
+        detail = response.get("error") if isinstance(response, dict) else None
+        message = "Source bundle is not accessible to the target user"
+        if isinstance(detail, str) and len(detail) <= 8192:
+            message += ": " + detail
+        raise ValueError(message)
 
 
 def install_system(

@@ -15,7 +15,7 @@ make native-ci
 ```
 
 `native-check` runs `make CONTAINERIZED=1 check`: Ruff check/format, strict mypy,
-compilation, lock validation, read-only bootstrap checks and the full fixture suite.
+compilation, lock validation, read-only entrypoint checks and the full fixture suite.
 Tests run once per supported runtime in CI. `native-build` creates one wheel and one
 sdist under `coverage/native-artifacts/`; `native-verify` installs the wheel and locked
 runtime dependencies into a disposable environment outside the source checkout.

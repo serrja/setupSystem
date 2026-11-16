@@ -587,6 +587,8 @@ def apply(
     refresh_terminal_font: bool = False,
 ) -> Path:
     """Apply portable files with conflict checks and a recoverable per-write receipt."""
+    if profile == "hyprland" and os.geteuid() == 0:
+        raise ValueError("Hyprland user configuration cannot run as root")
     report = plan(root, profile, terminal_profile=terminal_profile)
     if report.blockers:
         raise ValueError("; ".join(report.blockers))

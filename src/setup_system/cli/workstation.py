@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import typer
@@ -39,6 +40,8 @@ def workstation_apply(
     refresh_terminal_font: bool = False,
 ) -> None:
     """Back up and apply selected user files after reviewing the configuration plan."""
+    if profile == "hyprland" and os.geteuid() == 0:
+        raise typer.BadParameter("Hyprland user configuration cannot run as root")
     if not yes:
         raise typer.BadParameter("Review workstation plan, then pass --yes to apply")
     try:

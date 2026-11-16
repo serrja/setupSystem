@@ -13,12 +13,12 @@ Usage: sudo bash ./setup.sh [apply] [--yes] [--user NAME]
 No arguments install Hyprland for the verified sudo caller. Direct root needs --user.
 XDG paths must be inside that user's HOME; explicit options work without sudo -E.
 Help/plan never install prerequisites, download files or refresh APT metadata.
-Without Python, plan shows preliminary shell preflight. Apply bootstraps Python.
+Without Python, plan shows preliminary shell preflight. Apply prepares missing Python.
 One confirmation authorizes signed Debian packages, managed backports and user files.
 HELP
 }
 setup_parse() {
-    mode=apply; consent=0; requested_user=''; xdg_arguments=(); forwarded=(); local verb='' want_help=0
+    mode=apply; consent=0; requested_user=''; xdg_arguments=(); local verb='' want_help=0
     local -A seen=()
     while (($#)); do
         case "$1" in
@@ -169,7 +169,6 @@ setup_identity() {
         xdg_arguments+=("$option" "$value")
     done
     setup_managed_preflight || return
-    forwarded=(--user "$target_user" "${xdg_arguments[@]}")
     printf 'User: %s (uid=%s gid=%s), HOME=%s\n' "$target_user" "$uid" "$gid" "$target_home"
 }
 setup_preliminary_plan() {
@@ -188,10 +187,11 @@ PLAN
 }
 setup_source_access() {
     local path source_uid source_gid
-    local -a required=(bootstrap.py uv.lock pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md
+    local -a required=(src/setup_system/_installer_entry.py uv.lock pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md
         manifests/platforms.toml manifests/fonts.toml assets/hyprland/profile.lua
         assets/fonts/60-setup-system-fonts.conf src/setup_system/installation.py
-        src/setup_system/planning.py src/setup_system/storage.py src/setup_system/user_install.py
+        src/setup_system/planning.py src/setup_system/storage.py src/setup_system/runtime.py
+        src/setup_system/entrypoint.py src/setup_system/application/installer.py
         src/setup_system/adapters/debian/hyprland.py)
     # The unprivileged wheel build also needs every bundled source/resource file.
     while IFS= read -r -d '' path; do
@@ -225,7 +225,7 @@ setup_source_access() {
 setup_python_prerequisite() (
     # Only entered after consent. Debian's installed keyring is the trust anchor.
     [[ -f /usr/share/keyrings/debian-archive-keyring.pgp && ! -L /usr/share/keyrings/debian-archive-keyring.pgp ]] || { setup_error 'Debian archive keyring is required.'; return 2; }
-    stage=$(mktemp -d /run/setup-system-bootstrap.XXXXXXXX)
+    stage=$(mktemp -d /run/setup-system-prerequisites.XXXXXXXX)
     trap 'rm -rf -- "$stage"' EXIT
     mkdir -p "$stage/lists/partial" "$stage/archives/partial"
     chmod 755 "$stage" "$stage/lists" "$stage/archives"
@@ -236,11 +236,17 @@ setup_python_prerequisite() (
         -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o DPkg::Lock::Timeout=30)
     apt_command=(/usr/bin/timeout --kill-after=15s 900 /usr/bin/env -i
         PATH="$PATH" LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get)
-    printf 'Stage: bootstrap signed Debian Python prerequisites\n'
+    printf 'Stage: signed Debian Python prerequisites\n'
     "${apt_command[@]}" "${apt_options[@]}" -o APT::Update::Error-Mode=any update || return 5
     "${apt_command[@]}" "${apt_options[@]}" --simulate --no-remove install python3 ca-certificates || return 5
     "${apt_command[@]}" "${apt_options[@]}" --yes --no-remove --no-install-recommends install python3 ca-certificates || return 5
 )
+setup_handoff() {
+    exec env -i PATH="$PATH" HOME="$target_home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
+        python3 -I -B "$setup_root/src/setup_system/_installer_entry.py" \
+        "$mode" "$target_user" "${xdg_arguments[1]}" "${xdg_arguments[3]}" \
+        "${xdg_arguments[5]}" "${xdg_arguments[7]}" "$1"
+}
 setup_main() {
     local setup_root
     setup_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -248,12 +254,10 @@ setup_main() {
     if [[ $mode == help ]]; then setup_usage; return 0; fi
     setup_platform || return
     setup_identity || return
-    [[ -r $setup_root/bootstrap.py && -r $setup_root/uv.lock && -r $setup_root/pyproject.toml && -r $setup_root/src/setup_system/user_install.py && -r $setup_root/assets/hyprland/profile.lua ]] || { setup_error 'Incomplete local source bundle.'; return 2; }
+    [[ -r $setup_root/src/setup_system/_installer_entry.py && -r $setup_root/uv.lock && -r $setup_root/pyproject.toml && -r $setup_root/src/setup_system/runtime.py && -r $setup_root/assets/hyprland/profile.lua ]] || { setup_error 'Incomplete local source bundle.'; return 2; }
     setup_source_access || return
     if command -v python3 >/dev/null 2>&1; then
-        local yes_arguments=(); [[ $consent == 0 ]] || yes_arguments=(--yes)
-        exec env -i PATH="$PATH" HOME="$target_home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
-            python3 -I -B "$setup_root/bootstrap.py" "$mode" "${forwarded[@]}" "${yes_arguments[@]}"
+        setup_handoff "$consent"
     fi
     setup_preliminary_plan
     [[ $mode == apply ]] || return 0
@@ -265,7 +269,6 @@ setup_main() {
         [[ $answer == y || $answer == yes || $answer == Y ]] || return 2
     fi
     setup_python_prerequisite || { printf 'FAILED: prerequisites. Fix APT/network and re-run the same command.\n' >&2; return 5; }
-    exec env -i PATH="$PATH" HOME="$target_home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
-        python3 -I -B "$setup_root/bootstrap.py" apply "${forwarded[@]}" --yes
+    setup_handoff 1
 }
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then setup_main "$@"; fi

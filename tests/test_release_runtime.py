@@ -4,28 +4,19 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
+from setup_system.application.installer import InstallationService, InstallRequest, Operation
+from setup_system.runtime import UserRuntime
+
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_bootstrap() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "release_runtime_bootstrap", ROOT / "bootstrap.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.fixture
@@ -90,12 +81,11 @@ def lock_check(project: Path, cache: Path) -> subprocess.CompletedProcess[str]:
 def test_matching_source_reuses_original_without_staging(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     cache = tmp_path / "cache"
     cache.mkdir()
     before = hashes(source)
-    with boot._runtime_project(cache) as project:
+    with runtime.project(cache) as project:
         assert project == source
         assert not list(cache.iterdir())
     assert hashes(source) == before
@@ -105,8 +95,7 @@ def test_matching_source_reuses_original_without_staging(
 def test_allocated_source_only_reconciles_root_version_and_keeps_lock_valid(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     baseline = lock_check(source, tmp_path / "baseline uv cache")
     assert baseline.returncode == 0, baseline.stderr
     allocate(source, version)
@@ -116,7 +105,7 @@ def test_allocated_source_only_reconciles_root_version_and_keeps_lock_valid(
     original = tomllib.loads((source / "uv.lock").read_text())
     cache = tmp_path / "private cache"
     cache.mkdir()
-    with boot._runtime_project(cache) as project:
+    with runtime.project(cache) as project:
         assert project != source and project.is_relative_to(cache)
         assert project.stat().st_mode & 0o077 == 0
         assert not (project / ".git").exists()
@@ -143,8 +132,7 @@ def test_allocated_source_only_reconciles_root_version_and_keeps_lock_valid(
 def test_reconciled_release_still_rejects_dependency_drift(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     allocate(source, "0.3.0")
     path = source / "pyproject.toml"
     path.write_text(path.read_text().replace("typer>=0.27.2,<1", "typer==0.1.0"))
@@ -152,7 +140,7 @@ def test_reconciled_release_still_rejects_dependency_drift(
     before = hashes(source)
     cache = tmp_path / "private cache"
     cache.mkdir()
-    with boot._runtime_project(cache) as project:
+    with runtime.project(cache) as project:
         result = lock_check(project, tmp_path / "drift uv cache")
         assert result.returncode != 0
     assert not project.exists()
@@ -162,14 +150,13 @@ def test_reconciled_release_still_rejects_dependency_drift(
 def test_private_stage_is_removed_after_user_stage_failure(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     allocate(source, "0.3.0")
     cache = tmp_path / "private cache"
     cache.mkdir()
     before = hashes(source)
     with pytest.raises(RuntimeError, match="user stage failed"):
-        with boot._runtime_project(cache) as project:
+        with runtime.project(cache) as project:
             assert project.exists()
             raise RuntimeError("user stage failed")
     assert not project.exists() and not list(cache.iterdir())
@@ -180,8 +167,7 @@ def test_private_stage_is_removed_after_user_stage_failure(
 def test_unsafe_or_excessive_release_build_inputs_are_rejected(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     allocate(source, "0.3.0")
     if kind == "symlink":
         secret = tmp_path / "outside-source.txt"
@@ -201,7 +187,7 @@ def test_unsafe_or_excessive_release_build_inputs_are_rejected(
     cache = tmp_path / "private cache"
     cache.mkdir()
     with pytest.raises((ValueError, RuntimeError)):
-        with boot._runtime_project(cache):
+        with runtime.project(cache):
             pytest.fail("Unsafe build input was accepted")
     assert not list(cache.iterdir())
 
@@ -209,13 +195,12 @@ def test_unsafe_or_excessive_release_build_inputs_are_rejected(
 def test_privileged_runtime_source_preparation_is_rejected_before_writes(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
-    monkeypatch.setattr(boot.os, "geteuid", lambda: 0)
+    runtime = UserRuntime(source)
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
     cache = tmp_path / "never-created cache"
     before = hashes(source)
     with pytest.raises((ValueError, RuntimeError)):
-        with boot._runtime_project(cache):
+        with runtime.project(cache):
             pytest.fail("Root reached runtime source preparation")
     assert not cache.exists() and hashes(source) == before
 
@@ -224,8 +209,7 @@ def test_privileged_runtime_source_preparation_is_rejected_before_writes(
 def test_malformed_local_project_identity_is_rejected_without_staging(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     allocate(source, "0.3.0" if kind != "version" else "../not-a-version")
     path = source / "uv.lock"
     data = path.read_text()
@@ -240,7 +224,7 @@ def test_malformed_local_project_identity_is_rejected_without_staging(
     before = hashes(source)
     cache = tmp_path / "never-created cache"
     with pytest.raises((ValueError, RuntimeError)):
-        with boot._runtime_project(cache):
+        with runtime.project(cache):
             pytest.fail("Malformed local project identity was accepted")
     assert not cache.exists() and hashes(source) == before
 
@@ -248,15 +232,14 @@ def test_malformed_local_project_identity_is_rejected_without_staging(
 def test_readonly_source_lock_is_normalized_privately_without_changing_input(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     allocate(source, "0.3.0")
     lock = source / "uv.lock"
     lock.chmod(0o444)
     before = hashes(source)
     cache = tmp_path / "private cache"
     cache.mkdir()
-    with boot._runtime_project(cache) as project:
+    with runtime.project(cache) as project:
         assert project != source
         result = lock_check(project, tmp_path / "readonly source uv cache")
         assert result.returncode == 0, result.stderr
@@ -275,11 +258,12 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
 ) -> None:
     from setup_system import installation as install
 
-    boot = load_bootstrap()
-    monkeypatch.setattr(boot, "ROOT", source)
+    runtime = UserRuntime(source)
     allocate(source, "0.3.0")
     (source / "manifests/platforms.toml").write_text('owner = "fixture"\n')
-    (source / "src/setup_system/user_install.py").write_text('"""Fixture stage."""\n')
+    (source / "src/setup_system/application").mkdir()
+    for filename in ("_installer_entry.py", "runtime.py", "application/installer.py"):
+        (source / "src/setup_system" / filename).write_text('"""Fixture source."""\n')
     (source / "assets/hyprland").mkdir()
     (source / "assets/hyprland/profile.lua").write_text("-- Fixture profile.\n")
     if kind == "missing-license":
@@ -291,7 +275,7 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
     home = tmp_path / "target home"
     home.mkdir()
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
-    monkeypatch.setattr(boot.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
     monkeypatch.setattr(install, "validate_installation_paths", lambda *args: None)
@@ -304,6 +288,11 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
         lambda *args, **kwargs: pytest.fail("User runtime reached invalid bundle"),
     )
     before = hashes(source)
-    assert boot.main(["apply", "--yes", "--user", "alice"]) == 2
+    assert (
+        InstallationService(source, runtime=runtime).run(
+            InstallRequest(Operation.APPLY, user="alice", yes=True)
+        )
+        == 2
+    )
     assert "Preflight failed:" in capsys.readouterr().err
     assert hashes(source) == before and not list(home.iterdir())
