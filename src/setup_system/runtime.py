@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 RUNTIME_PYTHON = "3.14.7"
 UV_VERSION = "0.12.15"
@@ -33,7 +33,7 @@ UV_SHA256 = {
 
 def _read_limited(url: str, limit: int) -> bytes:
     try:
-        with urlopen(url, timeout=30) as response:
+        with urlopen(Request(url, headers={"User-Agent": "setupSystem"}), timeout=30) as response:
             final = urlsplit(response.geturl())
             if final.scheme != "https" or final.hostname not in {
                 "releases.astral.sh",
