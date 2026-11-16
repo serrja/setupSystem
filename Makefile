@@ -64,7 +64,7 @@ typecheck:
 	$(UV) run --locked mypy
 	$(UV) run --locked mypy --python-version 3.12 --no-incremental docker/python_release.py
 test:
-	$(UV) run --locked pytest --cov --cov-report=term-missing --cov-report=json --cov-report=xml --junitxml=coverage/python/junit.xml
+	env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR $(UV) run --locked pytest --cov --cov-report=term-missing --cov-report=json --cov-report=xml --junitxml=coverage/python/junit.xml
 compile:
 	$(UV) run --locked python -m compileall -q bootstrap.py src
 lock-check:

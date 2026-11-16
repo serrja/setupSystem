@@ -204,21 +204,52 @@ def test_interrupted_owned_service_policy_is_removed_on_retry(tmp_path: Path) ->
     assert not path.exists()
 
 
-def test_timeout_terminates_unprivileged_descendant_group(tmp_path: Path) -> None:
+def _wait_for_leaf_ready(monkeypatch: pytest.MonkeyPatch, pid_file: Path) -> None:
+    """Start the timeout clock only after the real TERM-ignoring leaf is ready."""
+    import signal
+    import time
+
+    real_popen = subprocess.Popen
+
+    def ready_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        deadline = time.monotonic() + 20
+        while not pid_file.exists():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate(timeout=5)
+                pytest.fail("Real descendant did not reach readiness before timeout test")
+            time.sleep(0.01)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", ready_popen)
+
+
+def test_timeout_terminates_unprivileged_descendant_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import signal
     import sys
     import time
 
     pid_file = tmp_path / "child.pid"
-    code = (
-        "import subprocess,sys,time; from pathlib import Path; "
-        'p=subprocess.Popen([sys.executable,"-c",'
-        '"import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)"], '
-        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
-        "Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"
+    leaf = (
+        "import os,signal,time; from pathlib import Path; "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        "Path(" + repr(str(pid_file)) + ").write_text(str(os.getpid())); time.sleep(60)"
     )
+    code = (
+        "import subprocess,sys,time; "
+        "subprocess.Popen([sys.executable, '-c', " + repr(leaf) + "], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(60)"
+    )
+    _wait_for_leaf_ready(monkeypatch, pid_file)
     with pytest.raises(subprocess.TimeoutExpired):
-        install.run_command([sys.executable, "-c", code, str(pid_file)], timeout=1)
+        install.run_command([sys.executable, "-c", code], timeout=1)
     child = int(pid_file.read_text())
     try:
         for _ in range(20):
@@ -349,7 +380,10 @@ def test_unmanaged_runtime_is_preserved(tmp_path: Path, monkeypatch: pytest.Monk
     assert (runtime / "personal.txt").read_text() == "preserve"
 
 
-def test_timeout_propagates_through_nested_installer_supervisors(tmp_path: Path) -> None:
+def test_timeout_propagates_through_nested_installer_supervisors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import signal
     import sys
 
@@ -363,6 +397,7 @@ def test_timeout_propagates_through_nested_installer_supervisors(tmp_path: Path)
         "import sys; from setup_system.installation import run_command; "
         'run_command([sys.executable,"-c",' + repr(child_code) + "],timeout=60)"
     )
+    _wait_for_leaf_ready(monkeypatch, pid_file)
     with pytest.raises(subprocess.TimeoutExpired):
         install.run_command([sys.executable, "-c", supervisor], timeout=1, termination_grace=15)
     child = int(pid_file.read_text())

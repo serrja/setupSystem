@@ -158,3 +158,58 @@ def test_make_check_routes_native_and_docker_children_without_executing_recipes(
     assert ("docker run --init" in result.stdout) is docker_child
     assert ("uv run --locked pytest" in result.stdout) is not docker_child
     assert not (tmp_path / "coverage").exists()
+
+
+def test_make_sanitizes_git_routing_for_pytest_only(tmp_path: Path) -> None:
+    import shutil
+
+    (tmp_path / "docker").mkdir()
+    for name in ("Makefile", "docker/quality.mk", "docker/quality-python.mk"):
+        shutil.copyfile(ROOT / name, tmp_path / name)
+    fake_uv = tmp_path / "fixture-uv"
+    fake_uv.write_text(
+        "#!/bin/sh\nset -eu\n"
+        '[ "${GIT_DIR+x}" != x ]\n'
+        '[ "${GIT_WORK_TREE+x}" != x ]\n'
+        '[ "${GIT_COMMON_DIR+x}" != x ]\n'
+        'printf "closed Git context for pytest\\n"\n'
+    )
+    fake_uv.chmod(0o700)
+    environment = {
+        **os.environ,
+        "GIT_DIR": "/fixture/outer.git",
+        "GIT_WORK_TREE": "/fixture/outer",
+        "GIT_COMMON_DIR": "/fixture/common.git",
+    }
+    for key in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL"):
+        environment.pop(key, None)
+    result = subprocess.run(
+        ["make", "--no-print-directory", "test", "CONTAINERIZED=1", f"UV={fake_uv}"],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "closed Git context for pytest" in result.stdout
+    source = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "--dry-run",
+            "source-identity",
+            "CONTAINERIZED=0",
+            "SHELL=/bin/false",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert source.returncode == 0, source.stderr
+    assert 'bash docker/source_identity.sh "coverage/source.json"' in source.stdout
+    assert "env -u" not in source.stdout
