@@ -1,6 +1,6 @@
 # Linux workstation capabilities
 
-The public installation path is `sudo bash ./setup.sh` on an existing minimal Debian
+The public installation path is `sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"` on an existing minimal Debian
 system. The [Debian prerequisites](debian.md) and [Hyprland guide](hyprland.md) describe
 its actual compatibility and login path. General setupSystem capabilities support
 Debian 12/13 on x86_64/arm64; the Hyprland profile currently requires Debian 13/trixie
@@ -15,15 +15,16 @@ ordered system/user operations, failure reporting and recovery. Its runtime port
 implemented by `runtime.py`, which prepares pinned uv/Python and the locked user
 runtime without root build hooks.
 
-`cli/install.py` exposes that same use case through Typer. With an existing runtime,
-`setup-system install plan --source /path/to/setupSystem` inspects a verified local
-bundle. `setup.sh` remains the one-command clean-machine entrypoint, including a
-read-only shell preflight when Python is absent. Its private `_installer_entry.py`
-handoff accepts only the already parsed positional request; it has no separate
-public command parser or installation logic.
+`tui/installer.py` presents the interactive Textual application. `cli/install.py`
+exposes explicit Typer automation commands. Both use the typed Interaction port and
+InstallationService; widgets do not perform package operations. A private stdlib
+worker handles validated root-to-user transitions, not dependency bootstrapping.
+The small `install.sh` delivery bootstrap prepares pinned uv/Python as the user
+and opens Textual. It does not perform system setup; ready CA trust and initial
+network access remain prerequisites. The old combined shell installer is removed.
 
 The selected profile additionally requires systemd 257 as client and accessible
-system manager; shell and native preflight inspect it without starting services.
+system manager; native preflight inspect it without starting services.
 The user phase first prepares the runtime and invokes
 `setup-system workstation prefetch --profile hyprland` while the temporary
 loopback proxy is available. After client/config cleanup, APT runs in its offline

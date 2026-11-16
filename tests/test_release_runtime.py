@@ -260,11 +260,13 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
 
     runtime = UserRuntime(source)
     allocate(source, "0.3.0")
-    for manifest in ("platforms.toml", "network.toml", "happ.toml"):
+    for manifest in ("platforms.toml", "runtime.toml", "network.toml", "happ.toml"):
         (source / "manifests" / manifest).write_text('owner = "fixture"\n')
     (source / "src/setup_system/application").mkdir()
     for filename in (
-        "_installer_entry.py",
+        "_worker_entry.py",
+        "worker_protocol.py",
+        "application/interaction.py",
         "runtime.py",
         "application/installer.py",
         "network_worker.py",

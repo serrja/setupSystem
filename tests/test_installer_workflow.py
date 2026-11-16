@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from setup_system import installation
-from setup_system.application import installer
+from setup_system.application import installer, interaction
 from setup_system.application.installer import InstallationService, InstallRequest, Operation
 from setup_system.network_session import NetworkReady
 
@@ -52,8 +52,8 @@ def workflow(
     monkeypatch.setattr(installation, "validate_service_manager", lambda **kw: None)
     monkeypatch.setattr(installer.os, "geteuid", lambda: 0)
     monkeypatch.setattr(installer.os, "getgrouplist", lambda name, gid: [gid, 44])
-    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: tty)
-    monkeypatch.setattr(installer.getpass, "getpass", lambda prompt: subscription)
+    monkeypatch.setattr(interaction.sys.stdin, "isatty", lambda: tty)
+    monkeypatch.setattr(interaction.getpass, "getpass", lambda prompt: subscription)
 
     class Runtime:
         def lock(self) -> None:

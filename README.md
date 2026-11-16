@@ -1,118 +1,117 @@
 # setupSystem
 
 ```bash
-sudo bash ./setup.sh
+setup-system
 ```
 
-Configure an existing minimal Debian installation as a complete Hyprland workstation.
-The installer prepares its dependencies, installs the compatible compositor and daily
-applications, and writes backed-up configuration for the real sudo caller.
+A Textual terminal application for configuring an existing Debian installation with
+Hyprland. Opening the application makes no changes. Inspect the plan, choose Install,
+confirm the complete plan and enter the VPN subscription in the hidden input dialog.
+Explicit Typer commands remain available for automation and recovery.
 
-## 🚀 Requirements and result
+## GitHub delivery and first launch
 
-The Hyprland target is **Debian 13 / trixie, amd64 or arm64** with working APT/dpkg,
-Bash, Debian's archive keyring, network access and a normal account already allowed to
-use sudo. Obtain and verify this local source/release bundle first. Python, uv, pip,
-Git, Codex, gh and a graphical desktop are not prerequisites.
-Python and CA trust readiness are checked separately. After consent, signed Debian
-bootstrap installs missing prerequisites and rebuilds an absent CA bundle with
-Debian's tool, preserving configured trust; HTTPS downloads require a ready bundle.
-
-The selected profile requires the Debian systemd 257 client and an accessible
-systemd 257 system manager. The initial Debian bootstrap, Xray asset and HTTPS
-subscription endpoint must be reachable before the temporary proxy exists. If the
-Xray release host is blocked, the verified optional source-bundle seed is
-`downloads/xray-v26.11.9-amd64.zip` or `downloads/xray-v26.11.9-arm64.zip`, matching
-[the pinned network manifest](manifests/network.toml). A seed covers the client
-asset; the subscription endpoint still needs initial access.
-
-From another directory, use the absolute path:
+Use an explicit stable release tag from the verified GitHub release. Download and
+inspect its `install.sh` from that same tag, then run it in a terminal:
 
 ```bash
-sudo bash "$HOME/Projects/serrja/setupSystem/setup.sh"
+sh install.sh --release vX.Y.Z
 ```
 
-Review the full plan and confirm once. The installer then requests an HTTPS VPN
-subscription using hidden terminal input. A temporary non-root Xray client supplies
-a loopback HTTP proxy only while Happ, signed Debian packages, the locked user
-runtime and fonts are downloaded and verified. It stops and its temporary config is
-removed before offline package apply in its network namespace. Native Happ helper
-activation then runs as a separate system operation outside that namespace, preserving
-an already running helper. User configuration runs in its own offline network
-namespace. Happ's GUI and subscription import happen after graphical login.
+Replace `vX.Y.Z` with that release tag. Direct root login requires `--user NAME`.
+The small delivery script requires Debian, ready CA trust, APT, tar and core utilities.
+It uses curl when available or APT’s native HTTPS downloader without system changes.
+It downloads pinned uv only when the matching managed tool is absent, prepares the
+pinned Python and locked CLI **as the normal user**, verifies release checksums,
+and opens Textual. It contains no workstation planner or APT package installer.
+Initial access to GitHub, the runtime and subscription hosts is required.
 
-For unattended apply, `--yes` also requires an existing private input file:
+The source/runtime stay under the target user's data directory for repeat/recovery.
+A changed existing release is preserved for review. Never run uv sync or Python build
+hooks as root. The CLI can also be prepared directly from a verified checkout as the
+normal user with `uv sync --locked`, then launched with:
 
 ```bash
-sudo bash ./setup.sh --yes --vpn-config-file "$HOME/.config/setup-system/subscription.input"
+sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"
 ```
 
-The file must be an absolute path inside the verified user's HOME, owned by that
-user, regular, single-link, 1..8192 bytes and inaccessible to group/others (for
-example mode 0600). Symlinks and traversal are rejected. It contains one HTTPS
-subscription address and is preserved after use. Pass the filename, never the URL,
-as an argument. Without a TTY or explicit consent, apply exits 2; without a TTY,
-`--yes` without the private file also exits 2 before prerequisite installation.
-A direct root login must supply `--user NAME`; sudo selects its verified caller
-and passwd HOME automatically. Root installs system packages; the user owns the
-runtime, fonts, configuration and backups. Existing network configuration, locale,
-timezone, login shell and running sessions are preserved.
+An installed CLI accepts `--source /absolute/source/path`. Direct root login uses the
+prepared executable with `--user NAME`. Cwd never selects the target HOME. Non-root
+launch can inspect a plan; system apply requires root privileges. The obsolete
+combined shell installer has been removed; runtime delivery and system setup are
+separate responsibilities.
 
-The temporary client needs a supported VLESS node from a plain URI/list, a
-base64-encoded VLESS list, or compatible Xray JSON, using TLS or REALITY.
-An HTTPS address secures retrieval; it does not guarantee a compatible or secure
-payload. Encrypted Happ payloads and unsupported provider formats cannot bootstrap
-this console stage. Import those through Happ's native GUI after login.
+The Hyprland profile requires **Debian 13 / trixie, amd64 or arm64**, working APT/dpkg,
+Debian's archive keyring, CA trust, systemd/logind 257, an accessible system manager,
+network access and a normal desktop account. General portable Debian 12 capabilities
+do not imply Hyprland support. No ISO, partitioning, desktop removal or reboot is involved.
 
-The profile includes Waybar, Wofi, Foot, Thunar, Mako, wallpaper, fonts/theme,
-PipeWire/WirePlumber, portals, authentication, clipboard/screenshots, lock/idle and Happ.
-The compatible Debian backports revisions and architectures live in
-[one manifest](manifests/platforms.toml). Unsupported targets stop before changes;
-general portable setupSystem capabilities on Debian 12 do not imply Hyprland support.
+## Installation and automation
 
-## 🔎 Plan, repeat and recover
+Textual and Typer share one installation service: platform/account/path checks, consent,
+verified downloads, temporary-network cleanup, offline package apply and offline user
+configuration. Root installs system packages; the verified sudo caller owns runtime,
+configuration, fonts and backups. Direct root login requires an explicit user. Existing
+network connections, locale, timezone, shell and sessions are preserved.
 
 ```bash
-bash ./setup.sh plan
-bash ./setup.sh --dry-run
+setup-system install plan --source /absolute/source/path
+sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system install apply --source "$PWD"
 ```
 
-Both are read-only and need neither root nor downloads. Without Python they show a
-preliminary shell plan; package availability/signatures are checked during the
-explicitly authorized APT refresh in apply. Explicit `--xdg-config-home`,
-`--xdg-data-home`, `--xdg-state-home` and `--xdg-cache-home` accept safe subdirectories
-of the verified HOME, including spaces, without `sudo -E`.
+Plan/help are read-only: no downloads, cache creation, APT refresh or prerequisite
+installation. Without a TTY, apply requires `--yes` and `--vpn-config-file PATH`.
+The private input must be an absolute regular, single-link file under the verified
+user's HOME, owned by that user, inaccessible to others and 1..8192 bytes. It contains
+one HTTPS subscription URL. Pass the filename, never a secret URL, as an argument.
+Explicit XDG overrides are available on `install plan`/`install apply` and must stay
+inside verified HOME. Interactive target selection never substitutes an arbitrary UID.
 
-Repeat the same installation command after a recoverable failure. Managed files and
-sources are idempotent; unknown or locally edited files require review. See
-[recovery](docs/recovery.md) for receipts/backups and interrupted APT. Package changes
-are not transactionally rolled back.
+A temporary pinned Xray client supplies a loopback HTTP proxy while Happ, signed Debian
+packages, the locked user runtime and fonts download. It stops and removes its temporary
+configuration before offline apply. Native Happ helper activation is separate and preserves
+an already running helper; the final subscription import uses Happ's GUI after login.
+Initial Xray/subscription access is required. The [network manifest](manifests/network.toml)
+provides reviewed source-bundle seed names and hashes when the initial client host is blocked.
+Supported inputs contain TLS/REALITY VLESS nodes as plain/base64 lists or compatible Xray JSON;
+an HTTPS URL alone does not establish format compatibility. Encrypted Happ payloads are unsupported.
 
-After installation, log in locally on a text console as your normal user and run:
+The [profile manifest](manifests/platforms.toml) owns compatible package revisions and
+architectures. The profile includes Waybar, Wofi, Foot, Thunar, Mako, wallpaper,
+fonts/theme, PipeWire/WirePlumber, portals, authentication, clipboard/screenshots and lock/idle.
+Package version inspection uses Debian metadata; it does not execute Hyprland outside a session.
+
+## Repeat, recover and log in
+
+Repeat the same apply after fixing a reported failure. Managed sources/files are
+idempotent; unknown edits require review. Diagnostics and receipts report actual completed
+stages, with a nonzero result for failure. APT changes are not transactionally rolled back.
+See [recovery](docs/recovery.md) for backup/restore and interrupted package operations.
+
+After success, log in locally on a TTY as the target user and run the exact printed
+session command. The default is:
 
 ```bash
 "$HOME/.local/share/setup-system/bin/start-hyprland"
 ```
 
-For a custom data directory use the exact path printed by the installer. The session
-starts only on request. Super+F9 opens the logout menu; Ctrl+Alt+F3 switches to a TTY.
-See [keys, scaling and session integration](docs/hyprland.md). Open Happ from the launcher
-and use its native GUI subscription import; the installer does not populate its private database.
+No compositor starts as root or automatically during package installation. Super+F9
+opens logout; Ctrl+Alt+F3 switches to TTY. See [Hyprland](docs/hyprland.md) for keys,
+scaling, audio, portals and session integration. Import the subscription through Happ's
+native GUI after login; its private database is preserved.
 
-**Evidence level:** automated fixtures and native build/installed-wheel checks.
-**REAL INSTALL / GUI SMOKE NOT RUN**: actual login, renderer/GPU, audio,
-screen-sharing, lock/resume and network/TTY preservation need a disposable Debian
-VM or a separately selected target. Mocks and containers do not establish GUI success.
+Evidence: automated fixtures, headless Textual interaction, native build/installed-wheel
+checks and isolated APT component tests. **REAL INSTALL / GUI SMOKE NOT RUN**: login,
+GPU/renderer, audio, screen-sharing, lock/resume and network/TTY preservation require a
+separately selected disposable Debian guest. Containers do not establish GUI success.
 
-## 📚 Other tools and development
+## Tools and development
 
-- [Debian installation](docs/debian.md) · [Linux capabilities](docs/linux.md)
+- [Debian](docs/debian.md) · [Linux architecture](docs/linux.md) · [Development](docs/development.md)
 - [Terminal](docs/terminal_guide.md) · [Neovim](docs/neovim_guide.md) · [Fonts](docs/fonts.md)
-- [Project templates](docs/templates.md) · [Workspace](docs/workspace_guide.md)
-- [Git author profiles](docs/git_profiles.md) · [Happ](docs/happ_guide.md) · [RTK](docs/rtk.md)
-- [Contributing](CONTRIBUTING.md) · [Development](docs/development.md) · [Releases](docs/release_guide.md)
+- [Projects](docs/workspace_guide.md) · [Templates](docs/templates.md) · [Git](docs/git_profiles.md)
+- [Happ](docs/happ_guide.md) · [RTK](docs/rtk.md) · [Releases](docs/release_guide.md)
 
-Existing projects/templates/apps and terminalDev remain available through the
-installed CLI. They are separate explicit tools; the Hyprland installation needs
-no additional manual profile command. Delivery follows working branch → test → dev →
-main with exact-SHA checks and releases.
+Projects/templates/apps, terminalDev, projectRules and backup/recovery remain explicit
+tools. Checkout discovery uses only canonical catalog paths; no migration or obsolete
+path aliases are supported. Delivery preserves working branch → test → dev → main ancestry.

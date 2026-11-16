@@ -1,95 +1,74 @@
-# Debian prerequisites
+# Debian installation
+
+Prepare the locked CLI as the normal user, then launch the Textual application:
 
 ```bash
-sudo bash ./setup.sh
+uv sync --locked
+sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"
 ```
 
-setupSystem configures an **existing minimal Debian installation** with a complete
-Hyprland user profile. Obtain and verify the local source/release bundle first. The
-machine needs working Bash, APT/dpkg, a network connection and a normal account already
-authorized to use sudo. The installer prepares missing Python, pinned uv/runtime and
-locked application dependencies itself. Codex, gh, Git, Python, pip, uv, a virtualenv
-and an existing compositor are not execution prerequisites.
-An existing Python does not imply ready TLS trust. The shell separately checks the
-installed `ca-certificates` package and its readable, nonempty regular CA bundle.
-After consent, signed Debian bootstrap prepares missing Python/CA; if the bundle
-is absent, the bounded Debian `update-ca-certificates` command rebuilds it without
-resetting the configured trust selection. A failed readiness check stops before
-any HTTPS subscription or client download. Plan/help never repairs trust.
+Alternatively, use the small GitHub delivery script from an explicit verified release:
+`sh install.sh --release vX.Y.Z` (add `--user NAME` from a direct root login). It requires
+ready CA trust, APT, tar and core utilities; it downloads pinned uv/Python and prepares
+the locked CLI as the normal user before opening Textual. It does not install system
+packages. Use the source/script and checksum files from the same versioned release.
+Initial access to GitHub/runtime hosts is required; the VPN cannot download itself.
 
-The profile uses Debian's default systemd 257/logind and PAM login, with an accessible
-systemd 257 system manager. It does not replace
-a different init system. The Hyprland target is Debian 13 / trixie on amd64 or arm64; it is narrower than the
-general Debian 12/13 setupSystem matrix. The target's `/etc/os-release` and architecture
-are checked before application. Other releases/codenames/architectures receive an
-explicit unsupported error. This project does not create an ISO, partition disks,
-reinstall Debian or remove a previous desktop.
+For direct checkout preparation, Python 3.12+ and uv are prerequisites. Do not run
+Python build hooks as root. System installation always requires APT/dpkg, Debian's
+archive keyring, ready CA trust and a verified local source bundle.
+
+The Hyprland profile supports Debian 13/trixie on amd64/arm64 with systemd/logind 257.
+Detection uses the target OS/version/codename and architecture. It rejects unsupported
+systems and unsafe target accounts/paths before writes. The profile does not create
+images, partition disks, reinstall Debian, remove desktop packages or reboot.
 
 ## Inspect and apply
 
-From another working directory, the same entrypoint works by absolute path:
+Opening Textual is read-only. Choose Read-only plan, then Install; the full current
+plan is displayed before confirmation. The hidden input dialog requests the HTTPS VPN
+subscription. An explicit command uses the same service:
 
 ```bash
-sudo bash "$HOME/Projects/serrja/setupSystem/setup.sh"
+setup-system install plan --source /absolute/source/path
+sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system install apply --source "$PWD"
 ```
 
-For read-only inspection use `bash ./setup.sh plan` or `bash ./setup.sh --dry-run`.
-Help and preliminary planning work without root or Python and perform no downloads,
-APT refresh or file changes. Apply shows the whole download/offline-apply plan,
-takes one confirmation, then requests the HTTPS subscription with hidden input.
-Without a TTY it requires both explicit `--yes` and `--vpn-config-file PATH` before
-even preparing missing Python. The file must be absolute, under the verified HOME,
-user-owned, regular with one link, mode 0600 or stricter, and 1..8192 bytes. No
-symlink or traversal is accepted; the input file is preserved. Never pass the
-subscription URL as a shell argument. Invalid or retired arguments stop safely.
+Plan/help do not refresh APT, download files or create caches. Noninteractive apply
+requires `--yes` and an absolute `--vpn-config-file PATH`. The regular private file
+must be user-owned, single-link, inside verified HOME, 1..8192 bytes and inaccessible
+to others. It contains one HTTPS subscription URL and is preserved. Secret URLs are
+never shell arguments. Explicit XDG overrides remain inside verified HOME.
 
-The temporary client needs a supported VLESS node from a plain URI/list, a
-base64-encoded VLESS list, or compatible Xray JSON, using TLS or REALITY.
-An HTTPS address secures retrieval; it does not guarantee a compatible or secure
-payload. Encrypted Happ payloads and unsupported provider formats cannot bootstrap
-this console stage. Import those through Happ's native GUI after login.
+The sudo caller's UID/GID/name are checked against passwd/group. Direct root login
+requires an explicit non-root user; there is no first-user or UID-1000 fallback.
+User processes regain the correct groups and HOME, with a closed environment.
 
-The sudo caller is checked against passwd/group identity before use. Direct root
-login needs `--user NAME`; there is no automatic UID-1000 fallback. The user stage
-runs with that account's UID/GID/groups and verified HOME. Optional XDG paths are
-explicit arguments inside that HOME, not a reason to use `sudo -E`.
+## Packages and networking
 
-A managed source file enables signed official trixie-backports without rewriting the
-owner's sources. Only the selected compatible packages and their dependencies are
-installed. APT simulation and `--no-remove` stop unexpected removals. There is no
-blanket distribution upgrade, desktop metapackage, package purge or automatic cleanup.
-Network connections, locale, timezone and the current session remain in place.
+The managed official trixie-backports source does not rewrite existing sources.
+Signed metadata, exact compatible package selections, removal/downgrade guards and
+APT `--no-remove` remain mandatory. There is no blanket distribution upgrade or purge.
 
+Temporary Xray runs as the target user with a loopback HTTP listener. Happ, signed
+APT packages, runtime dependencies and fonts download and verify before cleanup.
+Initial client/subscription access is required; the pinned network manifest describes
+an optional matching source-bundle seed. Supported subscriptions contain TLS/REALITY
+VLESS nodes in plain/base64 or compatible JSON; encrypted Happ payloads are unsupported.
 
-The temporary Xray client runs as the target user with a loopback-only HTTP
-listener. Happ, signed APT packages, runtime dependencies and font archives are
-verified while that connection exists. The installer stops the client and removes
-its temporary configuration before offline APT in a network namespace with systemd
-offline service handling. Native Happ helper activation follows as a separate system
-operation outside that namespace, preserving an already running helper. User
-configuration then runs in its own offline network namespace. Final subscriptions
-are imported through Happ's GUI after login; existing Happ settings/database stay intact.
+The temporary client/config is removed before offline APT and user configuration.
+Native Happ helper activation is separate and preserves an already running helper.
+The final subscription is imported through Happ's GUI after login. Existing network,
+locale, timezone, shell and sessions are preserved.
 
-The first Debian bootstrap and the subscription endpoint need initial network
-access. The pinned Xray client also needs initial access, unless its matching
-verified archive is already in the source bundle's `downloads/` directory:
-`xray-v26.11.9-amd64.zip` or `xray-v26.11.9-arm64.zip`. The
-[network manifest](../manifests/network.toml) pins the source and SHA-256. A VPN
-cannot fetch its own initially blocked client or subscription automatically.
+## Login and recovery
 
-## Login, repeat and recovery
+Log in locally as the target user and run the exact printed session command, normally
+`"$HOME/.local/share/setup-system/bin/start-hyprland"`. No GUI starts during installation.
+Repeat the same apply after fixing the reported cause. Unknown configuration edits
+require review. A failed stage returns nonzero and does not promise transactional
+APT rollback. See [recovery](recovery.md) and [Hyprland](hyprland.md).
 
-After successful installation, log in locally as the target user and run the exact
-session command printed by the installer. The default is
-`"$HOME/.local/share/setup-system/bin/start-hyprland"`. The installer never starts a
-compositor as root or interrupts the current session.
-
-Rerun the same sudo command to resume unfinished stages. An unchanged user profile
-creates no duplicate configuration or backup. Unknown or locally edited managed files
-require review. A partial failure returns nonzero and identifies the failed stage;
-APT changes are not promised to roll back transactionally. See
-[Hyprland](hyprland.md) for keys/overrides and [recovery](recovery.md) for backup use.
-
-Current local evidence is fixture/mock testing. A real disposable Debian guest must
-separately verify the one-command install, repeat apply and graphical session; the
-coordinator's development machine is never selected as an installation target.
+Automated and container evidence does not verify a real graphical session. A separately
+selected disposable Debian guest must test actual installation, repeat apply, login,
+renderer, audio, sharing, lock/resume and TTY/network preservation.

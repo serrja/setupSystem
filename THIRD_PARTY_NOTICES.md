@@ -27,3 +27,9 @@ in [the network manifest](manifests/network.toml). The upstream archive contains
 its license. No Xray binary or source is redistributed in setupSystem releases;
 the temporary executable, archive and connection configuration are removed after
 download preparation. User-supplied optional seeds remain their own upstream copies.
+
+## Terminal application
+
+Textual is an MIT-licensed runtime dependency from Textualize. It is installed from
+the locked Python distribution; its own license remains in that distribution. No
+Textual source is vendored in setupSystem. See https://github.com/Textualize/textual.

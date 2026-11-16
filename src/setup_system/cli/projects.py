@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -13,10 +12,7 @@ import typer
 
 from setup_system.application.project_layout import (
     active_projects,
-    apply_migration,
-    format_migration_plan,
     load_layout,
-    plan_migration,
     prepare_owner_directories,
 )
 from setup_system.cli._context import ROOT
@@ -37,51 +33,6 @@ def projects_list() -> None:
         raise typer.BadParameter(str(exc)) from exc
     for name, path in projects.items():
         typer.echo(f"{name}: {path}")
-
-
-@projects_app.command("planMigration")
-def projects_plan_migration() -> None:
-    """Inspect old and target paths without creating directories or touching Git."""
-    layout = load_layout(ROOT)
-    typer.echo(format_migration_plan(layout, plan_migration(layout)))
-
-
-@projects_app.command("move")
-def projects_move(
-    name: Annotated[str, typer.Option(help="Exact owner/project ID from projects list.")],
-    backup_manifest: Annotated[
-        Path,
-        typer.Option(
-            "--backup-manifest", help="Private manifest for the current full-tree Git backup."
-        ),
-    ],
-    yes: Annotated[bool, typer.Option("--yes", help="Apply one checked relocation.")] = False,
-    accept_owner_review: Annotated[
-        bool, typer.Option("--accept-owner-review", help="Keep a reviewed foreign-owner origin.")
-    ] = False,
-) -> None:
-    """Move one ordinary checkout on the same filesystem after backup verification."""
-    layout = load_layout(ROOT)
-    moves = {move.project.id: move for move in plan_migration(layout)}
-    move = moves.get(name)
-    if move is None:
-        raise typer.BadParameter("Choose one exact catalog project ID")
-    typer.echo(f"{name}: {move.source or 'absent'} -> {move.project.target} [{move.status}]")
-    if not yes:
-        raise typer.Exit(2)
-    state_root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-    try:
-        result_path = apply_migration(
-            layout,
-            name,
-            backup_manifest=backup_manifest,
-            result_directory=state_root / "setup-system/moves",
-            accept_owner_review=accept_owner_review,
-        )
-    except (OSError, ValueError, RuntimeError) as exc:
-        typer.echo(f"relocation blocked: {exc}", err=True)
-        raise typer.Exit(4) from exc
-    typer.echo(f"relocation verified: {result_path}")
 
 
 @projects_app.command("prepare")

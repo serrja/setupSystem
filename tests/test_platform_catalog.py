@@ -22,6 +22,6 @@ def test_platform_catalog_load_has_no_filesystem_side_effect(tmp_path: Path) -> 
     for name, project in actual.items():
         assert project.target == home / "Projects/pokerlost" / name
         assert project.origin == "git@github.com:pokerlost/" + name + ".git"
-        assert project.state == "existing" and project.legacy_path is None
+        assert project.state == "existing"
     assert list(home.iterdir()) == before
     assert layout.owner_groups == ("serrja", "pokerlost")
