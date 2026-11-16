@@ -7,7 +7,8 @@ Reviewed full-SHA links are reading sources, not automatic loaders or permission
 This repository owns Debian workstation preparation, Hyprland installation and explicitly
 scoped portable user configuration. General system installation remains Debian-only;
 profile capabilities can be narrower. Detect and reject unsupported targets before side
-effects. Keep the Python bootstrap stdlib-only and `plan` strictly read-only.
+effects. Keep the source handoff and privileged installation service stdlib-only,
+and `plan` strictly read-only.
 
 Preserve projectRules in the catalog, terminalDev, user data and local edits. Back up
 managed files before replacement and reject unknown conflicts. Never run installation

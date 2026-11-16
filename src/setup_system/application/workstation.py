@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import json
 import os
 import platform
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -17,6 +19,7 @@ import tomllib
 import zipfile
 from pathlib import Path
 from typing import Literal, cast
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
@@ -495,13 +498,196 @@ def plan(root: Path, profile: Profile, *, terminal_profile: str | None = None) -
     )
 
 
-def _font_files(root: Path) -> dict[Path, bytes]:
-    manifest = tomllib.loads((root / "manifests/fonts.toml").read_text())[
-        "jetbrains_mono_nerd_font"
-    ]
+def _font_manifest(root: Path) -> dict[str, object]:
+    value = tomllib.loads((root / "manifests/fonts.toml").read_text())["jetbrains_mono_nerd_font"]
+    if not isinstance(value, dict):
+        raise ValueError("Invalid pinned font manifest")
+    version, digest = value.get("version"), value.get("sha256")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", version):
+        raise ValueError("Invalid pinned font version")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Invalid pinned font digest")
+    expected_url = (
+        "https://github.com/ryanoasis/nerd-fonts/releases/download/v"
+        + version
+        + "/JetBrainsMono.zip"
+    )
+    if value.get("url") != expected_url:
+        raise ValueError("Font archive must use its pinned official release URL")
+    files = value.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= 16:
+        raise ValueError("Invalid pinned font file list")
+    names: set[str] = set()
+    for item in files:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid pinned font file identity")
+        name, checksum = item.get("name"), item.get("sha256")
+        if (
+            not isinstance(name, str)
+            or Path(name).name != name
+            or name in {"", ".", ".."}
+            or "\\" in name
+            or any(ord(character) < 32 for character in name)
+            or name in names
+            or not isinstance(checksum, str)
+            or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+        ):
+            raise ValueError("Invalid pinned font file identity")
+        names.add(name)
+    return cast(dict[str, object], value)
+
+
+def _font_cache_path(path: Path) -> Path:
+    result = _safe(path)
+    home = Path.home().resolve()
+    for current in (result, *result.parents):
+        if current.exists():
+            info = current.lstat()
+            if info.st_uid != os.geteuid():
+                raise ValueError("Font cache path has a different owner")
+            if current != result and not current.is_dir():
+                raise ValueError("Font cache parent is not a directory")
+        if current == home:
+            break
+    return result
+
+
+def _font_cache(
+    manifest: dict[str, object],
+) -> tuple[Path, Path, bytes]:
+    folder = _xdg("XDG_CACHE_HOME", ".cache") / "setup-system/downloads"
+    name = "JetBrainsMono-" + str(manifest["version"]) + "-" + str(manifest["sha256"]) + ".zip"
+    archive = _font_cache_path(folder / name)
+    receipt = _font_cache_path(archive.with_suffix(".zip.json"))
+    provenance = {
+        "schema": 1,
+        "owner": "setupSystem",
+        "kind": "font-archive",
+        "version": manifest["version"],
+        "url": manifest["url"],
+        "sha256": manifest["sha256"],
+    }
+    return archive, receipt, (json.dumps(provenance, sort_keys=True) + "\n").encode()
+
+
+def _font_archive(path: Path, checksum: str) -> bytes:
+    _font_cache_path(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_size > 80 * 1024 * 1024
+        ):
+            raise ValueError("Font cache must be a bounded user-owned regular file")
+        content = stream.read(80 * 1024 * 1024 + 1)
+    if len(content) > 80 * 1024 * 1024 or hashlib.sha256(content).hexdigest() != checksum:
+        raise ValueError("Font cache archive digest mismatch; preserve it and review the cache")
+    return content
+
+
+def _font_contents(content: bytes, manifest: dict[str, object]) -> dict[str, bytes]:
+    result: dict[str, bytes] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as bundle:
+            if len(bundle.infolist()) > 4096:
+                raise ValueError("Font archive contains too many entries")
+            total = 0
+            for item in cast(list[dict[str, str]], manifest["files"]):
+                matches = [entry for entry in bundle.infolist() if entry.filename == item["name"]]
+                if len(matches) != 1:
+                    raise ValueError("Font archive has missing or duplicate managed files")
+                entry = matches[0]
+                mode = stat.S_IFMT(entry.external_attr >> 16)
+                total += entry.file_size
+                if (
+                    entry.is_dir()
+                    or mode not in {0, stat.S_IFREG}
+                    or entry.file_size > 16 * 1024 * 1024
+                    or total > 64 * 1024 * 1024
+                ):
+                    raise ValueError("Font archive member is unsafe or exceeds its size limit")
+                data = bundle.read(entry)
+                if hashlib.sha256(data).hexdigest() != item["sha256"]:
+                    raise ValueError("Font file digest mismatch")
+                result[item["name"]] = data
+    except zipfile.BadZipFile:
+        raise ValueError("Invalid cached font archive") from None
+    return result
+
+
+def _font_publish(path: Path, content: bytes) -> None:
+    _font_cache_path(path)
+    missing: list[Path] = []
+    current = path.parent
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    for current in reversed(missing):
+        current.mkdir(mode=0o700)
+        current.chmod(0o700)
+    _font_cache_path(path)
+    descriptor, name = tempfile.mkstemp(prefix=".font-download-", dir=path.parent)
+    candidate = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(candidate, path, follow_symlinks=False)
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
+def prefetch_workstation(root: Path) -> None:
+    """Cache a pinned font archive without requiring installed graphical commands."""
+    if os.geteuid() == 0:
+        raise ValueError("Workstation prefetch must run as the target user")
+    manifest = _font_manifest(root)
+    archive, receipt, provenance = _font_cache(manifest)
+    if receipt.exists() and (
+        not receipt.is_file()
+        or receipt.stat().st_size > 32 * 1024
+        or receipt.read_bytes() != provenance
+    ):
+        raise ValueError("Font cache provenance differs; preserve it for review")
+    if archive.exists():
+        content = _font_archive(archive, str(manifest["sha256"]))
+    else:
+        host = "github.com"
+        try:
+            with urlopen(str(manifest["url"]), timeout=60) as response:
+                final = urlsplit(response.geturl())
+                if final.scheme != "https" or final.hostname not in {
+                    "github.com",
+                    "release-assets.githubusercontent.com",
+                    "objects.githubusercontent.com",
+                }:
+                    raise ValueError("Font download redirected outside the pinned release hosts")
+                content = response.read(80 * 1024 * 1024 + 1)
+        except HTTPError as exc:
+            host = urlsplit(exc.url).hostname or host
+            raise ValueError(f"Font download failed: HTTP {exc.code} from {host}") from None
+        except (URLError, TimeoutError):
+            raise ValueError(f"Font download failed for host {host}") from None
+        if len(content) > 80 * 1024 * 1024:
+            raise ValueError("Font archive exceeds its size limit")
+        if hashlib.sha256(content).hexdigest() != manifest["sha256"]:
+            raise ValueError("Font archive digest mismatch")
+    _font_contents(content, manifest)
+    if not archive.exists():
+        _font_publish(archive, content)
+    if not receipt.exists():
+        _font_publish(receipt, provenance)
+
+
+def _font_files(root: Path, *, offline: bool = False) -> dict[Path, bytes]:
+    manifest = _font_manifest(root)
     data = _safe(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")))
-    destination = _safe(data / ("fonts/JetBrainsMonoNerdFont-" + manifest["version"]))
-    expected = manifest["files"]
+    destination = _safe(data / ("fonts/JetBrainsMonoNerdFont-" + str(manifest["version"])))
+    expected = cast(list[dict[str, str]], manifest["files"])
     for item in expected:
         _safe(destination / item["name"])
     if all(
@@ -510,34 +696,15 @@ def _font_files(root: Path) -> dict[Path, bytes]:
         for item in expected
     ):
         return {}
-    # Explicit apply only; the archive is never executed or extracted by path.
-    with tempfile.TemporaryFile() as archive:
-        with urlopen(manifest["url"], timeout=60) as response:
-            final = urlsplit(response.url)
-            if final.scheme != "https" or final.hostname not in {
-                "github.com",
-                "release-assets.githubusercontent.com",
-                "objects.githubusercontent.com",
-            }:
-                raise ValueError("Font download redirected outside the pinned release hosts")
-            remaining = 80 * 1024 * 1024
-            while chunk := response.read(min(1024 * 1024, remaining + 1)):
-                remaining -= len(chunk)
-                if remaining < 0:
-                    raise ValueError("Font archive exceeds its size limit")
-                archive.write(chunk)
-        archive.seek(0)
-        if hashlib.file_digest(archive, "sha256").hexdigest() != manifest["sha256"]:
-            raise ValueError("Font archive digest mismatch")
-        archive.seek(0)
-        with zipfile.ZipFile(archive) as bundle:
-            result: dict[Path, bytes] = {}
-            for item in expected:
-                content = bundle.read(item["name"])
-                if hashlib.sha256(content).hexdigest() != item["sha256"]:
-                    raise ValueError("Font file digest mismatch")
-                result[_safe(destination / item["name"])] = content
-            return result
+    if not offline:
+        prefetch_workstation(root)
+    archive, receipt, provenance = _font_cache(manifest)
+    if not archive.is_file() or not receipt.is_file():
+        raise ValueError("Verified font cache is missing; prefetch before offline apply")
+    if receipt.stat().st_size > 32 * 1024 or receipt.read_bytes() != provenance:
+        raise ValueError("Font cache provenance differs; preserve it for review")
+    contents = _font_contents(_font_archive(archive, str(manifest["sha256"])), manifest)
+    return {_safe(destination / name): content for name, content in contents.items()}
 
 
 def _settings(
@@ -585,8 +752,11 @@ def apply(
     terminal_profile: str | None = None,
     reset_terminal_cell_spacing: bool = False,
     refresh_terminal_font: bool = False,
+    offline: bool = False,
 ) -> Path:
     """Apply portable files with conflict checks and a recoverable per-write receipt."""
+    if profile == "hyprland" and os.geteuid() == 0:
+        raise ValueError("Hyprland user configuration cannot run as root")
     report = plan(root, profile, terminal_profile=terminal_profile)
     if report.blockers:
         raise ValueError("; ".join(report.blockers))
@@ -611,7 +781,7 @@ def apply(
         for family in (policy.emoji_fallback,):
             if family not in _run(["fc-match", "-f", "%{family}", family]):
                 raise ValueError("Install the distro's emoji fallback before applying this profile")
-    desired.update(_font_files(root))
+    desired.update(_font_files(root, offline=True) if offline else _font_files(root))
     receipt_path = _receipt()
     previous = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
     for path, content in desired.items():

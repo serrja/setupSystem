@@ -1,4 +1,4 @@
-"""Read-only planning shared by the stdlib bootstrap and the Typer CLI."""
+"""Read-only planning shared by the installation service and the Typer CLI."""
 
 from __future__ import annotations
 

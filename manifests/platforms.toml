@@ -19,6 +19,8 @@ architectures = ["x86_64", "arm64"]
 version_pin = "0.55.2+ds-1~bpo13+1"
 upstream_version = "0.55.2"
 backports = "trixie-backports"
+init_system = "systemd"
+init_version = "257"
 # Finite write destinations shared by shell and stdlib preflight; trailing slash means directory.
 preflight_paths = [
     "config:hypr/",
@@ -41,6 +43,9 @@ preflight_paths = [
     "state:setup-system/backups/",
     "cache:setup-system/",
     "cache:setup-system/uv/",
+    "cache:setup-system/downloads/",
+    "cache:setup-system/downloads/JetBrainsMono-3.4.0-76f05ff3ace48a464a6ca57977998784ff7bdbb65a6d915d7e401cd3927c493c.zip",
+    "cache:setup-system/downloads/JetBrainsMono-3.4.0-76f05ff3ace48a464a6ca57977998784ff7bdbb65a6d915d7e401cd3927c493c.zip.json",
 ]
 commands = [
     "Hyprland", "hyprctl", "start-hyprland", "foot", "wofi", "thunar", "waybar",

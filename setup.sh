@@ -6,19 +6,27 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 setup_error() { printf 'setupSystem: %s\n' "$*" >&2; return 2; }
 setup_usage() {
     cat <<'HELP'
-Usage: sudo bash ./setup.sh [apply] [--yes] [--user NAME]
+Usage: sudo bash ./setup.sh [apply] [--yes] [--user NAME] [--vpn-config-file PATH]
        bash ./setup.sh {plan|--dry-run|--help}
        [--xdg-config-home PATH] [--xdg-data-home PATH]
        [--xdg-state-home PATH] [--xdg-cache-home PATH]
 No arguments install Hyprland for the verified sudo caller. Direct root needs --user.
 XDG paths must be inside that user's HOME; explicit options work without sudo -E.
 Help/plan never install prerequisites, download files or refresh APT metadata.
-Without Python, plan shows preliminary shell preflight. Apply bootstraps Python.
-One confirmation authorizes signed Debian packages, managed backports and user files.
+Without Python, plan shows preliminary shell preflight. Apply prepares missing Python/CA.
+One confirmation authorizes downloads, offline package/user apply and native-service activation.
+Interactive apply requests an HTTPS subscription with hidden input after consent.
+Unattended --yes requires --vpn-config-file: a private user-owned file inside HOME.
+Pass only the private filename, never a subscription URL as a command argument.
+The temporary client/config is removed before offline package/user apply.
+Native Happ helper activation is a separate operation outside offline namespaces.
+Temporary input supports plain/base64 VLESS or compatible JSON with TLS/REALITY.
+HTTPS alone does not guarantee compatible content; encrypted Happ payloads are unsupported.
+Initial client/subscription access is required; the VPN cannot download itself.
 HELP
 }
 setup_parse() {
-    mode=apply; consent=0; requested_user=''; xdg_arguments=(); forwarded=(); local verb='' want_help=0
+    mode=apply; consent=0; requested_user=''; vpn_file=''; xdg_arguments=(); local verb='' want_help=0
     local -A seen=()
     while (($#)); do
         case "$1" in
@@ -27,16 +35,19 @@ setup_parse() {
                 [[ -z $verb ]] || { setup_error 'Choose only one apply/plan mode.'; return 2; }
                 verb=$1; [[ $1 == apply ]] && mode=apply || mode=plan; shift ;;
             --yes) consent=1; shift ;;
-            --user|--xdg-config-home|--xdg-data-home|--xdg-state-home|--xdg-cache-home)
+            --user|--vpn-config-file|--xdg-config-home|--xdg-data-home|--xdg-state-home|--xdg-cache-home)
                 (($# >= 2)) && [[ -n $2 && $2 != --* ]] || { setup_error "Missing value for $1."; return 2; }
                 if [[ $1 == --user ]]; then
                     [[ -z $requested_user ]] || { setup_error 'Duplicate --user.'; return 2; }
                     requested_user=$2
+                elif [[ $1 == --vpn-config-file ]]; then
+                    [[ -z $vpn_file ]] || { setup_error 'Duplicate --vpn-config-file.'; return 2; }
+                    vpn_file=$2
                 else
                     [[ -z ${seen[$1]-} ]] || { setup_error "Duplicate $1."; return 2; }
                     seen[$1]=1; xdg_arguments+=("$1" "$2"); fi
                 shift 2 ;;
-            *) setup_error "Unknown or retired argument: $1. Use --help."; return 2 ;;
+            *) setup_error "Unknown or retired argument. Use --help; private URLs are not arguments."; return 2 ;;
         esac
     done
     [[ $want_help == 0 ]] || mode=help
@@ -56,6 +67,27 @@ setup_manifest_value() {
             value=substr($0,index($0,"=")+1);gsub(/^[[:space:]]+|[[:space:]]+$/,"",value);
             gsub(/^"|"$/,"",value);print value;exit}}' "$setup_root/manifests/platforms.toml"
 }
+setup_systemctl() {
+    /usr/bin/timeout --kill-after=1s 15 /usr/bin/env -i \
+        PATH="$PATH" LANG=C LC_ALL=C /usr/bin/systemctl "$@"
+}
+setup_init() {
+    local init required client manager client_pattern manager_pattern
+    init=$(setup_manifest_value init_system)
+    required=$(setup_manifest_value init_version)
+    [[ $init == systemd && $required =~ ^[0-9]+$ ]] || {
+        setup_error 'Unsupported init requirement in the Hyprland profile.'; return 2;
+    }
+    client_pattern="^systemd $required([ .(]|$)"
+    manager_pattern="^$required([.~-]|$)"
+    if ! client=$(setup_systemctl --version 2>/dev/null) || [[ ! $client =~ $client_pattern ]]; then
+        setup_error "Hyprland/Happ requires the reviewed systemd $required client."; return 2;
+    fi
+    if ! manager=$(setup_systemctl --system --no-pager --no-ask-password show --property=Version --value 2>/dev/null) ||
+        [[ ! $manager =~ $manager_pattern ]]; then
+        setup_error "Hyprland/Happ requires an accessible systemd $required system manager as init."; return 2;
+    fi
+}
 setup_platform() {
     local distro version codename arch allowed
     distro=$(setup_release_value ID); version=$(setup_release_value VERSION_ID)
@@ -66,11 +98,12 @@ setup_platform() {
         $allowed == *\""$arch"\"* ]] || {
         printf 'UNSUPPORTED Hyprland target: %s %s (%s), %s. No changes made.\n' "$distro" "$version" "$codename" "$arch" >&2; return 4;
     }
+    setup_init || return
     printf 'Target: %s %s (%s), %s\n' "$distro" "$version" "$codename" "$arch"
 }
 setup_safe_path() {
     local path=$1 cursor=$1
-    [[ $path == /* && $path != *$'\n'* && $path != *$'\r'* && $path != *$'\t'* &&
+    [[ $path == /* && ! $path =~ [[:cntrl:]] &&
         /$path/ != *'/../'* && /$path/ != *'/./'* ]] || { setup_error 'Unsafe absolute path.'; return 2; }
     while [[ $cursor != / ]]; do
         [[ ! -L $cursor ]] || { setup_error 'Refusing a symlink in a managed path.'; return 2; }
@@ -121,6 +154,29 @@ setup_managed_preflight() {
     done < <(awk -F'"' '/^name = / {print $2}' "$setup_root/manifests/fonts.toml")
 }
 
+setup_subscription_file() {
+    [[ -n $vpn_file ]] || return 0
+    setup_safe_path "$vpn_file" >/dev/null 2>&1 || {
+        setup_error 'VPN input file path is unsafe.'; return 2;
+    }
+    [[ $vpn_file == "$target_home/"* && -f $vpn_file ]] || {
+        setup_error 'VPN input must be a regular private file inside verified HOME.'; return 2;
+    }
+    local file_uid file_mode links size
+    if ! file_uid=$(stat -c %u -- "$vpn_file" 2>/dev/null) ||
+        ! file_mode=$(stat -c %a -- "$vpn_file" 2>/dev/null) ||
+        ! links=$(stat -c %h -- "$vpn_file" 2>/dev/null) ||
+        ! size=$(stat -c %s -- "$vpn_file" 2>/dev/null); then
+        setup_error 'VPN input file metadata is unavailable.'; return 2;
+    fi
+    [[ $file_uid == "$uid" && $file_mode =~ ^[0-7]{3,4}$ && $links == 1 &&
+        $size =~ ^[0-9]+$ ]] &&
+        (( (8#$file_mode & 077) == 0 && size > 0 && size <= 8192 )) || {
+        setup_error 'VPN input must be private, user-owned, single-link and bounded to 1..8192 bytes.'; return 2;
+    }
+}
+setup_has_tty() { [[ -t 0 ]]; }
+
 setup_identity() {
     local record name password uid gid gecos shell group_record value index
     if [[ -n ${SUDO_USER-} && ${SUDO_USER} != root ]]; then
@@ -168,30 +224,35 @@ setup_identity() {
         done
         xdg_arguments+=("$option" "$value")
     done
+    setup_subscription_file || return
     setup_managed_preflight || return
-    forwarded=(--user "$target_user" "${xdg_arguments[@]}")
     printf 'User: %s (uid=%s gid=%s), HOME=%s\n' "$target_user" "$uid" "$gid" "$target_home"
 }
 setup_preliminary_plan() {
     printf 'Hyprland pin: %s\n' "$(setup_manifest_value version_pin)"
     awk '/^base_packages =/{selected=1} /^\[hyprland.backport_packages\]/{selected=1} /^\[unsupported\]/{selected=0} selected{print}' "$setup_root/manifests/platforms.toml"
     cat <<'PLAN'
-Preliminary plan (Python absent; no APT metadata refreshed):
-  1. Verify signed Debian sources; install missing python3/ca-certificates.
-  2. Refresh isolated signed Debian/backports metadata; resolve full package set.
-  3. Refuse removals/downgrades; install Hyprland and manifest integrations.
-  4. As target user: prepare pinned uv/Python 3.14.7 and locked runtime.
-  5. As target user: back up and apply managed configuration/session launcher.
-Preserve network, locale, timezone and login shell. No session is started.
+Preliminary plan (Python/CA bootstrap required; no APT metadata refreshed):
+  1. After consent, bootstrap missing Python/CA from signed Debian sources.
+  2. As target user: hidden HTTPS subscription, temporary pinned Xray loopback proxy.
+  3. Download/verify Happ, signed Debian/backports packages, locked runtime and fonts.
+  4. Stop/remove temporary client/config; install cached packages offline with service deferral.
+  5. Outside offline namespaces, start native Happ helper; preserve a running instance.
+  6. As target user: offline backed-up configuration; final Happ import in its GUI after login.
+Preserve existing network configuration, locale, timezone and login shell. No GUI is started.
+Initial Debian/subscription reachability is required; Xray needs access or a verified seed.
 Availability/signatures require the explicitly authorized APT refresh during apply.
 PLAN
 }
 setup_source_access() {
     local path source_uid source_gid
-    local -a required=(bootstrap.py uv.lock pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md
-        manifests/platforms.toml manifests/fonts.toml assets/hyprland/profile.lua
+    local -a required=(src/setup_system/_installer_entry.py uv.lock pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md
+        manifests/platforms.toml manifests/fonts.toml manifests/network.toml manifests/happ.toml
+        src/setup_system/network_worker.py src/setup_system/network_session.py
+        src/setup_system/network.py src/setup_system/diagnostics.py assets/hyprland/profile.lua
         assets/fonts/60-setup-system-fonts.conf src/setup_system/installation.py
-        src/setup_system/planning.py src/setup_system/storage.py src/setup_system/user_install.py
+        src/setup_system/planning.py src/setup_system/storage.py src/setup_system/runtime.py
+        src/setup_system/entrypoint.py src/setup_system/application/installer.py
         src/setup_system/adapters/debian/hyprland.py)
     # The unprivileged wheel build also needs every bundled source/resource file.
     while IFS= read -r -d '' path; do
@@ -222,25 +283,57 @@ setup_source_access() {
         done
     fi
 }
+setup_ca_ready() {
+    local ca_status
+    ca_status=$(/usr/bin/env -i PATH="$PATH" LANG=C LC_ALL=C /usr/bin/dpkg-query \
+        --show '--showformat=${db:Status-Status}' ca-certificates 2>/dev/null) || return 1
+    [[ $ca_status == installed && -f /etc/ssl/certs/ca-certificates.crt &&
+        ! -L /etc/ssl/certs/ca-certificates.crt && -r /etc/ssl/certs/ca-certificates.crt &&
+        -s /etc/ssl/certs/ca-certificates.crt ]]
+}
+setup_prerequisite_files() {
+    local stage=$1
+    chmod 755 "$stage"
+    local folder
+    for folder in lists lists/partial archives archives/partial; do
+        mkdir -p "$stage/$folder"
+        chmod 755 "$stage/$folder"
+    done
+    printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' "$(setup_manifest_value codename)" > "$stage/debian.sources"
+    chmod 644 "$stage/debian.sources"
+}
 setup_python_prerequisite() (
     # Only entered after consent. Debian's installed keyring is the trust anchor.
     [[ -f /usr/share/keyrings/debian-archive-keyring.pgp && ! -L /usr/share/keyrings/debian-archive-keyring.pgp ]] || { setup_error 'Debian archive keyring is required.'; return 2; }
-    stage=$(mktemp -d /run/setup-system-bootstrap.XXXXXXXX)
+    stage=$(mktemp -d /run/setup-system-prerequisites.XXXXXXXX)
     trap 'rm -rf -- "$stage"' EXIT
-    mkdir -p "$stage/lists/partial" "$stage/archives/partial"
-    chmod 755 "$stage" "$stage/lists" "$stage/archives"
-    printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' "$(setup_manifest_value codename)" > "$stage/debian.sources"
+    setup_prerequisite_files "$stage"
     apt_options=(-o "Dir::Etc::sourcelist=$stage/debian.sources" -o Dir::Etc::sourceparts=-
         -o "Dir::State::lists=$stage/lists" -o "Dir::Cache::archives=$stage/archives"
         -o Acquire::AllowInsecureRepositories=false -o APT::Get::AllowUnauthenticated=false
         -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o DPkg::Lock::Timeout=30)
     apt_command=(/usr/bin/timeout --kill-after=15s 900 /usr/bin/env -i
         PATH="$PATH" LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get)
-    printf 'Stage: bootstrap signed Debian Python prerequisites\n'
+    printf 'Stage: signed Debian Python/CA prerequisites\n'
     "${apt_command[@]}" "${apt_options[@]}" -o APT::Update::Error-Mode=any update || return 5
     "${apt_command[@]}" "${apt_options[@]}" --simulate --no-remove install python3 ca-certificates || return 5
     "${apt_command[@]}" "${apt_options[@]}" --yes --no-remove --no-install-recommends install python3 ca-certificates || return 5
+    if ! setup_ca_ready; then
+        [[ -x /usr/sbin/update-ca-certificates && ! -L /usr/sbin/update-ca-certificates ]] || {
+            setup_error 'CA bundle is unavailable and the Debian repair tool is missing.' || return 5;
+        }
+        printf 'Stage: rebuild the missing Debian CA bundle (preserve configured trust)\n'
+        /usr/bin/timeout --kill-after=15s 120 /usr/bin/env -i PATH="$PATH" LANG=C LC_ALL=C \
+            /usr/sbin/update-ca-certificates || return 5
+    fi
+    setup_ca_ready || { setup_error 'CA bundle is still unavailable; repair Debian trust before retrying.' || return 5; }
 )
+setup_handoff() {
+    exec env -i PATH="$PATH" HOME="$target_home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
+        python3 -I -B "$setup_root/src/setup_system/_installer_entry.py" \
+        "$mode" "$target_user" "${xdg_arguments[1]}" "${xdg_arguments[3]}" \
+        "${xdg_arguments[5]}" "${xdg_arguments[7]}" "$1" "${vpn_file:--}"
+}
 setup_main() {
     local setup_root
     setup_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -248,24 +341,33 @@ setup_main() {
     if [[ $mode == help ]]; then setup_usage; return 0; fi
     setup_platform || return
     setup_identity || return
-    [[ -r $setup_root/bootstrap.py && -r $setup_root/uv.lock && -r $setup_root/pyproject.toml && -r $setup_root/src/setup_system/user_install.py && -r $setup_root/assets/hyprland/profile.lua ]] || { setup_error 'Incomplete local source bundle.'; return 2; }
+    [[ -r $setup_root/src/setup_system/_installer_entry.py && -r $setup_root/uv.lock && -r $setup_root/pyproject.toml && -r $setup_root/src/setup_system/runtime.py && -r $setup_root/assets/hyprland/profile.lua ]] || { setup_error 'Incomplete local source bundle.'; return 2; }
     setup_source_access || return
-    if command -v python3 >/dev/null 2>&1; then
-        local yes_arguments=(); [[ $consent == 0 ]] || yes_arguments=(--yes)
-        exec env -i PATH="$PATH" HOME="$target_home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
-            python3 -I -B "$setup_root/bootstrap.py" "$mode" "${forwarded[@]}" "${yes_arguments[@]}"
+    if [[ $mode == apply ]] && ! setup_has_tty; then
+        [[ $consent == 1 ]] || { setup_error 'No TTY: apply requires explicit --yes consent.'; return 2; }
+        [[ -n $vpn_file ]] || { setup_error 'No TTY: temporary VPN requires a private --vpn-config-file.'; return 2; }
+    fi
+    local has_python=0 has_ca=0
+    if command -v python3 >/dev/null 2>&1; then has_python=1; fi
+    if setup_ca_ready; then has_ca=1; fi
+    if [[ $has_python == 1 ]]; then
+        if [[ $mode == plan ]]; then
+            [[ $has_ca == 1 ]] || printf 'Prerequisite plan: missing CA certificates/bundle; signed Debian bootstrap before HTTPS downloads.\n'
+            setup_handoff "$consent"
+        elif [[ $has_ca == 1 ]]; then
+            setup_handoff "$consent"
+        fi
     fi
     setup_preliminary_plan
     [[ $mode == apply ]] || return 0
     [[ $(id -u) == 0 ]] || { setup_error 'Installation requires sudo bash ./setup.sh.'; return 2; }
     if [[ $consent == 0 ]]; then
-        [[ -t 0 ]] || { setup_error 'No TTY: apply requires explicit --yes consent.'; return 2; }
+        setup_has_tty || { setup_error 'No TTY: apply requires explicit --yes consent.'; return 2; }
         local answer
         read -r -p 'Apply the complete plan? [y/N] ' answer
         [[ $answer == y || $answer == yes || $answer == Y ]] || return 2
     fi
     setup_python_prerequisite || { printf 'FAILED: prerequisites. Fix APT/network and re-run the same command.\n' >&2; return 5; }
-    exec env -i PATH="$PATH" HOME="$target_home" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
-        python3 -I -B "$setup_root/bootstrap.py" apply "${forwarded[@]}" --yes
+    setup_handoff 1
 }
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then setup_main "$@"; fi

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -22,6 +21,6 @@ supported = (
     and machine in profile["architectures"]
 )
 expected = (2 if os.geteuid() == 0 and not os.environ.get("SUDO_USER") else 0) if supported else 4
-result = subprocess.run([sys.executable, "bootstrap.py", "plan"], check=False, timeout=30)
+result = subprocess.run(["bash", str(root / "setup.sh"), "plan"], check=False, timeout=30)
 if result.returncode != expected:
     raise SystemExit(f"Read-only plan returned {result.returncode}; expected {expected}")

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shlex
 import subprocess
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
 from setup_system import installation as install
 from setup_system import planning
 from setup_system.application import workstation
+from setup_system.application.installer import InstallationService, InstallRequest, Operation
+from setup_system.runtime import UserRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
 UNSAFE_DESTINATIONS = [
@@ -22,16 +22,6 @@ UNSAFE_DESTINATIONS = [
     ".config/hypr",
     ".config/hypr/setup-system/profile.lua",
 ]
-
-
-def bootstrap() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "setup_preflight_bootstrap", ROOT / "bootstrap.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def unsafe_home(tmp_path: Path, relative: str) -> tuple[Path, Path]:
@@ -50,7 +40,6 @@ def unsafe_home(tmp_path: Path, relative: str) -> tuple[Path, Path]:
 def test_nested_user_symlink_stops_root_orchestration_before_apt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str
 ) -> None:
-    boot = bootstrap()
     home, outside = unsafe_home(tmp_path, relative)
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
@@ -63,7 +52,7 @@ def test_nested_user_symlink_stops_root_orchestration_before_apt(
         lambda: planning.Platform("debian", "13", "x86_64", True, False, ""),
     )
     system_calls: list[str] = []
-    monkeypatch.setattr(install, "install_system", lambda *a, **kw: system_calls.append("APT"))
+    monkeypatch.setattr(install, "prepare_packages", lambda *a, **kw: system_calls.append("APT"))
     monkeypatch.setattr(install, "mark_user_stage", lambda *a, **kw: None)
 
     def user_executor(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -76,14 +65,14 @@ def test_nested_user_symlink_stops_root_orchestration_before_apt(
                 if relative.startswith(".config/"):
                     workstation._targets(ROOT, "hyprland")
                 else:
-                    boot._user_runtime()
+                    UserRuntime(ROOT).prepare()
             except ValueError as error:
                 assert "symlink" in str(error)
                 return subprocess.CompletedProcess(argv, 5, "", str(error))
         pytest.fail("The real user-stage validator accepted the unsafe path")
 
     monkeypatch.setattr(install, "run_command", user_executor)
-    code = boot.main(["apply", "--yes", "--user", "alice"])
+    code = InstallationService(ROOT).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
     assert system_calls == [], "Unsafe user paths were discovered only after root APT apply"
     assert code == 2
     assert (outside / "keep.txt").read_text() == "owner data"

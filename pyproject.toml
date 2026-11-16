@@ -55,7 +55,7 @@ ban-relative-imports = "parents"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/setup_system", "bootstrap.py", "docker/check_bootstrap.py", "docker/verify_native.py", "docker/verify-installed.py"]
+files = ["src/setup_system", "docker/check_entrypoint.py", "docker/verify_native.py", "docker/verify-installed.py"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config"
@@ -63,7 +63,7 @@ markers = ["unit: isolated unit checks", "integration: isolated system integrati
 
 [tool.coverage.run]
 branch = true
-source = ["setup_system", "bootstrap"]
+source = ["setup_system"]
 patch = ["subprocess"]
 
 [tool.coverage.report]

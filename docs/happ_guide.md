@@ -1,6 +1,6 @@
 # Happ: installation and settings recovery
 
-Happ owns subscriptions, routing profiles and connections. setupSystem verifies its package, makes private backups and reports native autostart state. Private links are neither committed nor printed by these commands. Happ is optional and is not required for the main one-command Hyprland installation.
+Happ owns subscriptions, routing profiles and connections. setupSystem verifies its package, makes private backups and reports native autostart state. Private links are neither committed nor printed by these commands. The graphical client owns native subscription import after login.
 
 ## 🚀 Install
 
@@ -12,7 +12,26 @@ setup-system happ setup --yes
 setup-system happ doctor
 ```
 
-A repeated setup preserves an already installed Happ. For a missing Debian client, the manifest pins official release 4.5.4, each `.deb` SHA-256 and package metadata checks before targeted `sudo apt-get install`. Without available sudo, the operation blocks before downloading. Validate the selected package and GUI separately on Debian. A release digest is not an independent publisher signature.
+A repeated setup preserves an already installed Happ. For a missing Debian client, the manifest pins official release 4.5.4, each `.deb` SHA-256 and package metadata checks before targeted `sudo apt-get install`. Without available sudo, the operation blocks before downloading. Validate the selected package and GUI separately on Debian. A release digest is not an independent publisher signature. The pinned package ships root-run `happd.service`; its own post-install script enables and restarts that daemon. Package installation does not verify a graphical session or a working connection.
+
+## Download preparation before graphical login
+
+When the installer uses a temporary console proxy for downloads, that temporary client
+is separate from Happ's final graphical session. The download phase verifies the pinned
+Happ package and font archive before the temporary connection is stopped. It does not
+import a subscription into Happ or change Happ's private database, routing or settings.
+Complete any final subscription import with Happ's native GUI after logging in.
+The one-command Hyprland installer requires manual review of a different or partially
+installed Happ package version; it does not force an upgrade or restart an active helper.
+
+The prepared user runtime can prefetch the font archive with
+`setup-system workstation prefetch --profile hyprland` without Hyprland, fontconfig or
+a running graphical session. A later `setup-system workstation apply --profile hyprland --yes --offline`
+uses only the verified user cache when font files are needed. Missing, changed or unsafe
+cache entries stop the operation; already matching installed fonts need no download.
+These are installer stages, not additional required commands for the one-command setup.
+Cache provenance records the public pinned release URL and digest, never a provider's
+private subscription URL. A verified download is not a successful GUI or VPN check.
 
 ## 🔒 Backup and restore
 
@@ -44,7 +63,7 @@ setup-system happ addSubscription
 
 When `wl-copy` or `xclip` is available, the CLI accepts hidden input in a local terminal and hands it to the clipboard. Use Happ's native import-from-clipboard control and verify the result there before entering another link. The CLI clears its clipboard handoff after confirmation, but a history manager may retain a copy; enter secret links directly in Happ when that is safer. Without a clipboard tool, it reports `needsManualAction` before asking for a link.
 
-Web subscriptions, `happ://crypto…` and configuration links are classified separately. Their content is not downloaded, decrypted or logged. If the result is uncertain, inspect Happ's list and name collisions before retrying. A subscription can change application settings.
+Web subscriptions, `happ://crypto…` and configuration links are classified separately. These GUI handoff commands do not download, decrypt or log their content. If the result is uncertain, inspect Happ's list and name collisions before retrying. A subscription can change application settings.
 
 ## 🧭 Routing
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import shlex
@@ -14,6 +13,9 @@ from pathlib import Path
 import pytest
 
 from setup_system import installation as install
+from setup_system.application import installer
+from setup_system.application.installer import InstallationService, InstallRequest, Operation
+from setup_system.network_session import NetworkReady
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
@@ -37,40 +39,71 @@ def keyrings(tmp_path: Path, kind: str = "regular") -> Path:
 
 
 def system_paths(tmp_path: Path, directory: Path) -> install.SystemPaths:
-    runtime = tmp_path / "run"
-    runtime.mkdir()
+    runtime = tmp_path / "keyring-run"
+    runtime.mkdir(mode=0o700)
     return install.SystemPaths(
         tmp_path / "etc/setup-system-backports.sources",
         tmp_path / "state/install.json",
         directory / install.SystemPaths().keyring.name,
         runtime,
         tmp_path / "policy-rc.d",
+        happ_unit=tmp_path / "etc-systemd/happd.service",
+        happ_runtime_unit=tmp_path / "run-systemd/happd.service",
     )
 
 
-def test_trixie_canonical_keyring_completes_and_repeats_system_stage(tmp_path: Path) -> None:
+def test_trixie_canonical_keyring_completes_and_repeats_system_stage(
+    tmp_path: Path, package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths]
+) -> None:
+    root, target, happ, _ = package_fixture
     directory = keyrings(tmp_path)
     paths = system_paths(tmp_path, directory)
     calls: list[list[str]] = []
     sources: list[bytes] = []
 
     def execute(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "/usr/bin/dpkg-query":
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        if argv[0] == "/usr/bin/systemctl":
+            text = (
+                "systemd 257 (257.9-1~deb13u1)\n"
+                if "--version" in argv
+                else ("257.9-1~deb13u1\n" if "--property=Version" in argv else "")
+            )
+            return subprocess.CompletedProcess(argv, 0, text, "")
+        if argv[0] == "/usr/bin/dpkg-deb":
+            return subprocess.CompletedProcess(
+                argv, 0, "Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\n", ""
+            )
+        if "/usr/bin/apt-get" not in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         calls.append(argv)
         source = next(
             arg.split("=", 1)[1] for arg in argv if arg.startswith("Dir::Etc::sourcelist=")
         )
         sources.append(Path(source).read_bytes())
-        return subprocess.CompletedProcess(argv, 0, "Inst hyprland (0.55.2 Debian)", "")
+        return subprocess.CompletedProcess(
+            argv, 0, "Inst hyprland (0.55.2+ds-1~bpo13+1 Debian)", ""
+        )
 
     for _ in range(2):
-        install.install_system(
-            ROOT, run=execute, paths=paths, release=RELEASE, architecture="amd64"
-        )
+        with install.prepare_packages(
+            root,
+            target=target,
+            happ=happ,
+            proxy=None,
+            run=execute,
+            paths=paths,
+            release=RELEASE,
+            architecture="amd64",
+        ) as prepared:
+            prepared.install()
+            prepared.activate_happ()
         state = json.loads(paths.journal.read_text())
         assert state["status"] == "system-complete" and state["stage"] == "user-runtime"
     assert paths.keyring.name == CANONICAL
     expected = f"Signed-By: {directory / CANONICAL}".encode()
-    assert len(calls) == 6 and all(expected in source for source in sources)
+    assert len(calls) == 8 and all(expected in source for source in sources)
     assert expected in paths.backports.read_bytes()
     assert paths.backports.read_bytes().count(b"trixie-backports") == 1
     assert (directory / COMPATIBILITY).is_symlink()
@@ -81,18 +114,25 @@ def test_trixie_canonical_keyring_completes_and_repeats_system_stage(tmp_path: P
 
 @pytest.mark.parametrize("kind", ["missing", "symlink"])
 def test_untrusted_or_missing_canonical_keyring_stops_before_apt_and_journal(
-    tmp_path: Path, kind: str
+    tmp_path: Path,
+    kind: str,
+    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
 ) -> None:
+    root, target, happ, _ = package_fixture
     directory = keyrings(tmp_path, kind)
     paths = system_paths(tmp_path, directory)
     with pytest.raises(ValueError, match="keyring"):
-        install.install_system(
-            ROOT,
+        with install.prepare_packages(
+            root,
+            target=target,
+            happ=happ,
+            proxy=None,
             run=lambda *args, **kwargs: pytest.fail("APT reached an invalid trust anchor"),
             paths=paths,
             release=RELEASE,
             architecture="amd64",
-        )
+        ):
+            pytest.fail("Invalid trust anchor entered package preparation")
     assert not paths.journal.exists() and not paths.backports.exists()
     assert (directory / COMPATIBILITY).is_symlink()
 
@@ -101,9 +141,9 @@ def prerequisite(
     tmp_path: Path, directory: Path
 ) -> tuple[subprocess.CompletedProcess[str], list[dict[str, object]]]:
     source = (ROOT / "setup.sh").read_text()
-    start = source.index("setup_python_prerequisite() (")
-    function = source[start : source.index("\nsetup_main()", start)]
-    staging = tmp_path / "bootstrap-run"
+    start = source.index("setup_prerequisite_files() {")
+    function = source[start : source.index("\nsetup_handoff()", start)]
+    staging = tmp_path / "prerequisite-run"
     staging.mkdir()
     log = tmp_path / "external-calls.jsonl"
     timeout = tmp_path / "fixture-timeout"
@@ -120,12 +160,13 @@ def prerequisite(
     # Remap fixed host paths at the test boundary, then execute the production body.
     function = function.replace("/usr/share/keyrings/", str(directory) + "/")
     function = function.replace(
-        "/run/setup-system-bootstrap.XXXXXXXX",
-        shlex.quote(str(staging / "setup-system-bootstrap.XXXXXXXX")),
+        "/run/setup-system-prerequisites.XXXXXXXX",
+        shlex.quote(str(staging / "setup-system-prerequisites.XXXXXXXX")),
     )
     function = function.replace("/usr/bin/timeout", shlex.quote(str(timeout)))
     script = (
         f"source {shlex.quote(str(ROOT / 'setup.sh'))}\n"
+        "setup_ca_ready() { return 0; }\n"
         f"setup_root={shlex.quote(str(ROOT))}\n" + function + "\nsetup_python_prerequisite\n"
     )
     result = subprocess.run(
@@ -168,34 +209,59 @@ def test_no_python_shell_rejects_missing_or_symlink_canonical_keyring(
     assert not calls and (directory / COMPATIBILITY).is_symlink()
 
 
+class FailureNetwork:
+    """No provider or filesystem activity is needed to exercise a package-stage failure."""
+
+    def __init__(self, home: Path) -> None:
+        self.home = home
+        self.closed = False
+
+    def start(self, subscription: str | None) -> NetworkReady:
+        assert subscription == "https://subscription.invalid/fixture"
+        return NetworkReady("http://127.0.0.1:18080", self.home / "not-created-happ.deb")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    spec = importlib.util.spec_from_file_location("keyring_bootstrap", ROOT / "bootstrap.py")
-    assert spec is not None and spec.loader is not None
-    boot = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(boot)
     home = tmp_path / "target home"
     home.mkdir()
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
     paths = install.SystemPaths(journal=tmp_path / "absent-state/install.json")
-    monkeypatch.setattr(install, "SystemPaths", lambda: paths)
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
+    monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
+    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        installer.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+    )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     reason = "canonical Debian archive keyring is missing"
 
     def fail(*args: object, **kwargs: object) -> None:
         raise ValueError(reason)
 
-    monkeypatch.setattr(install, "install_system", fail)
+    network = FailureNetwork(home)
     monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("User stage reached"))
-    assert boot.main(["apply", "--yes", "--user", "alice"]) == 5
+    assert (
+        InstallationService(
+            ROOT,
+            paths=paths,
+            network=lambda *a, **kw: network,
+            packages=fail,
+        ).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
+        == 5
+    )
     error = capsys.readouterr().err
     assert reason in error
     assert "journal" in error.lower() and "not created" in error.lower()
     assert f"See {paths.journal}" not in error
     assert not paths.journal.exists() and not list(home.iterdir())
+    assert network.closed
 
 
 @pytest.mark.parametrize("kind", ["validation", "apt"])
@@ -205,17 +271,18 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     capsys: pytest.CaptureFixture[str],
     kind: str,
 ) -> None:
-    spec = importlib.util.spec_from_file_location("keyring_error_bootstrap", ROOT / "bootstrap.py")
-    assert spec is not None and spec.loader is not None
-    boot = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(boot)
     home = tmp_path / "target home"
     home.mkdir()
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
     paths = install.SystemPaths(journal=tmp_path / "absent-state/install.json")
-    monkeypatch.setattr(install, "SystemPaths", lambda: paths)
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
+    monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
+    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        installer.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+    )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()
     reason = "archive signature validation failed"
@@ -248,10 +315,19 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
             raise subprocess.CalledProcessError(100, ["apt-get", marker], stderr=diagnostic)
         raise ValueError(diagnostic)
 
-    monkeypatch.setattr(install, "install_system", fail)
+    network = FailureNetwork(home)
     monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("User stage reached"))
-    assert boot.main(["apply", "--yes", "--user", "alice"]) == 5
+    assert (
+        InstallationService(
+            ROOT,
+            paths=paths,
+            network=lambda *a, **kw: network,
+            packages=fail,
+        ).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
+        == 5
+    )
     error = capsys.readouterr().err
     assert reason in error and marker not in error
     assert "\x1b" not in error and len(error) < 3000
     assert not paths.journal.exists() and not list(home.iterdir())
+    assert network.closed
