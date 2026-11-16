@@ -84,6 +84,23 @@ def test_symlink_path_rejected(tmp_path: Path) -> None:
         install.validate_user_path(home / "config/new", target)
 
 
+@pytest.mark.parametrize("mask", [0o002, 0o077, 0o777])
+def test_system_journal_parents_are_private_independently_of_umask(
+    tmp_path: Path, mask: int
+) -> None:
+    destination = tmp_path / "new-system-state" / "nested" / "install.json"
+    previous = os.umask(mask)
+    try:
+        install._write_system(destination, b"first\n")
+        install._write_system(destination, b"second\n")
+    finally:
+        os.umask(previous)
+    assert destination.read_bytes() == b"second\n"
+    assert destination.stat().st_mode & 0o777 == 0o600
+    for directory in (destination.parent, destination.parent.parent):
+        assert directory.stat().st_mode & 0o777 == 0o700
+
+
 def test_apt_simulation_refuses_removal_and_downgrade() -> None:
     for text in ("Remv gnome-shell [1.0]", "The following packages will be DOWNGRADED:\n hyprland"):
         with pytest.raises(RuntimeError):
@@ -185,6 +202,7 @@ def test_unknown_service_policy_stops_before_any_mutation(tmp_path: Path) -> Non
     )
     paths.keyring.write_bytes(b"trust")
     paths.policy.write_bytes(b"#!/bin/sh\nexit 0\n")
+    paths.policy.chmod(0o600)
     with pytest.raises(ValueError, match="service policy"):
         install.install_system(
             ROOT,
@@ -199,9 +217,21 @@ def test_unknown_service_policy_stops_before_any_mutation(tmp_path: Path) -> Non
 def test_interrupted_owned_service_policy_is_removed_on_retry(tmp_path: Path) -> None:
     path = tmp_path / "policy"
     path.write_bytes(install.DEFER_POLICY)
+    path.chmod(0o600)
     with install._defer_services(path):
         assert path.read_bytes() == install.DEFER_POLICY
     assert not path.exists()
+
+
+def test_group_writable_owned_service_policy_is_preserved_and_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "policy"
+    path.write_bytes(install.DEFER_POLICY)
+    path.chmod(0o664)
+    with pytest.raises(ValueError, match="privately controlled"):
+        with install._defer_services(path):
+            pytest.fail("Unsafe policy reached the package stage")
+    assert path.read_bytes() == install.DEFER_POLICY
+    assert path.stat().st_mode & 0o777 == 0o664
 
 
 def _wait_for_leaf_ready(monkeypatch: pytest.MonkeyPatch, pid_file: Path) -> None:
