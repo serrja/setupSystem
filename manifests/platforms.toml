@@ -64,6 +64,10 @@ base_packages = [
 ]
 
 [hyprland.backport_packages]
+# These three binaries require the same xkbcommon source version.
+libxkbcommon0 = "1.13.1-1~bpo13+1"
+libxkbcommon-x11-0 = "1.13.1-1~bpo13+1"
+libxkbregistry0 = "1.13.1-1~bpo13+1"
 hypridle = "0.1.8-1~bpo13+1"
 hyprlock = "0.9.6-1~bpo13+1"
 hyprpolkitagent = "0.1.3-2~bpo13+1"
