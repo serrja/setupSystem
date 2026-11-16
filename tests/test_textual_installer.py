@@ -130,3 +130,71 @@ def test_real_process_boundary_can_plan_from_a_worker_thread(tmp_path: Path) -> 
     assert code == 4
     assert any("UNSUPPORTED" in line for line in interaction.output)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_fresh_textual_process_can_start_real_plan_worker(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    code = """import asyncio,sys
+from pathlib import Path
+from setup_system.application.installer import InstallRequest,Operation
+from setup_system.tui.installer import InstallationApp
+async def exercise():
+ app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN))
+ async with app.run_test(size=(100,40)) as pilot:
+  await pilot.click('#plan')
+  await app.workers.wait_for_complete()
+  await pilot.pause()
+  assert app.last_code==4 and not app.busy,app.output_lines
+asyncio.run(exercise())
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", code, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_process_protocol_roundtrips_and_rejects_unknown_messages() -> None:
+    import pytest
+
+    from setup_system.application.installation_host import (
+        Answer,
+        Progress,
+        Question,
+        Result,
+        decode_message,
+        encode_message,
+    )
+
+    for message in (Progress("stage"), Question("confirm"), Answer(None), Result(5)):
+        assert decode_message(encode_message(message)) == message
+    for raw in ('{"kind":"result","code":true}', '{"kind":"exec","command":"false"}', "{}"):
+        with pytest.raises(ValueError):
+            decode_message(raw)
+
+
+def test_process_protocol_refuses_worker_and_unknown_operations_before_apply() -> None:
+    import io
+    import json
+
+    import pytest
+
+    from setup_system.application.installation_host import read_request
+
+    for operation in ("network-stage", "unknown", [], {}):
+        payload = {
+            "root": "/fixture",
+            "operation": operation,
+            "user": None,
+            "yes": False,
+            "overrides": {},
+            "subscription_file": None,
+        }
+        with pytest.raises(ValueError):
+            read_request(io.StringIO(json.dumps(payload)))

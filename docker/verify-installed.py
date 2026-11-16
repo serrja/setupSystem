@@ -3,7 +3,10 @@
 import argparse
 import hashlib
 import json
+import os
 import subprocess
+import sys
+import tempfile
 import tomllib
 import zipfile
 from importlib.metadata import distribution, version
@@ -57,3 +60,26 @@ for alias in sources:
     subprocess.run(["setup-system", "templates", "versions", alias], check=True)
 for command in ("create", "update", "cache"):
     subprocess.run(["setup-system", "templates", command, "--help"], check=True)
+
+# Exercise the installed UI in a fresh interpreter: captured stdio must not break
+# the real backend process. The missing source rejects plan before any host apply.
+ui_probe = """import asyncio,sys
+from pathlib import Path
+from setup_system.application.installer import InstallRequest,Operation
+from setup_system.tui.installer import InstallationApp
+async def exercise():
+ app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN))
+ async with app.run_test(size=(100,40)) as pilot:
+  await pilot.click('#plan')
+  await app.workers.wait_for_complete()
+  await pilot.pause()
+  assert app.last_code==4 and not app.busy,app.output_lines
+asyncio.run(exercise())
+"""
+with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
+    subprocess.run(
+        [sys.executable, "-I", "-B", "-c", ui_probe, str(Path(ui_home) / "missing-source")],
+        env={**os.environ, "HOME": ui_home},
+        timeout=60,
+        check=True,
+    )
