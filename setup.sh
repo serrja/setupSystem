@@ -224,12 +224,12 @@ setup_source_access() {
 }
 setup_python_prerequisite() (
     # Only entered after consent. Debian's installed keyring is the trust anchor.
-    [[ -f /usr/share/keyrings/debian-archive-keyring.gpg && ! -L /usr/share/keyrings/debian-archive-keyring.gpg ]] || { setup_error 'Debian archive keyring is required.'; return 2; }
+    [[ -f /usr/share/keyrings/debian-archive-keyring.pgp && ! -L /usr/share/keyrings/debian-archive-keyring.pgp ]] || { setup_error 'Debian archive keyring is required.'; return 2; }
     stage=$(mktemp -d /run/setup-system-bootstrap.XXXXXXXX)
     trap 'rm -rf -- "$stage"' EXIT
     mkdir -p "$stage/lists/partial" "$stage/archives/partial"
     chmod 755 "$stage" "$stage/lists" "$stage/archives"
-    printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$(setup_manifest_value codename)" > "$stage/debian.sources"
+    printf 'Types: deb\nURIs: http://deb.debian.org/debian\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' "$(setup_manifest_value codename)" > "$stage/debian.sources"
     apt_options=(-o "Dir::Etc::sourcelist=$stage/debian.sources" -o Dir::Etc::sourceparts=-
         -o "Dir::State::lists=$stage/lists" -o "Dir::Cache::archives=$stage/archives"
         -o Acquire::AllowInsecureRepositories=false -o APT::Get::AllowUnauthenticated=false
