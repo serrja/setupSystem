@@ -368,3 +368,20 @@ def test_brightness_rejects_unknown_operation_without_system_bus(
     result = run_brightness(brightness_fixture, direction)
     assert result.returncode == 2 and "Choose brightness" in result.stderr
     assert not calls.exists()
+
+
+def test_version_inspection_does_not_launch_compositor_without_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(workstation.shutil, "which", lambda name: "/usr/bin/" + name)
+
+    def execute(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "/usr/bin/dpkg-query"
+        assert argv[-1] == "hyprland"
+        return subprocess.CompletedProcess(
+            argv, 0, "install ok installed\t0.55.2+ds-1~bpo13+1\n", ""
+        )
+
+    monkeypatch.setattr(workstation.subprocess, "run", execute)
+    assert workstation._hyprland_version() == "0.55.2+ds-1~bpo13+1"

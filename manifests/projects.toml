@@ -6,13 +6,11 @@ ownerGroups = ["serrja", "pokerlost"]
 
 [[project]]
 id = "serrja/setupSystem"
-legacyPath = "$HOME/setupSystem"
 origin = "git@github.com:serrja/setupSystem.git"
 state = "existing"
 
 [[project]]
 id = "serrja/pythonTemplate"
-legacyPath = "$HOME/Projects/projectTemplates"
 origin = "git@github.com:serrja/pythonTemplate.git"
 state = "existing"
 
@@ -61,7 +59,6 @@ commit = "5b0559f82bf247362cf67e12497e82c280e857c3"
 
 [[project]]
 id = "serrja/fastapiTemplate"
-legacyPath = "$HOME/Projects/serrja/fastApiTemplate"
 origin = "git@github.com:serrja/fastapiTemplate.git"
 state = "existing"
 
@@ -80,31 +77,22 @@ tag = "v0.3.0.dev1"
 commit = "50b920bc597529d50fab2f207523bf0cb65b76bf"
 
 [[project]]
-id = "serrja/jobdesk"
-legacyPath = "$HOME/Projects/jobdesk"
-origin = "git@github.com:mloso/jobdesk.git"
-state = "existing"
-reviewOwner = true
-
-[[project]]
 id = "serrja/serrja"
-state = "optional"
+origin = "git@github.com:serrja/serrja.git"
+state = "existing"
 
 [[project]]
 id = "pokerlost/.github"
-legacyPath = "$HOME/pokerlost/organizationProfile"
 origin = "git@github.com:pokerlost/.github.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/pokerlost"
-legacyPath = "$HOME/pokerlost/overview"
 origin = "git@github.com:pokerlost/pokerlost.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/serviceTemplate"
-legacyPath = "$HOME/pokerlost/serviceTemplate"
 origin = "git@github.com:pokerlost/serviceTemplate.git"
 state = "existing"
 
@@ -113,28 +101,23 @@ alias = "service"
 
 [[project]]
 id = "pokerlost/pypokerlost"
-legacyPath = "$HOME/pokerlost/pypokerlost"
 origin = "git@github.com:pokerlost/pypokerlost.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/pokerengine"
-legacyPath = "$HOME/pokerlost/pokerengine"
 origin = "git@github.com:pokerlost/pokerengine.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/authService"
-legacyPath = "$HOME/pokerlost/authService"
 origin = "git@github.com:pokerlost/authService.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/accountsService"
-legacyPath = "$HOME/pokerlost/accountsService"
-origin = "git@github.com:mloso/accountsService.git"
+origin = "git@github.com:pokerlost/accountsService.git"
 state = "existing"
-reviewOwner = true
 
 [[project]]
 id = "pokerlost/virtualMoney"
@@ -143,20 +126,17 @@ state = "existing"
 
 [[project]]
 id = "pokerlost/pokerService"
-legacyPath = "$HOME/pokerlost/pokerService"
 origin = "git@github.com:pokerlost/pokerService.git"
 state = "existing"
 
 [[project]]
 # Dart/Flutter workspace; no Python-template update or runtime dependency.
 id = "pokerlost/pokerClient"
-legacyPath = "$HOME/pokerlost/pokerClient"
 origin = "git@github.com:pokerlost/pokerClient.git"
 state = "existing"
 
 [[project]]
 id = "pokerlost/cryptoService"
-legacyPath = "$HOME/pokerlost/cryptoService"
 origin = "git@github.com:pokerlost/cryptoService.git"
 state = "existing"
 
@@ -190,3 +170,8 @@ state = "existing"
 commit = "537da92f8e22f35355a96f868d1b98d83e066c75"
 document = "docs/project.md"
 sha256 = "be4a92f6ac9c546be816b12652dc7fff4113dd049065613a7b3c026deb8b8dee"
+
+[[project]]
+id = "pokerlost/pokerDemo"
+origin = "git@github.com:pokerlost/pokerDemo.git"
+state = "existing"

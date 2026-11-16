@@ -2,11 +2,11 @@
 
 ## Installation stages
 
-Run `sudo bash ./setup.sh` again after fixing the reported failure. The installer
+Run `sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"` again after fixing the reported failure. The installer
 rechecks the platform, account, package resolution and current files rather than
 trusting a stale success flag. The root-owned `/var/lib/setup-system/install.json`
-records the actual failed stage and completed system stages. Before Python exists,
-shell failures identify the prerequisite stage directly; no Python receipt is claimed.
+records the actual failed stage and completed system stages. Python/uv and CA trust
+are prerequisites; the CLI does not repair them before launch.
 
 APT refresh, package installation, persistent backports source and user runtime/files
 are separate stages. A failed user stage leaves the installed packages in place and

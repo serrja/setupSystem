@@ -1,0 +1,132 @@
+"""Exercise the terminal workflow without APT, credentials or a graphical session."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from textual.widgets import Input, Label
+
+from setup_system.application.installer import InstallRequest, Operation
+from setup_system.application.interaction import Interaction
+from setup_system.tui.installer import InstallationApp, Prompt
+
+
+@dataclass
+class Service:
+    interaction: Interaction | None = None
+    requests: list[InstallRequest] = field(default_factory=list)
+    applied: bool = False
+    code: int = 0
+
+    def run(self, request: InstallRequest) -> int:
+        assert self.interaction is not None
+        self.requests.append(request)
+        self.interaction.write("Checked complete fixture plan")
+        if request.operation == Operation.PLAN:
+            return 0
+        if not self.interaction.confirm("Apply complete fixture plan?"):
+            return 2
+        secret = self.interaction.subscription()
+        assert secret == "https://fixture.invalid/q-subscription"
+        self.applied = True
+        self.interaction.write("Stage: fixture configuration")
+        return self.code
+
+
+def application(tmp_path: Path, service: Service) -> InstallationApp:
+    app = InstallationApp(tmp_path, InstallRequest(Operation.PLAN), service=service)
+    service.interaction = app.interaction
+    return app
+
+
+def test_open_and_plan_are_read_only_and_remain_responsive(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        service = Service()
+        app = application(tmp_path, service)
+        async with app.run_test(size=(100, 40)) as pilot:
+            assert not service.requests
+            await pilot.click("#plan")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert [r.operation for r in service.requests] == [Operation.PLAN]
+            assert not app.busy and app.last_code == 0
+            assert not service.applied and not list(tmp_path.iterdir())
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_confirmation_never_applies(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        service = Service()
+        app = application(tmp_path, service)
+        async with app.run_test(size=(100, 40)) as pilot:
+            app.query_one("#user", Input).value = "alice"
+            await pilot.click("#apply")
+            await pilot.pause()
+            assert isinstance(app.screen, Prompt)
+            await pilot.click("#cancel")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not service.applied and app.last_code == 2
+            assert service.requests[0].user == "alice"
+            assert not service.requests[0].yes
+
+    asyncio.run(exercise())
+
+
+def test_secret_input_and_failed_stage_do_not_report_success(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        service = Service(code=5)
+        app = application(tmp_path, service)
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.click("#apply")
+            await pilot.pause()
+            await pilot.click("#confirm")
+            await pilot.pause()
+            secret = app.screen.query_one("#secret", Input)
+            assert secret.password
+            secret.value = "https://fixture.invalid/"
+            secret.focus()
+            await pilot.press("q")
+            secret.value += "-subscription"
+            await pilot.click("#confirm")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert service.applied and app.last_code == 5
+            assert "Stopped" in str(app.query_one("#status", Label).render())
+            assert secret.value == ""
+            assert not app.busy
+
+    asyncio.run(exercise())
+
+
+def test_real_process_boundary_can_plan_from_a_worker_thread(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from setup_system.application.interaction import ConsoleInteraction
+    from setup_system.tui.process import ProcessInstallation
+
+    class ReadOnlyInteraction(ConsoleInteraction):
+        def __init__(self) -> None:
+            self.output: list[str] = []
+
+        def write(
+            self, text: str, *, end: str = "\n", error: bool = False, flush: bool = False
+        ) -> None:
+            self.output.append(text)
+
+        def confirm(self, prompt: str) -> bool:
+            raise AssertionError("Read-only plan requested consent")
+
+        def subscription(self) -> str:
+            raise AssertionError("Read-only plan requested a secret")
+
+    interaction = ReadOnlyInteraction()
+    service = ProcessInstallation(tmp_path, interaction)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        code = worker.submit(service.run, InstallRequest(Operation.PLAN)).result(timeout=30)
+    assert code == 4
+    assert any("UNSUPPORTED" in line for line in interaction.output)
+    assert list(tmp_path.iterdir()) == []

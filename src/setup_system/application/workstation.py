@@ -30,6 +30,7 @@ from setup_system.adapters.debian.hyprland import (
     package_arguments,
     profile_capabilities,
 )
+from setup_system.adapters.debian.packages import installed_version
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 Profile = Literal["fonts", "hyprland"]
@@ -151,9 +152,7 @@ def _receipt() -> Path:
 
 
 def _hyprland_version() -> str | None:
-    if not shutil.which("Hyprland"):
-        return None
-    return _run(["Hyprland", "--version"]).splitlines()[0]
+    return installed_version("hyprland") if shutil.which("Hyprland") else None
 
 
 def _required_commands(root: Path) -> None:
@@ -775,7 +774,10 @@ def apply(
             )
             is None
         ):
-            raise ValueError(f"Hyprland {expected} must be installed by setup.sh before user apply")
+            raise ValueError(
+                f"Hyprland {expected} must be installed by setup-system install apply "
+                "before user apply"
+            )
         _required_commands(root)
     policy = font_policy(root)
     desired = _targets(root, profile)

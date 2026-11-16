@@ -715,6 +715,7 @@ def prepare_packages(
     paths: SystemPaths | None = None,
     release: dict[str, str] | None = None,
     architecture: str | None = None,
+    emit: Callable[[str], None] = print,
 ) -> Iterator[PreparedPackages]:
     """Download through an explicit proxy, then expose a fully offline package stage."""
     paths = SystemPaths() if paths is None else paths
@@ -912,7 +913,7 @@ def prepare_packages(
                 *packages,
                 str(local_happ),
             ]
-            print("Stage: metadata (authorized signed Debian refresh)", flush=True)
+            emit("Stage: metadata (authorized signed Debian refresh)")
             execute(["/usr/bin/apt-get", *online, "update"])
             checkpoint("resolution", "metadata")
             simulation = execute(["/usr/bin/apt-get", *online, "--simulate", *install])
@@ -920,9 +921,7 @@ def prepare_packages(
             selection = _freeze_selection(install[3:], simulation.stdout, str(happ_version))
             install = [*install[:3], *selection]
             checkpoint("downloads", "resolution")
-            print(
-                "Stage: downloads (packages only; no installation or service changes)", flush=True
-            )
+            emit("Stage: downloads (packages only; no installation or service changes)")
             execute(
                 ["/usr/bin/apt-get", *online, "--download-only", "--yes", *install], timeout=1800
             )
@@ -941,9 +940,8 @@ def prepare_packages(
                     "-o",
                     "Acquire::https::Proxy=DIRECT",
                 ]
-                print(
-                    "Stage: packages (offline network namespace; existing service starts deferred)",
-                    flush=True,
+                emit(
+                    "Stage: packages (offline network namespace; existing service starts deferred)"
                 )
                 with _defer_services(paths.policy):
                     execute(

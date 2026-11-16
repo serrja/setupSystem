@@ -1,7 +1,7 @@
 # Hyprland workstation
 
 ```bash
-sudo bash ./setup.sh
+sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"
 ```
 
 Run this from a verified setupSystem source checkout on an already installed, minimal
@@ -43,7 +43,7 @@ has passed a real graphical test.
 Read-only inspection needs no root and never prepares packages or a runtime:
 
 ```bash
-bash ./setup.sh plan
+setup-system install plan --source /absolute/source/path
 ```
 
 A plan without Python is a preliminary shell report. The complete package simulation

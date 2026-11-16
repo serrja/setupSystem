@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ProjectState = Literal["existing", "planned", "sourcePending", "optional"]
+ProjectState = Literal["existing"]
 OwnerGroup = Annotated[str, Field(pattern=r"^[a-z][A-Za-z0-9]*$")]
 
 
@@ -112,11 +112,9 @@ class ProjectRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     id: str
     state: ProjectState
-    legacy_path: str | None = Field(default=None, alias="legacyPath")
     origin: str | None = None
     template: TemplateMetadata | None = None
     policy: PolicyMetadata | None = None
-    review_owner: Annotated[bool, Field(strict=True)] = Field(default=False, alias="reviewOwner")
 
     @model_validator(mode="after")
     def canonical_policy_origin(self) -> ProjectRecord:

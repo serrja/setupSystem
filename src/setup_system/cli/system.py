@@ -33,7 +33,11 @@ from setup_system.planning import create_plan, format_plan
 from setup_system.storage import new_backup
 from setup_system.storage import restore as restore_backup
 
-app = typer.Typer(help="Debian workstation setup and recovery.", no_args_is_help=True)
+app = typer.Typer(
+    help="Debian workstation setup and recovery.",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
 
 
 @app.command()
