@@ -77,6 +77,50 @@ setup_safe_path() {
         cursor=${cursor%/*}; [[ -n $cursor ]] || cursor=/
     done
 }
+setup_managed_path() {
+    local kind=$1 relative=$2 value cursor
+    case $kind in config|data|state|cache) ;; *) setup_error 'Invalid managed path kind.'; return 2 ;; esac
+    [[ $relative != /* ]] || { setup_error 'Invalid managed relative path.'; return 2; }
+    value="${resolved[--xdg-$kind-home]}/${relative%/}"
+    setup_safe_path "$value" || return
+    if [[ -e $value ]]; then
+        if [[ $relative == */ ]]; then
+            [[ -d $value ]] || { setup_error 'Managed directory has an unsafe type.'; return 2; }
+        else
+            [[ -f $value ]] || { setup_error 'Managed file has an unsafe type.'; return 2; }
+        fi
+    fi
+    cursor=$value
+    while [[ $cursor == "$target_home/"* ]]; do
+        [[ ! -e $cursor || $(stat -c %u -- "$cursor") == "$uid" ]] || {
+            setup_error 'Managed path has a different owner.'; return 2;
+        }
+        [[ $cursor == "$value" || ! -e $cursor || -d $cursor ]] || {
+            setup_error 'Managed parent is not a directory.'; return 2;
+        }
+        cursor=${cursor%/*}
+    done
+}
+setup_managed_preflight() {
+    local kind relative asset font_version font_name
+    while IFS=: read -r kind relative; do
+        setup_managed_path "$kind" "$relative" || return
+    done < <(awk -F'"' '
+        /^\[hyprland\]$/ {selected=1;next} /^\[/ {selected=0}
+        selected && /^preflight_paths = \[/ {reading=1;next}
+        reading && /^\]/ {exit} reading && NF>=3 {print $2}' "$setup_root/manifests/platforms.toml")
+    while IFS= read -r -d '' asset; do
+        [[ ${asset##*/} == start-hyprland ]] && continue
+        setup_managed_path config "hypr/setup-system/${asset#"$setup_root/assets/hyprland/"}" || return
+    done < <(find "$setup_root/assets/hyprland" -type f -print0)
+    font_version=$(awk -F'"' '/^\[jetbrains_mono_nerd_font\]$/{selected=1;next} selected && /^version = /{print $2;exit}' "$setup_root/manifests/fonts.toml")
+    [[ -n $font_version ]] || { setup_error 'Missing font manifest version.'; return 2; }
+    setup_managed_path data "fonts/JetBrainsMonoNerdFont-$font_version/" || return
+    while IFS= read -r font_name; do
+        setup_managed_path data "fonts/JetBrainsMonoNerdFont-$font_version/$font_name" || return
+    done < <(awk -F'"' '/^name = / {print $2}' "$setup_root/manifests/fonts.toml")
+}
+
 setup_identity() {
     local record name password uid gid gecos shell group_record value index
     if [[ -n ${SUDO_USER-} && ${SUDO_USER} != root ]]; then
@@ -124,6 +168,7 @@ setup_identity() {
         done
         xdg_arguments+=("$option" "$value")
     done
+    setup_managed_preflight || return
     forwarded=(--user "$target_user" "${xdg_arguments[@]}")
     printf 'User: %s (uid=%s gid=%s), HOME=%s\n' "$target_user" "$uid" "$gid" "$target_home"
 }

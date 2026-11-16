@@ -13,10 +13,11 @@ import signal
 import stat
 import subprocess
 import tempfile
+import tomllib
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from setup_system.adapters.debian.hyprland import package_arguments, profile_capabilities
 
@@ -51,6 +52,8 @@ def validate_user_path(path: Path, target: TargetUser) -> Path:
     for parent in (path, *path.parents):
         if parent.is_symlink():
             raise ValueError("Managed paths must not traverse symlinks")
+        if parent != path and parent.exists() and not parent.is_dir():
+            raise ValueError("Managed parent is not a directory")
         if parent.exists() and parent != target.home and parent.is_relative_to(target.home):
             if parent.stat().st_uid != target.uid:
                 raise ValueError("Managed user path has a different owner")
@@ -132,6 +135,29 @@ def user_environment(target: TargetUser, overrides: Mapping[str, Path]) -> dict[
             raise ValueError("XDG roots must be subdirectories of HOME")
         env[f"XDG_{key.upper()}_HOME"] = str(path)
     return env
+
+
+def validate_installation_paths(
+    root: Path, target: TargetUser, environment: Mapping[str, str]
+) -> None:
+    """Reject unsafe known managed destinations before any package/runtime mutation."""
+    specifications = list(cast(list[str], profile_capabilities(root)["preflight_paths"]))
+    for source in (root / "assets/hyprland").rglob("*"):
+        if source.is_file() and source.name != "start-hyprland":
+            specifications.append(
+                "config:hypr/setup-system/" + str(source.relative_to(root / "assets/hyprland"))
+            )
+    font = tomllib.loads((root / "manifests/fonts.toml").read_text())["jetbrains_mono_nerd_font"]
+    font_root = "data:fonts/JetBrainsMonoNerdFont-" + font["version"] + "/"
+    specifications.append(font_root)
+    specifications.extend(font_root + item["name"] for item in font["files"])
+    for specification in specifications:
+        kind, relative = specification.split(":", 1)
+        if kind not in {"config", "data", "state", "cache"} or Path(relative).is_absolute():
+            raise ValueError("Invalid managed destination in capability manifest")
+        path = validate_user_path(Path(environment[f"XDG_{kind.upper()}_HOME"]) / relative, target)
+        if path.exists() and (not path.is_dir() if relative.endswith("/") else not path.is_file()):
+            raise ValueError("Managed destination has an unsafe type")
 
 
 def _system_path(path: Path) -> None:

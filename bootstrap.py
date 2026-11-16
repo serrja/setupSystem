@@ -234,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         resolve_target,
         run_command,
         user_environment,
+        validate_installation_paths,
     )
 
     try:
@@ -249,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
             if (value := getattr(options, f"xdg_{key}_home")) is not None
         }
         environment = user_environment(target, overrides)
+        validate_installation_paths(ROOT, target, environment)
         for path in (
             "uv.lock",
             "pyproject.toml",

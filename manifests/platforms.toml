@@ -19,6 +19,29 @@ architectures = ["x86_64", "arm64"]
 version_pin = "0.55.2+ds-1~bpo13+1"
 upstream_version = "0.55.2"
 backports = "trixie-backports"
+# Finite write destinations shared by shell and stdlib preflight; trailing slash means directory.
+preflight_paths = [
+    "config:hypr/",
+    "config:hypr/setup-system/",
+    "config:hypr/hyprland.lua",
+    "config:fontconfig/conf.d/60-setup-system-fonts.conf",
+    "config:xdg-desktop-portal/hyprland-portals.conf",
+    "config:gtk-3.0/settings.ini",
+    "config:gtk-4.0/settings.ini",
+    "data:setup-system/",
+    "data:setup-system/bin/",
+    "data:setup-system/bin/uv",
+    "data:setup-system/bin/start-hyprland",
+    "data:setup-system/python/",
+    "data:setup-system/runtime/",
+    "data:setup-system/runtime.json",
+    "data:fonts/",
+    "state:setup-system/",
+    "state:setup-system/workstation.json",
+    "state:setup-system/backups/",
+    "cache:setup-system/",
+    "cache:setup-system/uv/",
+]
 commands = [
     "Hyprland", "hyprctl", "start-hyprland", "foot", "wofi", "thunar", "waybar",
     "mako", "hypridle", "hyprlock", "swaybg", "wl-paste", "wl-copy", "grim", "slurp",
