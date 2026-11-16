@@ -1,4 +1,5 @@
 Hyprland 0.55.2 — setupSystem
+Super+E: file manager
 Super+Return terminal | Super+F1 applications | Super+F12 help
 Super+arrows focus | +Shift move | +Ctrl resize (20 px)
 Super+1..0 workspaces 1..10 | +Shift move window there

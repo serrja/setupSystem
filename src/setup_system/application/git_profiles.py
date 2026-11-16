@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -229,7 +230,7 @@ def _apply(
     _safe_path(state_root())
     backup = new_backup([path for path in changed if path.exists()])
     receipt = backup / "git-profile.json"
-    record = {
+    record: dict[str, Any] = {
         "application": "git-profile",
         "status": "prepared",
         "files": [
@@ -348,7 +349,7 @@ def restore_profile(backup_id: str, *, yes: bool = False) -> list[tuple[str, str
         if existing_created := [path for path in created if path.is_file()]:
             new_backup(existing_created)
         actions = restore(backup_id, apply=True, replace_current=True)
-        for path in created:
-            path.unlink(missing_ok=True)
-            actions.append((str(path), "removed-created"))
+        for created_path in created:
+            created_path.unlink(missing_ok=True)
+            actions.append((str(created_path), "removed-created"))
     return actions

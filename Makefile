@@ -1,11 +1,15 @@
+UV ?= uv
 ifeq ($(CONTAINERIZED),1)
 RUFF ?= ruff
 else
 RUFF ?= uvx --from ruff==0.17.1 ruff
 endif
-# Quick dev commands never prepare a product/build image.
+# Fast native checks never prepare a product/build image. The Docker CI child
+# keeps its wrapper so test/coverage receipts describe the container execution.
+ifneq ($(SKIP_QUALITY_BUILD),1)
 ifneq ($(filter lint format format-check check,$(MAKECMDGOALS)),)
 override CONTAINERIZED := 1
+endif
 endif
 ifneq ($(CONTAINERIZED),1)
 QUALITY_IMAGE := setupsystem:quality
@@ -25,8 +29,7 @@ RELEASE_CHECK_COMMAND = $(QUALITY_RUN) python docker/release.py release-check --
 OFFLINE_PREFLIGHT_COMMAND = $(MAKE) setup-offline-preflight
 VERIFY_COMMAND = $(MAKE) verify-cli-installed
 IMAGE_COMMAND = $(DOCKER) buildx build --file Dockerfile.quality $(DOCKER_BUILD_ARGS) $(LOCAL_BUILD_NETWORK) --target runtime --load --tag $(RUNTIME_IMAGE) .
-QUALITY_EXTRA_TARGETS += acceptance
-CI_LOCAL_TARGETS ?= acceptance coverage build verify release-check
+CI_LOCAL_TARGETS ?= check coverage build verify release-check
 include docker/quality-python.mk
 
 .PHONY: setup-offline-preflight verify-cli-installed
@@ -56,9 +59,10 @@ install:
 lint:
 	$(RUFF) check .
 	$(RUFF) format --check .
-	$(RUFF) format --check --line-length 88 docker/release.py
+	$(RUFF) format --check --line-length 88 docker/release.py docker/python_release.py
 typecheck:
 	$(UV) run --locked mypy
+	$(UV) run --locked mypy --python-version 3.12 --no-incremental docker/python_release.py
 test:
 	$(UV) run --locked pytest --cov --cov-report=term-missing --cov-report=json --cov-report=xml --junitxml=coverage/python/junit.xml
 compile:
@@ -66,19 +70,31 @@ compile:
 lock-check:
 	$(UV) lock --check
 bootstrap-check:
-	python bootstrap.py --help
-	python bootstrap.py plan
-check: lint ## Fast lint-only gate; no tests/build.
+	$(UV) run --locked python bootstrap.py --help
+	$(UV) run --locked python docker/check_bootstrap.py
+check: lint typecheck compile lock-check bootstrap-check test ## Native fast gate; no system apply.
 
-acceptance: lint typecheck compile lock-check bootstrap-check test
+acceptance: check
 build:
 	$(UV) build --no-build-isolation --wheel --sdist --out-dir coverage/artifacts
 
 endif
 
-.PHONY: dev-policy-help
-help: dev-policy-help
-dev-policy-help:
-	@printf '%s\n' 'Daily: make lint; explicit git push origin dev.' \
-	  'Manual only: test, typecheck, coverage, build, acceptance, ci-local.' \
-	  'Native lint tools must be installed; lint never syncs/builds the application.'
+.PHONY: native-check native-build native-verify native-ci test-integration
+NATIVE_ARTIFACT_DIR ?= coverage/native-artifacts
+native-check:
+	$(MAKE) CONTAINERIZED=1 RUFF="$(UV) run --locked ruff" check
+native-build:
+	$(UV) build --no-build-isolation --wheel --sdist --out-dir "$(NATIVE_ARTIFACT_DIR)"
+native-verify:
+	$(UV) run --locked python docker/verify_native.py "$(NATIVE_ARTIFACT_DIR)"
+native-ci: native-check native-build native-verify
+
+test-integration:
+	$(UV) run --locked pytest -q tests/test_python_release.py tests/test_templates.py
+
+.PHONY: native-help
+help: native-help
+native-help:
+	@printf '%s\n' 'Native: make native-check; make native-ci (locked Python/uv; no Docker).' \
+	  'Flow: lowerCamelCase working branch -> test -> dev -> main; exact-SHA CI releases.'

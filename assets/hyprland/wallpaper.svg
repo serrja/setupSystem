@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <!-- Original setupSystem wallpaper; no third-party assets. -->
+  <defs><linearGradient id="sky" x2="1" y2="1"><stop stop-color="#181825"/><stop offset="1" stop-color="#313244"/></linearGradient></defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <path d="M0 900 540 530 1120 1080H0Z" fill="#45475a"/>
+  <path d="m670 1080 710-650 540 570v80Z" fill="#585b70"/>
+  <path d="m920 850 460-420 190 200-160-65-75 80-100-45Z" fill="#89b4fa" opacity=".35"/>
+</svg>

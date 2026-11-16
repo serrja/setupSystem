@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import os
 import platform as system_platform
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -38,15 +40,42 @@ class Plan:
     blocked: tuple[str, ...] = ()
 
 
+def load_capabilities(root: Path | None = None) -> dict[str, Any]:
+    """Read the one shipped matrix from a checkout or the installed wheel."""
+    if root is None:
+        source = Path(__file__).resolve().parents[2]
+        root = source if (source / "manifests/platforms.toml").is_file() else Path(__file__).parent
+    with (root / "manifests/platforms.toml").open("rb") as stream:
+        document = tomllib.load(stream)
+    for section in ("architectures", "debian", "hyprland", "unsupported"):
+        if not isinstance(document.get(section), dict):
+            raise ValueError(f"Missing platform capability section: {section}")
+    debian = document["debian"]
+    if any(
+        not isinstance(debian.get(field), list)
+        or not debian[field]
+        or not all(isinstance(value, str) and value for value in debian[field])
+        for field in ("versions", "architectures")
+    ):
+        raise ValueError("Invalid Debian capability matrix")
+    if not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in document["architectures"].items()
+    ):
+        raise ValueError("Invalid architecture aliases")
+    return document
+
+
 def detect_platform(
     os_release: Path = Path("/etc/os-release"),
     architecture: str | None = None,
     system_name: str | None = None,
 ) -> Platform:
+    capabilities = load_capabilities()
+    debian = capabilities["debian"]
     family = system_name or system_platform.system()
     arch = architecture or system_platform.machine()
-    if arch == "aarch64":
-        arch = "arm64"
+    arch = capabilities["architectures"].get(arch, arch)
     if family != "Linux":
         return Platform(family.lower(), "unknown", arch, False, False, "UNSUPPORTED platform")
     fields: dict[str, str] = {}
@@ -61,19 +90,16 @@ def detect_platform(
     version = fields.get("VERSION_ID", "unknown")
     supported = (
         distro == "debian"
-        and version in {"12", "13"}
-        and arch
-        in {
-            "x86_64",
-            "arm64",
-        }
+        and debian["status"] == "implemented"
+        and version in debian["versions"]
+        and arch in debian["architectures"]
     )
     reason = (
         f"{distro.title()} {version} {arch} explicit platform adapter"
         if supported
-        else ("UNSUPPORTED: only explicit Debian 12/13 on x86_64 or arm64 is implemented")
+        else "UNSUPPORTED: " + capabilities["unsupported"]["reason"]
     )
-    return Platform(distro, version, arch, supported, False, reason)
+    return Platform(distro, version, arch, supported, bool(debian["locallyVerified"]), reason)
 
 
 def _digest(path: Path) -> str:

@@ -1,25 +1,58 @@
 # Release guide
 
-Review application compatibility and evidence before integrating or tagging a version.
+The repository uses the reviewed [H02 Python provider](https://github.com/pokerlost/.github/blob/e5cac33af228224af9deaef308e39c1b9f788033/docs/python_release_contract.md)
+for allocation, independent native verification and GitHub Releases. The consumer
+owns its native checks, build/injection and outside-installed acceptance. No package
+registry publication or deployment is part of this workflow.
 
-1. Decide compatibility and update the one packaging version plus changelog.
-   Refresh `uv.lock`; review CLI/config/generated-project compatibility and any
-   required migration separately from workstation installation.
-2. Run `make ci-local` and `make release-check`; review the exact content digest,
-   artifact versions/checksums, staged paths and outgoing diff. Coverage below
-   100% warns; missing or failed mandatory checks block delivery.
-3. Open and review the PR, then merge only after its required checks succeed.
-   A billing-blocked hosted check remains blocked even when local CI passes.
-4. At the exact clean, checked commit on main, inspect tag-triggered workflows.
-   Create one new annotated `v<version>` tag, push that exact ref and verify its
-   remote tag object and peeled commit. Never move an existing tag or use a
-   blanket `git push --tags`.
-5. Publish a package/image, create a GitHub Release, deploy or apply workstation
-   configuration only through a separately authorized workflow. Version tags
-   alone do not authorize those actions. Current CI runs for main and PRs, not
-   tag pushes; check that condition again immediately before a tag push.
+## 📦 Promotion and exact identity
 
-Preserve the preceding installed wheel and private recovery backups. File restore
-uses hash checks and dry-run by default; application databases and user conflicts
-need separate recovery decisions. A release is never a reason to rerun relocation,
-Zsh configuration, permissions or installation against an unsupported host.
+1. Review the complete working-branch diff and exact SHA. Run `make native-ci` or
+   the equivalent `make ci-local`; include narrow regression evidence and honest
+   installation/GUI limits in the PR.
+2. Merge the lowerCamelCase working branch into `test` after actual required checks
+   and review. Promote `test` → `dev` → `main` using ancestry-preserving merges.
+   Preserve the permanent branches, configured approvals/checks and merge queue.
+3. Check the CI run for the exact new dev/main push SHA. The `required` gate must
+   pass before allocation; PR/test events do not allocate. Dev/main events have no
+   path filters and are not cancelled by a newer push.
+4. The provider allocates an immutable tag, the separate unprivileged native builder
+   exports the exact source and builds the allocated PEP 440 version, and installed
+   acceptance runs outside source. A signed receipt binds actual builder job/tools.
+   Only provider jobs receive release-write permission.
+5. Read back the completed release, tag's peeled commit, native versions, source/run
+   identity, checksums and attestations. Dev releases are prereleases and not latest;
+   main releases are stable. Pending or queued is not released.
+
+Before promotion, prevent repository-level automatic deletion of permanent head
+branches. Do not rely only on omitting a CLI delete flag. Lack of branch-protection
+administration is an administrative limitation; it does not permit bypassing actual
+server checks or claiming an unknown protection state as verified.
+
+## 🔄 Recovery
+
+Use a complete rerun of the **original** CI run, with its real numeric ID:
+
+```bash
+gh run view RUN_ID --repo serrja/setupSystem
+gh run rerun RUN_ID --repo serrja/setupSystem
+```
+
+Rerunning only failed jobs is not the provider contract: the current attempt needs
+fresh successful preflight. Before a verified build exists, recovery builds the same
+source/version. After an immutable verified build record exists, allocation returns
+its original artifact ID and skips rebuilding. Publication fills only missing matching
+assets in an incomplete draft. A completed release is audited without replacement.
+Conflicting tags, source identities, artifacts or proofs stop recovery; never use
+force-update, clobber, a new dispatch event or a competing manual release.
+
+Read-only reconciliation uses the exact pinned provider checkout and contract inputs
+shown in its guide. Retain original Actions job records; an incomplete draft also
+needs the original verified transport artifact. A local/mock retry is not hosted
+interrupted-draft acceptance. Upstream H02 joint acceptance and this consumer's
+actual run/release evidence must be reported separately; a reachable provider pin
+alone proves neither.
+
+APT and user configuration recovery are separate installer operations. A GitHub
+release is not permission to rerun installation on the developer host or a claim of
+transactional package rollback.

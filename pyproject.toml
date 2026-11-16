@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system"
-version = "0.2.0.dev2"
+version = "0.3.0.dev0"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"
@@ -16,7 +16,7 @@ dependencies = ["typer>=0.27.2,<1", "pydantic>=2.12,<3", "copier==9.17.2", "pyya
 setup-system = "setup_system.cli.main:app"
 
 [dependency-groups]
-dev = ["mypy>=2.3,<3", "pytest>=9,<10", "pytest-cov>=7,<8", "ruff>=0.16.4,<1", "types-pyyaml>=6,<7"]
+dev = ["hatchling>=1.27,<2", "mypy>=2.3,<3", "pytest>=9,<10", "pytest-cov>=7,<8", "ruff>=0.16.4,<1", "types-pyyaml>=6,<7"]
 
 [tool.hatch.build]
 exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", ".codex", ".codex/**", ".local", ".local/**", "backups", "backups/**", ".env", ".env.*", "/core.[0-9]*", "/.coverage", "/.coverage.*", ".vscode", ".vscode/**"]
@@ -28,13 +28,24 @@ packages = ["src/setup_system"]
 assets = "setup_system/assets"
 manifests = "setup_system/manifests"
 
+[tool.uv]
+# Pin the isolated build backend and its full dependency closure to uv.lock versions.
+build-constraint-dependencies = [
+    "hatchling==1.33.0",
+    "packaging==26.3",
+    "pathspec==1.1.1",
+    "pluggy==1.7.0",
+    "tomlkit==0.15.2",
+    "trove-classifiers==2026.9.21.13",
+]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
 
 [tool.ruff.format]
 # This snapshot retains its canonical owner's 88-column formatting; Make checks it separately.
-exclude = ["docker/release.py"]
+exclude = ["docker/release.py", "docker/python_release.py"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "N", "RUF", "UP", "TID252"]
@@ -44,7 +55,7 @@ ban-relative-imports = "parents"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/setup_system", "bootstrap.py"]
+files = ["src/setup_system", "bootstrap.py", "docker/check_bootstrap.py", "docker/verify_native.py", "docker/verify-installed.py"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config"

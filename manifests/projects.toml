@@ -185,3 +185,8 @@ state = "existing"
 id = "pokerlost/projectRules"
 origin = "git@github.com:pokerlost/projectRules.git"
 state = "existing"
+
+[project.policy]
+commit = "537da92f8e22f35355a96f868d1b98d83e066c75"
+document = "docs/project.md"
+sha256 = "be4a92f6ac9c546be816b12652dc7fff4113dd049065613a7b3c026deb8b8dee"

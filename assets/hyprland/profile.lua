@@ -1,12 +1,18 @@
 -- setupSystem profile for Hyprland 0.55.2; additions belong after the require.
 local cfg = (os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config"))
   .. "/hypr/setup-system"
+local function quote(value)
+  return "'" .. value:gsub("'", "'\"'\"'") .. "'"
+end
 local function exec(command)
   return hl.dsp.exec_cmd(command)
 end
 local function bind(key, action, description)
   hl.bind("SUPER + " .. key, action, { description = description })
 end
+hl.env("XCURSOR_THEME", "Adwaita")
+hl.env("XCURSOR_SIZE", "24")
+hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })
 hl.config({
   general = {
@@ -22,28 +28,42 @@ hl.config({
   misc = { disable_hyprland_logo = true, force_default_wallpaper = 0 },
 })
 hl.on("hyprland.start", function()
-  hl.exec_cmd("sh '" .. cfg .. "/session.sh'")
+  hl.exec_cmd("sh " .. quote(cfg .. "/session.sh"))
 end)
-bind("Return", exec("foot -c '" .. cfg .. "/foot.ini'"), "Terminal")
+bind("Return", exec("foot -c " .. quote(cfg .. "/foot.ini")), "Terminal")
 bind(
   "F1",
-  exec("wofi --show drun --conf '" .. cfg .. "/wofi.conf' --style '" .. cfg .. "/style.css'"),
+  exec(
+    "wofi --show drun --conf "
+      .. quote(cfg .. "/wofi.conf")
+      .. " --style "
+      .. quote(cfg .. "/style.css")
+  ),
   "Applications"
 )
+bind("E", exec("thunar"), "Files")
 bind("F2", exec("pavucontrol"), "Audio settings")
 bind("F3", exec("nm-connection-editor"), "Network settings")
 bind("F4", hl.dsp.window.close(), "Close window")
 bind("F5", hl.dsp.window.float({ action = "toggle" }), "Floating")
 bind("F11", hl.dsp.window.fullscreen(), "Fullscreen")
 bind("Escape", exec("loginctl lock-session"), "Lock")
-bind("Print", exec("sh '" .. cfg .. "/screenshot.sh'"), "Screenshot area to clipboard")
+bind("Print", exec("sh " .. quote(cfg .. "/screenshot.sh")), "Screenshot area to clipboard")
 bind(
   "F8",
-  exec("cliphist list | wofi --dmenu --style '" .. cfg .. "/style.css' | cliphist decode | wl-copy"),
+  exec(
+    "cliphist list | wofi --dmenu --style "
+      .. quote(cfg .. "/style.css")
+      .. " | cliphist decode | wl-copy"
+  ),
   "Clipboard history"
 )
-bind("F9", exec("sh '" .. cfg .. "/power.sh'"), "Power menu")
-bind("F12", exec("foot -c '" .. cfg .. "/foot.ini' -e less '" .. cfg .. "/keys.txt'"), "Help")
+bind("F9", exec("sh " .. quote(cfg .. "/power.sh")), "Power menu")
+bind(
+  "F12",
+  exec("foot -c " .. quote(cfg .. "/foot.ini") .. " -e less " .. quote(cfg .. "/keys.txt")),
+  "Help"
+)
 for _, direction in ipairs({ "left", "right", "up", "down" }) do
   bind(direction, hl.dsp.focus({ direction = direction }), "Focus " .. direction)
   bind("SHIFT + " .. direction, hl.dsp.window.move({ direction = direction }), "Move " .. direction)
@@ -62,12 +82,16 @@ end
 hl.bind("SUPER + mouse:272", hl.dsp.window.drag(), { mouse = true, description = "Move" })
 hl.bind("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true, description = "Resize" })
 for key, command in pairs({
+  XF86AudioNext = "playerctl next",
+  XF86AudioPrev = "playerctl previous",
+  XF86AudioPlay = "playerctl play-pause",
+  XF86AudioPause = "playerctl play-pause",
   XF86AudioRaiseVolume = "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+",
   XF86AudioLowerVolume = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-",
   XF86AudioMute = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
   XF86AudioMicMute = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
-  XF86MonBrightnessUp = "brightnessctl -n2 set +5%",
-  XF86MonBrightnessDown = "brightnessctl -n2 set 5%-",
+  XF86MonBrightnessUp = "sh " .. quote(cfg .. "/brightness.sh") .. " up",
+  XF86MonBrightnessDown = "sh " .. quote(cfg .. "/brightness.sh") .. " down",
 }) do
   hl.bind(key, exec(command), { repeating = true, description = key })
 end

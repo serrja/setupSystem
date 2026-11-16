@@ -75,3 +75,37 @@ def test_docker_provider_stops_before_external_actions_on_unsupported_host(
     )
     with pytest.raises(ValueError, match="UNSUPPORTED"):
         install_docker()
+
+
+@pytest.mark.parametrize("architecture", ["x86_64", "amd64", "arm64", "aarch64"])
+@pytest.mark.parametrize("version", ["12", "13"])
+def test_all_manifest_targets(tmp_path: Path, architecture: str, version: str) -> None:
+    release = tmp_path / "os-release"
+    release.write_text(f"ID=debian\nVERSION_ID={version}\n")
+    assert detect_platform(release, architecture=architecture, system_name="Linux").implemented
+
+
+def test_unknown_architecture_and_release_are_rejected(tmp_path: Path) -> None:
+    release = tmp_path / "os-release"
+    release.write_text("ID=debian\nVERSION_ID=13\n")
+    assert not detect_platform(release, architecture="riscv64", system_name="Linux").implemented
+    release.write_text("ID=debian\nVERSION_ID=99\n")
+    assert not detect_platform(release, architecture="x86_64", system_name="Linux").implemented
+
+
+def test_platform_support_is_loaded_from_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from setup_system import planning
+
+    manifest = planning.load_capabilities()
+    manifest["debian"]["versions"] = ["88"]
+    monkeypatch.setattr(planning, "load_capabilities", lambda: manifest)
+    release = tmp_path / "os-release"
+    release.write_text("ID=debian\nVERSION_ID=88\n")
+    assert planning.detect_platform(release, architecture="amd64", system_name="Linux").implemented
+    release.write_text("ID=debian\nVERSION_ID=13\n")
+    assert not planning.detect_platform(
+        release, architecture="amd64", system_name="Linux"
+    ).implemented
+    assert list(tmp_path.iterdir()) == [release]

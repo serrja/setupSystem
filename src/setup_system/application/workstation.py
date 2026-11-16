@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -15,12 +16,17 @@ import time
 import tomllib
 import zipfile
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from setup_system.adapters.debian.desktop import HYPRLAND_VERSION, package_arguments
+from setup_system.adapters.debian.hyprland import (
+    HYPRLAND_VERSION,
+    package_arguments,
+    profile_capabilities,
+)
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 Profile = Literal["fonts", "hyprland"]
@@ -64,7 +70,10 @@ class FontPolicy(BaseModel):
         }
         for key, value in values.items():
             content = content.replace("@" + key + "@", str(value))
-        if re.search(r"@[A-Z_]+@", content):
+        if re.search(
+            r"@[A-Z_]+@",
+            content.replace("@DEFAULT_AUDIO_SINK@", "").replace("@DEFAULT_AUDIO_SOURCE@", ""),
+        ):
             raise ValueError(f"Unknown font placeholder: {source}")
         return content.encode()
 
@@ -140,6 +149,17 @@ def _hyprland_version() -> str | None:
     if not shutil.which("Hyprland"):
         return None
     return _run(["Hyprland", "--version"]).splitlines()[0]
+
+
+def _required_commands(root: Path) -> None:
+    """Fail before user writes if the system stage did not deliver the configured tools."""
+    commands = cast(list[str], profile_capabilities(root)["commands"])
+    missing = [name for name in commands if shutil.which(name) is None]
+    agent = Path("/usr/libexec/hyprpolkitagent")
+    if not agent.is_file() or not os.access(agent, os.X_OK):
+        missing.append(str(agent))
+    if missing:
+        raise ValueError("Hyprland system stage is incomplete; missing: " + ", ".join(missing))
 
 
 def _terminal_schema(profile_id: str) -> str:
@@ -311,33 +331,59 @@ def _font_observations(root: Path) -> dict[str, str]:
     return observations
 
 
+def _xdg(name: str, default: str) -> Path:
+    return _safe(Path(os.environ.get(name, Path.home() / default)))
+
+
 def _targets(root: Path, profile: Profile) -> dict[Path, bytes]:
     config = _config()
     policy = font_policy(root)
+    fontconfig = _safe(config / "fontconfig/conf.d/60-setup-system-fonts.conf")
+    font_content = policy.render(root / "assets/fonts/60-setup-system-fonts.conf")
     if profile == "fonts":
-        return {
-            _safe(config / "fontconfig/conf.d/60-setup-system-fonts.conf"): policy.render(
-                root / "assets/fonts/60-setup-system-fonts.conf"
-            )
-        }
+        return {fontconfig: font_content}
     folder = root / "assets/hyprland"
     targets = {
         config / "hypr/setup-system" / path.relative_to(folder): policy.render(path)
         for path in folder.rglob("*")
-        if path.is_file()
+        if path.is_file() and path.name != "start-hyprland"
     }
-    entry = config / "hypr/hyprland.lua"
+    entry = _safe(config / "hypr/hyprland.lua")
     original = entry.read_text() if entry.exists() else ""
     line = 'require("setup-system.profile")'
-    if line not in original.splitlines():
-        # Existing active config may define conflicting binds/services. Preserve it, refuse merge.
-        if original.strip():
-            raise ValueError("Existing Hyprland entrypoint requires a reviewed manual include")
-        targets[entry] = (line + "\n").encode()
-    portal = config / "xdg-desktop-portal/hyprland-portals.conf"
-    targets[portal] = (
+    if original.strip() and line not in original.splitlines():
+        raise ValueError("Existing Hyprland entrypoint requires a reviewed manual include")
+    targets[entry] = (
+        "-- Managed by setupSystem; put personal overrides in local.lua.\n"
+        + line
+        + "\n"
+        + 'local cfg = os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")\n'
+        + 'local path = cfg .. "/hypr/local.lua"\n'
+        + 'local source = io.open(path, "r")\n'
+        + "if source then source:close(); dofile(path) end\n"
+    ).encode()
+    targets[fontconfig] = font_content
+    targets[config / "xdg-desktop-portal/hyprland-portals.conf"] = (
         b"[preferred]\ndefault=hyprland;gtk\norg.freedesktop.impl.portal.FileChooser=gtk\n"
     )
+    gtk = (
+        "# Managed by setupSystem\n[Settings]\ngtk-theme-name=Adwaita-dark\n"
+        "gtk-icon-theme-name=Adwaita\ngtk-cursor-theme-name=Adwaita\n"
+        f"gtk-font-name={policy.family} {policy.ui_size}\n"
+        "gtk-application-prefer-dark-theme=1\n"
+    ).encode()
+    targets[config / "gtk-3.0/settings.ini"] = gtk
+    targets[config / "gtk-4.0/settings.ini"] = gtk
+    data = _xdg("XDG_DATA_HOME", ".local/share")
+    source = (folder / "start-hyprland").read_text()
+    for placeholder, path in (
+        ("CONFIG_HOME", config),
+        ("DATA_HOME", data),
+        ("STATE_HOME", _xdg("XDG_STATE_HOME", ".local/state")),
+        ("CACHE_HOME", _xdg("XDG_CACHE_HOME", ".cache")),
+    ):
+        source = source.replace("@" + placeholder + "@", shlex.quote(str(path)))
+    targets[data / "setup-system/bin/start-hyprland"] = source.encode()
     return {_safe(path): content for path, content in targets.items()}
 
 
@@ -354,11 +400,27 @@ def plan(root: Path, profile: Profile, *, terminal_profile: str | None = None) -
     version = _hyprland_version()
     if profile == "hyprland":
         try:
-            packages = package_arguments()
+            packages = package_arguments(root=root)
         except ValueError as exc:
             blockers.append(str(exc))
-        if version is None or not re.search(r"\b0\.55\.2\b", version):
-            blockers.append("Configuration apply requires installed Hyprland 0.55.2")
+        return WorkstationPlan(
+            profile=profile,
+            os=release.get("PRETTY_NAME", "unknown"),
+            architecture=platform.machine(),
+            installed_hyprland=version,
+            files=files,
+            packages=tuple(packages),
+            blockers=tuple(blockers),
+            observations={
+                "session-start": str(
+                    _xdg("XDG_DATA_HOME", ".local/share") / "setup-system/bin/start-hyprland"
+                ),
+                "package-validation": (
+                    "Preliminary; signed APT refresh and simulation occur only in apply"
+                ),
+                "locale-timezone-network": "Existing settings and connections are preserved",
+            },
+        )
     observations = {
         key: os.environ.get(key, "unset")
         for key in (
@@ -438,8 +500,10 @@ def _font_files(root: Path) -> dict[Path, bytes]:
         "jetbrains_mono_nerd_font"
     ]
     data = _safe(Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")))
-    destination = data / ("fonts/JetBrainsMonoNerdFont-" + manifest["version"])
+    destination = _safe(data / ("fonts/JetBrainsMonoNerdFont-" + manifest["version"]))
     expected = manifest["files"]
+    for item in expected:
+        _safe(destination / item["name"])
     if all(
         (destination / item["name"]).is_file()
         and hashlib.sha256((destination / item["name"]).read_bytes()).hexdigest() == item["sha256"]
@@ -449,9 +513,19 @@ def _font_files(root: Path) -> dict[Path, bytes]:
     # Explicit apply only; the archive is never executed or extracted by path.
     with tempfile.TemporaryFile() as archive:
         with urlopen(manifest["url"], timeout=60) as response:
-            if not response.url.startswith("https://"):
-                raise ValueError("Font download redirected outside HTTPS")
-            shutil.copyfileobj(response, archive)
+            final = urlsplit(response.url)
+            if final.scheme != "https" or final.hostname not in {
+                "github.com",
+                "release-assets.githubusercontent.com",
+                "objects.githubusercontent.com",
+            }:
+                raise ValueError("Font download redirected outside the pinned release hosts")
+            remaining = 80 * 1024 * 1024
+            while chunk := response.read(min(1024 * 1024, remaining + 1)):
+                remaining -= len(chunk)
+                if remaining < 0:
+                    raise ValueError("Font archive exceeds its size limit")
+                archive.write(chunk)
         archive.seek(0)
         if hashlib.file_digest(archive, "sha256").hexdigest() != manifest["sha256"]:
             raise ValueError("Font archive digest mismatch")
@@ -520,13 +594,24 @@ def apply(
         gnome or terminal_profile or reset_terminal_cell_spacing or refresh_terminal_font
     ):
         raise ValueError("GNOME options belong to the fonts profile")
+    if profile == "hyprland":
+        expected = str(profile_capabilities(root)["upstream_version"])
+        if (
+            report.installed_hyprland is None
+            or re.search(
+                r"(?<![0-9.])" + re.escape(expected) + r"(?![0-9.])", report.installed_hyprland
+            )
+            is None
+        ):
+            raise ValueError(f"Hyprland {expected} must be installed by setup.sh before user apply")
+        _required_commands(root)
     policy = font_policy(root)
     desired = _targets(root, profile)
     if profile == "fonts":
         for family in (policy.emoji_fallback,):
             if family not in _run(["fc-match", "-f", "%{family}", family]):
                 raise ValueError("Install the distro's emoji fallback before applying this profile")
-        desired.update(_font_files(root))
+    desired.update(_font_files(root))
     receipt_path = _receipt()
     previous = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
     for path, content in desired.items():
@@ -551,15 +636,24 @@ def apply(
     changed = {
         path: content
         for path, content in desired.items()
-        if not path.exists() or path.read_bytes() != content
+        if not path.exists()
+        or path.read_bytes() != content
+        or (path.name == "start-hyprland" and not path.stat().st_mode & 0o100)
     }
+    if not changed and not setting_rows and refresh is None:
+        last = previous.get("__backup__")
+        if isinstance(last, str):
+            folder = _safe(Path(last))
+            if folder.is_dir():
+                return folder
+        # Compatibility for the old receipt: no new backup or write is needed.
+        return receipt_path.parent
+    folder = new_backup([path for path in (*changed, receipt_path) if path.exists()])
     previous.update(
         {str(path): hashlib.sha256(content).hexdigest() for path, content in desired.items()}
     )
-    receipt_content = (json.dumps(previous, indent=2) + "\n").encode()
-    if not receipt_path.exists() or receipt_path.read_bytes() != receipt_content:
-        changed[receipt_path] = receipt_content
-    folder = new_backup([path for path in changed if path.exists()])
+    previous["__backup__"] = str(folder)
+    changed[receipt_path] = (json.dumps(previous, indent=2) + "\n").encode()
     operation = {
         "profile": profile,
         "files": [
@@ -578,12 +672,20 @@ def apply(
             folder / "terminal-refresh.json", (refresh.model_dump_json(indent=2) + "\n").encode()
         )
     for path, content in changed.items():
-        atomic_write(path, content, 0o600 if path == receipt_path else 0o644)
+        executable = path.name == "start-hyprland"
+        atomic_write(
+            path,
+            content,
+            0o700 if executable else (0o600 if path == receipt_path else 0o644),
+            preserve_existing_mode=not executable,
+        )
+        if executable:
+            path.chmod(0o700)
     for row in setting_rows:
         _run(["gsettings", "set", row["schema"], row["key"], row["after"]])
         if _run(["gsettings", "get", row["schema"], row["key"]]) != row["after"]:
             raise RuntimeError("GSettings readback failed; backup contains rollback values")
-    if profile == "fonts" and changed and refresh is None:
+    if changed and refresh is None:
         _run(["fc-cache", "-f"])
     if refresh is not None:
         try:

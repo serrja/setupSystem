@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from io import StringIO
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from setup_system.application.project_catalog import ProjectCatalog, ProjectRecord
 from setup_system.application.project_layout import active_projects, load_layout
 from setup_system.cli import main
+from setup_system.cli import projects as project_commands
+from setup_system.cli import templates as template_commands
 
 CATALOG = """schemaVersion = 1
 projectsRoot = "$HOME/Projects"
@@ -19,6 +23,109 @@ ownerGroups = ["pokerlost"]
 id = "pokerlost/pokerClient"
 state = "existing"
 """
+
+
+def test_project_rules_remains_active_with_reviewed_immutable_provenance() -> None:
+    root = Path(__file__).resolve().parents[1]
+    data = ProjectCatalog.model_validate(
+        tomllib.loads((root / "manifests/projects.toml").read_text())
+    )
+    record = next(project for project in data.project if project.id == "pokerlost/projectRules")
+    assert record.origin == "git@github.com:pokerlost/projectRules.git"
+    assert record.state == "existing" and record.policy is not None
+    assert record.policy.commit == "537da92f8e22f35355a96f868d1b98d83e066c75"
+    assert record.policy.document == "docs/project.md"
+    assert (
+        record.policy.sha256 == "be4a92f6ac9c546be816b12652dc7fff4113dd049065613a7b3c026deb8b8dee"
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"commit": "main"},
+        {"document": "../policy.md"},
+        {"document": "/policy.md"},
+        {"sha256": "bad"},
+    ],
+)
+def test_policy_metadata_rejects_mutable_or_unsafe_provenance(change: dict[str, str]) -> None:
+    from pydantic import ValidationError
+
+    policy = {"commit": "a" * 40, "document": "docs/project.md", "sha256": "b" * 64, **change}
+    with pytest.raises(ValidationError):
+        ProjectRecord(
+            id="pokerlost/projectRules",
+            state="existing",
+            origin="git@github.com:pokerlost/projectRules.git",
+            policy=policy,
+        )
+
+
+def test_explicit_project_root_with_spaces_verifies_all_effective_origins(tmp_path: Path) -> None:
+    text = CATALOG.replace("$HOME/Projects", "$HOME/Workspace with spaces")
+    text += 'origin = "git@github.com:pokerlost/pokerClient.git"\n'
+    root, home = catalog(tmp_path, text)
+    layout = load_layout(root, home=home)
+    client = home / "Workspace with spaces/pokerlost/pokerClient"
+    client.mkdir(parents=True)
+    subprocess.run(["git", "init", "--quiet", str(client)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(client),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:pokerlost/pokerClient.git",
+        ],
+        check=True,
+    )
+    assert active_projects(layout) == {"pokerlost/pokerClient": client}
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(client),
+            "config",
+            "--add",
+            "remote.origin.pushurl",
+            "https://github.com/other/pokerClient.git",
+        ],
+        check=True,
+    )
+    with pytest.raises(ValueError, match="canonical fetch/push origins"):
+        active_projects(layout)
+    subprocess.run(
+        ["git", "-C", str(client), "config", "--unset", "remote.origin.pushurl"], check=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(client),
+            "config",
+            "url.https://github.com/other/.insteadOf",
+            "git@github.com:pokerlost/",
+        ],
+        check=True,
+    )
+    with pytest.raises(ValueError, match="canonical fetch/push origins"):
+        active_projects(layout)
+    assert not (home / "Projects/serjja").exists()
+
+
+def test_policy_origin_cannot_name_another_repository() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="canonical GitHub"):
+        ProjectRecord(
+            id="pokerlost/projectRules",
+            state="existing",
+            origin="https://github.com/other/projectRules.git",
+            policy={"commit": "a" * 40, "document": "docs/project.md", "sha256": "b" * 64},
+        )
 
 
 def catalog(tmp_path: Path, text: str = CATALOG) -> tuple[Path, Path]:
@@ -89,7 +196,8 @@ def test_picker_resolves_a_dart_only_client_without_a_python_template(
     subprocess.run(["git", "init", "--quiet", str(client)], check=True, capture_output=True)
     (client / "pubspec.yaml").write_text("name: synthetic_client\npublish_to: none\n")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    monkeypatch.setattr(main, "ROOT", root)
+    monkeypatch.setattr(project_commands, "ROOT", root)
+    monkeypatch.setattr(template_commands, "ROOT", root)
     before = (client / ".git/config").read_bytes()
     index = client / ".git/index"
     assert not index.exists()
@@ -124,7 +232,9 @@ def test_picker_rejects_parent_git_and_never_initializes_a_child(tmp_path: Path)
 def test_picker_rejects_ambiguous_or_unknown_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
-    monkeypatch.setattr(main, "_discover_projects", lambda: {"pokerlost/pokerClient": tmp_path})
+    monkeypatch.setattr(
+        project_commands, "_discover_projects", lambda: {"pokerlost/pokerClient": tmp_path}
+    )
     result = CliRunner().invoke(main.app, ["projects", "path", "--name", name])
     assert result.exit_code == 2
     assert "exact name" in result.output
@@ -137,9 +247,9 @@ def test_interactive_picker_handles_selection_cancellation_and_unknown_names(
 ) -> None:
     stdin = StringIO(selection + "\n")
     monkeypatch.setattr(stdin, "isatty", lambda: True)
-    monkeypatch.setattr(main.sys, "stdin", stdin)
+    monkeypatch.setattr(project_commands.sys, "stdin", stdin)
     monkeypatch.setattr(
-        main.shutil, "which", lambda name: "/fixture/fzf" if selector == "fzf" else None
+        project_commands.shutil, "which", lambda name: "/fixture/fzf" if selector == "fzf" else None
     )
     calls: list[list[str]] = []
 
@@ -148,20 +258,20 @@ def test_interactive_picker_handles_selection_cancellation_and_unknown_names(
         assert options["input"] == "pokerlost/pokerClient\n"
         return subprocess.CompletedProcess(args, 0 if selection else 130, selection + "\n")
 
-    monkeypatch.setattr(main.subprocess, "run", run)
+    monkeypatch.setattr(project_commands.subprocess, "run", run)
     projects = {"pokerlost/pokerClient": tmp_path}
     if selection == "unknown":
-        with pytest.raises(main.typer.BadParameter, match="exact name"):
-            main._choose_project(projects, None)
+        with pytest.raises(project_commands.typer.BadParameter, match="exact name"):
+            project_commands._choose_project(projects, None)
     else:
-        assert main._choose_project(projects, None) == (tmp_path if selection else None)
+        assert project_commands._choose_project(projects, None) == (tmp_path if selection else None)
     assert bool(calls) == (selector == "fzf")
 
 
 def test_noninteractive_picker_requires_an_explicit_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main.sys, "stdin", StringIO(""))
-    with pytest.raises(main.typer.BadParameter, match="--name"):
-        main._choose_project({}, None)
+    monkeypatch.setattr(project_commands.sys, "stdin", StringIO(""))
+    with pytest.raises(project_commands.typer.BadParameter, match="--name"):
+        project_commands._choose_project({}, None)
 
 
 def test_template_catalog_includes_cli_specialization_without_installing(
@@ -201,7 +311,7 @@ def test_catalog_errors_reach_the_cli_without_launching_a_project(
     def invalid() -> dict[str, Path]:
         raise ValueError("Two active checkouts require review")
 
-    monkeypatch.setattr(main, "_discover_projects", invalid)
+    monkeypatch.setattr(project_commands, "_discover_projects", invalid)
     result = CliRunner().invoke(main.app, ["projects", command])
     assert result.exit_code == 2
     assert "Two active checkouts" in result.output
@@ -217,8 +327,10 @@ def test_project_open_uses_only_the_editor_and_exact_selected_working_directory(
     client = tmp_path / "Projects/pokerlost/pokerClient"
     client.mkdir(parents=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.setattr(main, "_discover_projects", lambda: {"pokerlost/pokerClient": client})
-    monkeypatch.setattr(main.shutil, "which", lambda name: "/fixture/tmux")
+    monkeypatch.setattr(
+        project_commands, "_discover_projects", lambda: {"pokerlost/pokerClient": client}
+    )
+    monkeypatch.setattr(project_commands.shutil, "which", lambda name: "/fixture/tmux")
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def run(args: list[str], **options: object) -> subprocess.CompletedProcess[str]:
@@ -226,7 +338,7 @@ def test_project_open_uses_only_the_editor_and_exact_selected_working_directory(
         status = 0 if existing_session or "has-session" not in args else 1
         return subprocess.CompletedProcess(args, status)
 
-    monkeypatch.setattr(main.subprocess, "run", run)
+    monkeypatch.setattr(project_commands.subprocess, "run", run)
     runner = CliRunner()
     plain = runner.invoke(main.app, ["projects", "open", "--name", "pokerlost/pokerClient"])
     assert plain.exit_code == 0

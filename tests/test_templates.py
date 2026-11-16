@@ -12,8 +12,38 @@ import yaml
 from typer.testing import CliRunner
 
 from setup_system.application import templates
-from setup_system.application.project_catalog import TemplateMetadata, TemplateVersion
+from setup_system.application.project_catalog import (
+    TemplateMetadata,
+    TemplateVersion,
+    git_tag_for_python_version,
+    python_version_for_git_tag,
+)
 from setup_system.cli import main
+from setup_system.cli import templates as commands
+
+
+@pytest.mark.parametrize(
+    ("native", "tag"),
+    [("1.2.3", "v1.2.3"), ("1.2.3.dev0", "v1.2.3-dev.0"), ("1.2.3.dev12", "v1.2.3-dev.12")],
+)
+def test_native_versions_round_trip_with_github_tags(native: str, tag: str) -> None:
+    assert git_tag_for_python_version(native) == tag
+    assert python_version_for_git_tag(tag) == native
+    assert TemplateVersion(version=native, tag=tag, commit="a" * 40).version == native
+
+
+@pytest.mark.parametrize("native", ["1.2.3.dev0", "1.2.3rc1", "1.2.3.post1", "1.2.3.post0.dev1"])
+def test_existing_pep440_tags_remain_accepted(native: str) -> None:
+    assert python_version_for_git_tag("v" + native) == native
+    assert TemplateVersion(version=native, tag="v" + native, commit="a" * 40).tag == "v" + native
+
+
+@pytest.mark.parametrize(
+    "tag", ["main", "v1.2.3-dev.-1", "v1.2.3-dev.01", "v1.2.3+local", "v1.2.3-dev.2/other"]
+)
+def test_invalid_git_versions_are_rejected(tag: str) -> None:
+    with pytest.raises(ValueError):
+        python_version_for_git_tag(tag)
 
 
 def git(path: Path, *args: str) -> str:
@@ -164,7 +194,7 @@ def test_cli_update_accepts_parent_relative_destination(
     caller = tmp_path / "caller"
     caller.mkdir()
     monkeypatch.chdir(caller)
-    monkeypatch.setattr(main, "load_templates", lambda root: {"python": source})
+    monkeypatch.setattr(commands, "load_templates", lambda root: {"python": source})
     runner = CliRunner()
     options = ["--template", "python", "--destination", "../project", "--defaults"]
     created = runner.invoke(main.app, ["templates", "create", *options, "--version", "0.1.0"])
@@ -232,7 +262,7 @@ def test_bad_tag_and_corrupt_cache_fail_closed(
 def test_cli_lists_versions_defaults_and_real_create(
     tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(main, "load_templates", lambda root: {"python": source})
+    monkeypatch.setattr(commands, "load_templates", lambda root: {"python": source})
     runner = CliRunner()
     versions = runner.invoke(main.app, ["templates", "versions", "python"])
     assert (
@@ -332,17 +362,17 @@ def test_copier_merge_conflict_is_not_reported_as_success(
 def test_cli_interactive_selection_and_explicit_answers(
     tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(main, "load_templates", lambda root: {"python": source})
+    monkeypatch.setattr(commands, "load_templates", lambda root: {"python": source})
     destination = tmp_path / "interactive"
     prompts = iter(["python", "0.2.0", str(destination)])
-    monkeypatch.setattr(main.typer, "prompt", lambda message, **kwargs: next(prompts))
+    monkeypatch.setattr(commands.typer, "prompt", lambda message, **kwargs: next(prompts))
     import sys
 
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     answers = tmp_path / "answers.json"
     answers.write_text('{"projectName": "interactiveProject"}')
     # Call the boundary directly so CliRunner does not replace the terminal probe.
-    main.templates_create(
+    commands.templates_create(
         template=None, version=None, destination=None, data=answers, defaults=True, offline=False
     )
     assert "interactiveProject" in (destination / "README.md").read_text()
@@ -433,3 +463,26 @@ def test_service_uses_recorded_identity_without_hidden_copier_default(
     assert "projectName" not in answers and answers["service_name"] == "exampleService"
     assert result.project_name == "exampleService" and result.status == "created"
     assert not (destination / ".git").exists() and not (destination / ".venv").exists()
+
+
+def test_current_github_dev_tag_verifies_native_metadata_and_copier_answers(
+    tmp_path: Path, source: templates.TemplateSource
+) -> None:
+    repository = tmp_path / "source"
+    (repository / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="0.3.0.dev2"\n')
+    head = commit(repository, "native dev metadata")
+    tag(repository, "v0.3.0-dev.2")
+    current = source.model_copy(
+        update={
+            "metadata": TemplateMetadata(
+                alias="python",
+                recommendedVersion="0.3.0.dev2",
+                versions=(TemplateVersion(version="0.3.0.dev2", tag="v0.3.0-dev.2", commit=head),),
+            )
+        }
+    )
+    destination = tmp_path / "dev tag with spaces"
+    result = templates.execute_template(plan(current, destination, version=None))
+    assert result.source_commit == head and result.version == "0.3.0.dev2"
+    answers = yaml.safe_load((destination / ".copier-answers.yml").read_text())
+    assert answers["_commit"] == "v0.3.0-dev.2"

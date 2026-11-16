@@ -114,5 +114,5 @@ restores prior files and removes only files created by that operation. Restore n
 operations before older ones. It preserves a fresh backup of current files first;
 this is file recovery, not Git-history or authentication rollback. A failed operation
 reports its private backup for review. No command fetches, commits, pushes or contacts
-GitHub. Ordinary verification remains lint-only; an authentication check needs its
-own explicit authorization.
+GitHub. Run the applicable checks described in [development](development.md). Author-profile
+inspection does not perform an authentication check; such a check needs its own scope.
