@@ -33,6 +33,8 @@ from setup_system.adapters.debian.hyprland import (
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 Profile = Literal["fonts", "hyprland"]
+# The pinned v3.4.0 archive is 129,115,244 bytes; keep downloads and cache reads bounded.
+MAX_FONT_ARCHIVE_BYTES = 128 * 1024 * 1024
 GNOME_FONT_KEYS = (
     ("org.gnome.desktop.interface", "font-name"),
     ("org.gnome.desktop.interface", "document-font-name"),
@@ -578,11 +580,11 @@ def _font_archive(path: Path, checksum: str) -> bytes:
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != os.geteuid()
-            or info.st_size > 80 * 1024 * 1024
+            or info.st_size > MAX_FONT_ARCHIVE_BYTES
         ):
             raise ValueError("Font cache must be a bounded user-owned regular file")
-        content = stream.read(80 * 1024 * 1024 + 1)
-    if len(content) > 80 * 1024 * 1024 or hashlib.sha256(content).hexdigest() != checksum:
+        content = stream.read(MAX_FONT_ARCHIVE_BYTES + 1)
+    if len(content) > MAX_FONT_ARCHIVE_BYTES or hashlib.sha256(content).hexdigest() != checksum:
         raise ValueError("Font cache archive digest mismatch; preserve it and review the cache")
     return content
 
@@ -666,13 +668,13 @@ def prefetch_workstation(root: Path) -> None:
                     "objects.githubusercontent.com",
                 }:
                     raise ValueError("Font download redirected outside the pinned release hosts")
-                content = response.read(80 * 1024 * 1024 + 1)
+                content = response.read(MAX_FONT_ARCHIVE_BYTES + 1)
         except HTTPError as exc:
             host = urlsplit(exc.url).hostname or host
             raise ValueError(f"Font download failed: HTTP {exc.code} from {host}") from None
         except (URLError, TimeoutError):
             raise ValueError(f"Font download failed for host {host}") from None
-        if len(content) > 80 * 1024 * 1024:
+        if len(content) > MAX_FONT_ARCHIVE_BYTES:
             raise ValueError("Font archive exceeds its size limit")
         if hashlib.sha256(content).hexdigest() != manifest["sha256"]:
             raise ValueError("Font archive digest mismatch")
