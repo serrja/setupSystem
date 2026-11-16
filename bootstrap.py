@@ -9,10 +9,14 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -129,6 +133,113 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _runtime_lock() -> str | None:
+    """Reconcile only an allocated root version; uv still checks all lock metadata."""
+    for name in ("pyproject.toml", "uv.lock"):
+        path = ROOT / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError("Runtime metadata must be bounded regular local files")
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    text = (ROOT / "uv.lock").read_text()
+    lock = tomllib.loads(text)
+    metadata = project.get("project")
+    if not isinstance(metadata, dict):
+        raise ValueError("Missing runtime project metadata")
+    version = metadata.get("version")
+    if metadata.get("name") != "setup-system" or not isinstance(version, str):
+        raise ValueError("Unexpected runtime project identity")
+    if not re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.dev(?:0|[1-9][0-9]*))?",
+        version,
+    ):
+        raise ValueError("Invalid native runtime version")
+    packages = lock.get("package")
+    if not isinstance(packages, list) or any(not isinstance(item, dict) for item in packages):
+        raise ValueError("Missing runtime lock packages")
+    roots = [item for item in packages if item.get("name") == "setup-system"]
+    if len(roots) != 1 or roots[0].get("source") != {"editable": "."}:
+        raise ValueError("Lock must contain one local setup-system root")
+    if roots[0].get("version") == version:
+        return None
+    normalized, count = re.subn(
+        r'(?m)(^\[\[package\]\]\r?\nname = "setup-system"\r?\nversion = )"[^"\r\n]+"',
+        lambda match: match[1] + '"' + version + '"',
+        text,
+    )
+    roots[0]["version"] = version
+    if count != 1 or tomllib.loads(normalized) != lock:
+        raise ValueError("Cannot reconcile the local root version without changing dependencies")
+    return normalized
+
+
+def _runtime_inputs() -> list[tuple[Path, bool]]:
+    """Validate the finite build-input tree without creating files or running hooks."""
+    entries: list[tuple[Path, bool]] = []
+    size = 0
+
+    def collect(relative: Path) -> None:
+        nonlocal size
+        source = ROOT / relative
+        info = source.lstat()
+        directory = stat.S_ISDIR(info.st_mode)
+        if not directory and not stat.S_ISREG(info.st_mode):
+            raise ValueError("Runtime build inputs cannot contain symlinks or special files")
+        if len(relative.parts) == 1 and directory != (
+            relative.name in {"src", "assets", "manifests"}
+        ):
+            raise ValueError("Runtime build input has an unexpected file/directory type")
+        entries.append((relative, directory))
+        if not directory:
+            size += info.st_size
+        if len(entries) > 4096 or size > 32 * 1024 * 1024:
+            raise ValueError("Runtime build input exceeds its size or entry limit")
+        if directory:
+            for child in sorted(source.iterdir()):
+                collect(relative / child.name)
+
+    for name in (
+        "pyproject.toml",
+        "uv.lock",
+        "README.md",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "src",
+        "assets",
+        "manifests",
+    ):
+        collect(Path(name))
+    return entries
+
+
+@contextmanager
+def _runtime_project(cache: Path) -> Iterator[Path]:
+    """Build allocated source bundles privately without changing source or dependency pins."""
+    if os.geteuid() == 0:
+        raise RuntimeError("Runtime build staging must never run as root")
+    normalized = _runtime_lock()
+    if normalized is None:
+        yield ROOT
+        return
+    entries = _runtime_inputs()
+    if (
+        not cache.is_absolute()
+        or ".." in cache.parts
+        or any(path.is_symlink() for path in (cache, *cache.parents))
+    ):
+        raise ValueError("Unsafe runtime build cache")
+    cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="build-source-", dir=cache) as temporary:
+        stage = Path(temporary)
+        for relative, directory in entries:
+            if directory:
+                (stage / relative).mkdir()
+            elif relative == Path("uv.lock"):
+                (stage / relative).write_text(normalized)
+            else:
+                shutil.copy2(ROOT / relative, stage / relative)
+        yield stage
+
+
 def _user_runtime() -> int:
     """Prepare the locked environment and apply files only after losing root privileges."""
     from setup_system.installation import resolve_target, run_command, validate_user_path
@@ -168,23 +279,24 @@ def _user_runtime() -> int:
     # The source bundle and lock are inputs. No root-owned checkout venv is created.
     uv = _managed_uv((platform.distribution, platform.architecture))
     run_command([str(uv), "python", "install", RUNTIME_PYTHON], cwd=ROOT, timeout=600, check=True)
-    run_command(
-        [
-            str(uv),
-            "sync",
-            "--locked",
-            "--no-dev",
-            "--no-editable",
-            "--managed-python",
-            "--python",
-            RUNTIME_PYTHON,
-            "--project",
-            str(ROOT),
-        ],
-        cwd=ROOT,
-        timeout=900,
-        check=True,
-    )
+    with _runtime_project(cache / "setup-system") as project:
+        run_command(
+            [
+                str(uv),
+                "sync",
+                "--locked",
+                "--no-dev",
+                "--no-editable",
+                "--managed-python",
+                "--python",
+                RUNTIME_PYTHON,
+                "--project",
+                str(project),
+            ],
+            cwd=project,
+            timeout=900,
+            check=True,
+        )
     result = run_command(
         [
             str(runtime / "bin/python"),
@@ -260,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         ):
             if not (ROOT / path).is_file():
                 raise ValueError("Incomplete local source bundle")
+        if _runtime_lock() is not None:
+            _runtime_inputs()
     except (OSError, ValueError) as exc:
         print(f"Preflight failed: {exc}", file=sys.stderr)
         return 2
