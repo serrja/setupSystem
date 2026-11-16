@@ -309,11 +309,11 @@ def test_oversized_cached_font_archive_fails_without_reading_or_downloading(
     workstation.prefetch_workstation(root)
     target = next((home / "cache").rglob("*.zip"))
     with target.open("wb") as output:
-        output.truncate(81 * 1024 * 1024)
+        output.truncate(workstation.MAX_FONT_ARCHIVE_BYTES + 1)
     monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match="bounded"):
         workstation._font_files(root, offline=True)
-    assert target.stat().st_size == 81 * 1024 * 1024
+    assert target.stat().st_size == workstation.MAX_FONT_ARCHIVE_BYTES + 1
 
 
 def test_happ_setup_reuses_download_helper_and_preserves_application_api(
@@ -415,3 +415,45 @@ def test_cached_font_fifo_is_rejected_without_blocking_or_touching_it(
         before.st_size,
     )
     assert list(home.iterdir()) == [archive]
+
+
+def test_pinned_font_release_fits_bounded_archive_limit() -> None:
+    # Official v3.4.0 JetBrainsMono.zip asset metadata, checked independently.
+    assert 129115244 <= workstation.MAX_FONT_ARCHIVE_BYTES <= 128 * 1024 * 1024
+
+
+def test_download_and_offline_cache_accept_exact_shared_limit(context, monkeypatch) -> None:
+    root, home, data = context
+    monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data))
+
+    class BoundedResponse(Response):
+        def read(self, size):
+            assert size == len(data) + 1
+            return super().read(size)
+
+    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: BoundedResponse(data))
+    workstation.prefetch_workstation(root)
+    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("offline network"))
+    assert workstation._font_files(root, offline=True)
+    assert next((home / "cache").rglob("*.zip")).read_bytes() == data
+
+
+def test_download_above_shared_limit_does_not_publish_cache(context, monkeypatch) -> None:
+    root, home, data = context
+    monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
+    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: Response(data))
+    with pytest.raises(ValueError, match="Font archive exceeds"):
+        workstation.prefetch_workstation(root)
+    assert not (home / "cache").exists()
+
+
+def test_cache_above_shared_limit_is_preserved_without_network(context, monkeypatch) -> None:
+    root, _home, data = context
+    archive, receipt, _ = workstation._font_cache(workstation._font_manifest(root))
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(data)
+    monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
+    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    with pytest.raises(ValueError, match="bounded"):
+        workstation.prefetch_workstation(root)
+    assert archive.read_bytes() == data and not receipt.exists()
