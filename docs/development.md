@@ -5,7 +5,8 @@ and Python 3.14.7; CI additionally checks the CLI's Python 3.12 minimum. They ne
 Docker, sudo, GitHub credentials or graphical session. The isolated resolver regressions
 require `apt-get` and `apt-cache`; they use private cached indexes and simulated plans,
 without network access, package installation or host APT state changes. Source-access
-probes also need `/usr/bin/python3`, supplied explicitly by the Debian quality image.
+probes and user workers reuse the running CLI interpreter; the Debian quality image
+does not install a separate system Python.
 The locked development and application runtime remains Python 3.14.7.
 
 ```bash
