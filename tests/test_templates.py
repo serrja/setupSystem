@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from rich.text import Text
 from typer.testing import CliRunner
 
 from setup_system.application import templates
@@ -290,7 +291,7 @@ def test_cli_lists_versions_defaults_and_real_create(
     assert "python -c 'import example'" in result.output
     assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
     rejected = runner.invoke(main.app, ["templates", "create", "--defaults"])
-    assert rejected.exit_code == 2 and "--template" in rejected.output
+    assert rejected.exit_code == 2 and "--template" in Text.from_ansi(rejected.output).plain
 
 
 def test_update_rejects_dirty_project_and_untrusted_answers(
