@@ -19,7 +19,8 @@ sh install.sh --release vX.Y.Z
 ```
 
 Replace `vX.Y.Z` with that release tag. Direct root login requires `--user NAME`.
-The small delivery script requires Debian, ready CA trust, curl, tar and core utilities.
+The small delivery script requires Debian, ready CA trust, APT, tar and core utilities.
+It uses curl when available or APT’s native HTTPS downloader without system changes.
 It downloads pinned uv only when the matching managed tool is absent, prepares the
 pinned Python and locked CLI **as the normal user**, verifies release checksums,
 and opens Textual. It contains no workstation planner or APT package installer.

@@ -8,7 +8,7 @@ fail() { printf '%s\n' "$*" >&2; exit 2; }
 usage() {
     printf '%s\n' 'Usage: sh install.sh --release vX.Y.Z [--user NAME]' \
         'Downloads a verified release and pinned user runtime, then opens Textual.' \
-        'Requires Debian, CA trust, curl, tar and an interactive terminal.' \
+        'Requires Debian/APT, CA trust, tar and an interactive terminal.' \
         'Direct root login requires --user; no Python builds run as root.'
 }
 as_user() {
@@ -26,8 +26,24 @@ as_user() {
             UV_CACHE_DIR="$target_home/.cache/setup-system/uv" "$@"
     fi
 }
-fetch() { as_user curl --fail --location --proto '=https' --proto-redir '=https' \
-    --connect-timeout 15 --max-time 300 --max-filesize "${3:-33554432}" --user-agent setupSystem --output "$2" "$1"; }
+fetch() {
+    limit=${3:-33554432}
+    if command -v curl >/dev/null; then
+        as_user curl --fail --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 300 --max-filesize "$limit" \
+            --user-agent setupSystem --output "$2" "$1"
+    else
+        # APT's native HTTPS transport needs no additional package installation.
+        blocks=$(( (limit + 511) / 512 ))
+        as_user sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$blocks" \
+            /usr/bin/timeout --kill-after=5s 300s /usr/lib/apt/apt-helper \
+            -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true \
+            -o Acquire::https::User-Agent=setupSystem -o Acquire::http::User-Agent=setupSystem \
+            -o Acquire::https::Timeout=30 -o Acquire::Retries=0 download-file "$1" "$2"
+        [ "$(stat -c %s "$2")" -le "$limit" ] || fail 'Download exceeds its size limit'
+    fi
+}
+
 policy_value() {
     value=$(awk -F '"' -v key="$1" '$1 ~ "^" key " = $" { print $2 }' "$policy")
     [ -n "$value" ] && [ "$(printf '%s\n' "$value" | wc -l)" -eq 1 ] || fail 'Invalid runtime policy'
@@ -79,9 +95,10 @@ bootstrap_main() {
             [ -d "$path" ] && [ "$(stat -c %u "$path")" = "$(id -u "$target")" ] || fail 'Unsafe managed runtime directory'
         fi
     done
-    for tool in curl tar sha256sum awk mktemp runuser; do
+    for tool in tar sha256sum awk mktemp runuser timeout; do
         command -v "$tool" >/dev/null || fail "Missing bootstrap prerequisite: $tool"
     done
+    command -v curl >/dev/null || [ -x /usr/lib/apt/apt-helper ] || fail 'No supported HTTPS downloader'
     [ -t 1 ] && ( : </dev/tty ) 2>/dev/null || fail 'An interactive terminal is required'
     case "$(uname -m)" in x86_64) architecture=amd64 ;; aarch64|arm64) architecture=arm64 ;; *) fail 'Unsupported architecture' ;; esac
     # The private user-owned workspace is never a privileged extraction destination.

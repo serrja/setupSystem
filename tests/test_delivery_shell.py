@@ -33,6 +33,7 @@ def test_complete_bootstrap_reaches_only_the_textual_entrypoint(
     import os
     import pty
     import shlex
+    import sys
     import tarfile
     import termios
 
@@ -46,8 +47,9 @@ while [ "$1" != -- ]; do shift; done
 shift
 [ "$1" = python ] || exit 90
 shift
-exec /usr/bin/python3 "$@"
+exec PYTHON_EXECUTABLE "$@"
 """
+    binary = binary.replace(b"PYTHON_EXECUTABLE", shlex.quote(sys.executable).encode())
     if ready:
         managed = home / ".local/share/setup-system/bin/uv"
         managed.parent.mkdir(parents=True)
@@ -130,7 +132,14 @@ bootstrap_main --release v1.2.3 --user fixture
             preexec_fn=terminal,
         )
         code = process.wait(timeout=20)
-        assert code == (2 if corrupt else 0)
+        os.set_blocking(master, False)
+        terminal_output = bytearray()
+        try:
+            while chunk := os.read(master, 4096):
+                terminal_output.extend(chunk)
+        except (BlockingIOError, OSError):
+            pass
+        assert code == (2 if corrupt else 0), terminal_output.decode(errors="replace")
         expected = [] if ready else ["uv downloaded"]
         if not corrupt:
             expected += ["python prepared", "textual launched"]
@@ -138,3 +147,37 @@ bootstrap_main --release v1.2.3 --user fixture
     finally:
         os.close(master)
         os.close(slave)
+
+
+def test_no_curl_uses_bounded_verified_native_apt_download(tmp_path: Path) -> None:
+    import shlex
+
+    destination = tmp_path / "download"
+    log = tmp_path / "argv"
+    definitions = (ROOT / "install.sh").read_text().rsplit('bootstrap_main "$@"', 1)[0]
+    script = (
+        definitions
+        + f"""
+PATH=''
+as_user() {{
+    printf '%s\\n' "$@" > {shlex.quote(str(log))}
+    for last do :; done
+    printf 'fixture' > "$last"
+}}
+stat() {{ /usr/bin/stat "$@"; }}
+fetch https://fixture.invalid/archive {shlex.quote(str(destination))} 8192
+"""
+    )
+    result = subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    arguments = log.read_text().splitlines()
+    assert "/usr/lib/apt/apt-helper" in arguments
+    assert "Acquire::https::Verify-Peer=true" in arguments
+    assert "Acquire::https::Verify-Host=true" in arguments
+    assert "Acquire::https::User-Agent=setupSystem" in arguments
+    assert "ulimit -f" in arguments[2]
+    assert "16" in arguments
+    assert "--kill-after=5s" in arguments
+    assert "download-file" in arguments
+    assert not {"update", "install"} & set(arguments)
+    assert destination.read_bytes() == b"fixture"

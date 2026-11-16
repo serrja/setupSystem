@@ -9,7 +9,7 @@ sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"
 
 Alternatively, use the small GitHub delivery script from an explicit verified release:
 `sh install.sh --release vX.Y.Z` (add `--user NAME` from a direct root login). It requires
-ready CA trust, curl, tar and core utilities; it downloads pinned uv/Python and prepares
+ready CA trust, APT, tar and core utilities; it downloads pinned uv/Python and prepares
 the locked CLI as the normal user before opening Textual. It does not install system
 packages. Use the source/script and checksum files from the same versioned release.
 Initial access to GitHub/runtime hosts is required; the VPN cannot download itself.
