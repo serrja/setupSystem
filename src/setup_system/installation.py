@@ -35,7 +35,7 @@ class TargetUser:
 class SystemPaths:
     backports: Path = Path("/etc/apt/sources.list.d/setup-system-backports.sources")
     journal: Path = Path("/var/lib/setup-system/install.json")
-    keyring: Path = Path("/usr/share/keyrings/debian-archive-keyring.gpg")
+    keyring: Path = Path("/usr/share/keyrings/debian-archive-keyring.pgp")
     runtime: Path = Path("/run")
     policy: Path = Path("/usr/sbin/policy-rc.d")
 
@@ -343,7 +343,7 @@ def install_system(
     codename = str(profile["codename"])
     backports = str(profile["backports"])
     if paths.keyring.is_symlink() or not paths.keyring.is_file():
-        raise ValueError("Installed Debian archive keyring is required")
+        raise ValueError(f"Installed regular Debian archive keyring is required: {paths.keyring}")
     backport_source = (
         "# Managed by setupSystem; official Debian backports only.\n"
         "Types: deb\nURIs: http://deb.debian.org/debian\n"
