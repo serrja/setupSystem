@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -227,7 +228,7 @@ class InstallationService:
         if offline:
             environment["UV_OFFLINE"] = "true"
         arguments = [
-            "/usr/bin/python3",
+            sys.executable,
             "-I",
             "-B",
             str(self.root / "src/setup_system/_worker_entry.py"),

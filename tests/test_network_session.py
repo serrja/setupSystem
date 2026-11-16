@@ -44,7 +44,7 @@ def controller(
     real_popen = subprocess.Popen
 
     def factory(argv: list[str], **options: object) -> subprocess.Popen[bytes]:
-        assert argv[:3] == ["/usr/bin/python3", "-I", "-B"]
+        assert argv[:3] == [sys.executable, "-I", "-B"]
         assert SUBSCRIPTION not in repr(argv) + repr(options)
         assert options["env"] == environment
         assert options["user"] == uid and options["group"] == gid

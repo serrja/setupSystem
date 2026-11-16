@@ -6,6 +6,7 @@ import json
 import os
 import pwd
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -414,7 +415,7 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
         env = kwargs["env"]
         assert isinstance(env, dict)
         assert env["HOME"] == str(home) and "GH_TOKEN" not in env
-        if argv[:4] == ["/usr/bin/python3", "-I", "-B", "-c"]:
+        if argv[:4] == [sys.executable, "-I", "-B", "-c"]:
             assert kwargs["user"] == target.uid and kwargs["group"] == target.gid
             assert kwargs["extra_groups"] == [target.gid, 44]
             assert len(argv) == 5 and kwargs["cwd"] == Path("/")
@@ -428,7 +429,7 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
         assert env["XDG_CONFIG_HOME"] == str(home / "custom config")
         assert kwargs["cwd"] == home and kwargs["umask"] == 0o077
         if Operation.PREPARE_USER.value in argv:
-            assert argv[:3] == ["/usr/bin/python3", "-I", "-B"]
+            assert argv[:3] == [sys.executable, "-I", "-B"]
             assert kwargs["user"] == target.uid and kwargs["group"] == target.gid
             assert kwargs["extra_groups"] == [target.gid, 44]
             assert env["HTTP_PROXY"] == env["HTTPS_PROXY"] == proxy
@@ -444,7 +445,7 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
             "--regid",
             str(target.gid),
             "--init-groups",
-            "/usr/bin/python3",
+            sys.executable,
             "-I",
             "-B",
         ]
@@ -760,7 +761,7 @@ def test_user_stage_uses_existing_typer_cli_and_propagates_apply_result(
     real_runner = install.run_command
 
     def execute(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
-        if argv[:4] == ["/usr/bin/python3", "-I", "-B", "-c"]:
+        if argv[:4] == [sys.executable, "-I", "-B", "-c"]:
             return real_runner(argv, **options)
         assert argv == [
             str(runtime_path / "bin/setup-system"),

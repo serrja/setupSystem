@@ -8,6 +8,7 @@ import os
 import selectors
 import signal
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,7 +129,7 @@ class TemporaryNetwork:
         )
         self.process = self.factory(
             [
-                "/usr/bin/python3",
+                sys.executable,
                 "-I",
                 "-B",
                 str(self.root / "src/setup_system/_worker_entry.py"),

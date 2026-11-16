@@ -13,6 +13,7 @@ import re
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import tomllib
 from collections.abc import Callable, Iterator, Mapping
@@ -348,7 +349,7 @@ def validate_source_access(
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
 ) -> None:
-    """Probe bounded build inputs with the target account and trusted system Python."""
+    """Probe bounded build inputs as the target using the current verified CLI interpreter."""
     if target.uid <= 0 or target.gid < 0:
         raise ValueError("Source access requires a non-root target account")
     try:
@@ -411,8 +412,8 @@ if len(text) > 1024 * 1024:
     deny("source input exceeds its size limit")
 request = json.loads(text)
 root = Path(request["root"])
-if not os.access("/usr/bin/python3", os.X_OK, effective_ids=True):
-    deny("system Python is not executable")
+if not os.access(sys.executable, os.X_OK, effective_ids=True):
+    deny("runtime Python is not executable")
 if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK, effective_ids=True):
     deny("source directory is not readable/searchable: " + str(root))
 for path in (root, *root.parents):
@@ -462,7 +463,7 @@ print(json.dumps({"ok": True}))
             extra_groups=os.getgrouplist(target.name, target.gid),
         )
     try:
-        result = run(["/usr/bin/python3", "-I", "-B", "-c", program], **options)
+        result = run([sys.executable, "-I", "-B", "-c", program], **options)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError(
             "Target user source access probe could not run with system Python"
