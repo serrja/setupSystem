@@ -4,19 +4,19 @@ The [project catalog](../manifests/projects.toml) is the single source for `proj
 
 ## 🧭 Layout and commands
 
-`serrja` holds personal tooling and the Python, Typer and FastAPI template sources. `pokerlost` holds separate Pokerlost repositories. The local `pythonTemplate` checkout uses the canonical `serrja/pythonTemplate` remote; the existing GitHub repository was renamed in place with its history preserved. The catalog retains its old local path only as relocation history. The catalog resolves either a verified target checkout or its historical path during a staged move. `virtualMoney` was cloned from its verified existing remote into the target path; its `main` history has no Alembic revision files despite the older README references to revisions.
+`serrja` holds personal tooling and the Python, Typer and FastAPI template sources. `pokerlost` holds separate Pokerlost repositories. The local `pythonTemplate` checkout uses the canonical `serrja/pythonTemplate` remote; the existing GitHub repository was renamed in place with its history preserved. The catalog retains its old local path only as relocation history. The catalog resolves either a verified target checkout or its historical path during a staged move. Inspect actual migration files and history before moving a checkout; an older README reference does not prove that a migration exists.
 
 From any directory outside a checkout being moved, use the source CLI without applying system configuration:
 
 ```bash
-UV_CACHE_DIR="$HOME/.cache/setupSystemNextStage" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system projects list
-UV_CACHE_DIR="$HOME/.cache/setupSystemNextStage" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system projects planMigration
-UV_CACHE_DIR="$HOME/.cache/setupSystemNextStage" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system templates list
+UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/setup-system/uv" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system projects list
+UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/setup-system/uv" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system projects planMigration
+UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/setup-system/uv" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system templates list
 ```
 
 After installation, use `setup-system` directly. `projects list` and `projects path --name serrja/jobdesk` resolve only exact Git roots from the catalog. `templates path --name pythonTemplate` resolves the same source for an explicit Copier invocation; it does not render or install anything. [Versioned template creation](templates.md) uses the same catalog and verified cached sources independently of these optional local checkout paths. `projects open --name serrja/jobdesk` launches Neovim there; `--tmux` uses that root for a new session. `agents launch serrja/jobdesk --mode review` resolves catalog entries at launch. Existing user-owned `scopes.toml` entries remain available for unrelated names and are not rewritten by the picker. Old short names such as `jobdesk` are rejected with a migration hint, so a stale legacy scope cannot launch the wrong checkout after a move.
 
-On a **supported Debian** host, `setup-system projects prepare --yes` explicitly creates only `$HOME/Projects` and its owner directories, after checking for symlinks, non-directories and Git superprojects. It does not create checkout directories, clone repositories or run during shell/editor startup. On the current Ubuntu host the command returns `UNSUPPORTED` before a write.
+On a **supported Debian** host, `setup-system projects prepare --yes` explicitly creates only `$HOME/Projects` and its owner directories, after checking for symlinks, non-directories and Git superprojects. It does not create checkout directories, clone repositories or run during shell/editor startup. On an unsupported host, the command returns `UNSUPPORTED` before a write.
 
 ## 📦 Relocation procedure
 
@@ -26,7 +26,7 @@ For each approved source/destination pair, the relocation writer must:
 
 1. Stop writers using **that checkout** and record its actual Git root, remote, HEAD, index digest, staged/unstaged binary patch digests, untracked and significant ignored files, modes, symlink targets, submodules and worktrees. Make a private full-tree backup outside distributed repositories, with a hash/mode manifest and recovery instructions. The regular `setup-system backup` covers configuration files; it is not this full-checkout backup.
 2. Reject a nonempty destination, an owner directory with `.git`, a symlink traversal and an origin mismatch. The `projects move` command verifies a private archive manifest and performs an atomic rename only for one ordinary checkout on the same filesystem. It writes a private result under `${XDG_STATE_HOME:-$HOME/.local/state}/setup-system/moves/`. It rejects linked worktrees, submodules, unresolved index entries and cross-filesystem moves; those need a separate reviewed procedure. Never merge trees or remove a source before verification.
-3. Before semantic edits, compare HEAD, index, staged/unstaged patch, significant untracked/ignored content, modes, symlinks and origin at the destination. Auth/accounts dirty foundation patches must be byte-identical at this boundary. Keep the recovery copy private and clearly inactive.
+3. Before semantic edits, compare HEAD, index, staged/unstaged patch, significant untracked/ignored content, modes, symlinks and origin at the destination. All existing user changes must remain byte-identical at this boundary. Keep the recovery copy private and clearly inactive.
 4. Review dependent paths: local agent scopes/grants, editable installs, template sources/provenance, Git `includeIf`, picker/editor/tmux launchers and live documentation links. Do not rewrite history, client session databases or old backup manifests. Recreate project-owned `.venv` and native build caches from locks/build configuration at the new path; their absolute paths are not portable.
 5. Move `setupSystem` last, from a process whose cwd and executable are outside that tree. Confirm the installed wheel-backed launcher still runs, and recreate the source project's `.venv` from its lock at the new path. Run `projects list`, `projects planMigration` and each project's narrow checks after retargeting. Do not retain a permanent compatibility symlink.
 
@@ -34,7 +34,7 @@ An explicit, already reviewed same-filesystem move uses the current private back
 
 ```bash
 privateBackup="$HOME/.local/state/setup-system/backups/<verified-snapshot>/manifest.json"
-UV_CACHE_DIR="$HOME/.cache/setupSystemNextStage" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system projects move --name pokerlost/pokerService --backup-manifest "$privateBackup" --yes
+UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/setup-system/uv" uv run --project "$HOME/Projects/serrja/setupSystem" --no-sync setup-system projects move --name serrja/pythonTemplate --backup-manifest "$privateBackup" --yes
 ```
 
 The source must still match the backup HEAD, branch, refs and porcelain status. The result records the exact source, destination and verification outcome. Git documents [linked worktree move/repair](https://git-scm.com/docs/git-worktree); Python documents why [virtual environments are not portable](https://docs.python.org/3/library/venv.html). No repository is moved by `apply`, `projects list`, Neovim or shell startup.

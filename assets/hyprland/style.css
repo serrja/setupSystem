@@ -1,0 +1,8 @@
+/* Rendered by setupSystem from manifests/fonts.toml. */
+* { font-family: "@PRIMARY_FAMILY@", "@EMOJI_FAMILY@"; font-size: @PANEL_SIZE@px; letter-spacing: 0px; border: none; border-radius: 0; }
+window#waybar, window { background: #1e1e2e; color: #cdd6f4; }
+#workspaces button { padding: 0 8px; color: #bac2de; }
+#workspaces button.active { background: #313244; color: #89b4fa; }
+#input, #entry { padding: 8px; margin: 4px; }
+#entry:selected { background: #313244; }
+#tray { padding-right: 8px; }

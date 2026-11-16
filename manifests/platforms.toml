@@ -1,10 +1,73 @@
-# One install backend. Application capabilities may be narrower.
+# One capability source for shell preflight, stdlib planning and installed CLI.
+[architectures]
+amd64 = "x86_64"
+aarch64 = "arm64"
+
 [debian]
 versions = ["12", "13"]
 architectures = ["x86_64", "arm64"]
 status = "implemented"
 locallyVerified = false
 terminalDevArm64 = "blocked: pinned editor archives and parser toolchain unavailable"
+
+[hyprland]
+distribution = "debian"
+version = "13"
+codename = "trixie"
+apt_architectures = ["amd64", "arm64"]
+architectures = ["x86_64", "arm64"]
+version_pin = "0.55.2+ds-1~bpo13+1"
+upstream_version = "0.55.2"
+backports = "trixie-backports"
+# Finite write destinations shared by shell and stdlib preflight; trailing slash means directory.
+preflight_paths = [
+    "config:hypr/",
+    "config:hypr/setup-system/",
+    "config:hypr/hyprland.lua",
+    "config:fontconfig/conf.d/60-setup-system-fonts.conf",
+    "config:xdg-desktop-portal/hyprland-portals.conf",
+    "config:gtk-3.0/settings.ini",
+    "config:gtk-4.0/settings.ini",
+    "data:setup-system/",
+    "data:setup-system/bin/",
+    "data:setup-system/bin/uv",
+    "data:setup-system/bin/start-hyprland",
+    "data:setup-system/python/",
+    "data:setup-system/runtime/",
+    "data:setup-system/runtime.json",
+    "data:fonts/",
+    "state:setup-system/",
+    "state:setup-system/workstation.json",
+    "state:setup-system/backups/",
+    "cache:setup-system/",
+    "cache:setup-system/uv/",
+]
+commands = [
+    "Hyprland", "hyprctl", "start-hyprland", "foot", "wofi", "thunar", "waybar",
+    "mako", "hypridle", "hyprlock", "swaybg", "wl-paste", "wl-copy", "grim", "slurp",
+    "cliphist", "notify-send", "busctl", "wpctl", "pavucontrol",
+    "nm-connection-editor", "nm-applet", "blueman-applet", "playerctl",
+    "dbus-update-activation-environment", "dbus-run-session", "systemctl", "loginctl",
+    "flock", "less", "fc-cache",
+]
+# Verified against official Debian Packages indexes for amd64 and arm64.
+base_packages = [
+    "waybar", "wofi", "mako-notifier", "foot", "thunar", "swaybg", "librsvg2-common",
+    "wl-clipboard", "grim", "slurp", "cliphist", "libnotify-bin",
+    "util-linux", "less", "network-manager", "network-manager-gnome", "pavucontrol",
+    "pipewire-audio", "pipewire", "pipewire-pulse", "wireplumber", "playerctl",
+    "xdg-desktop-portal", "xdg-desktop-portal-gtk", "xwayland", "fontconfig",
+    "fonts-dejavu-core", "fonts-noto-core", "fonts-noto-color-emoji",
+    "adwaita-icon-theme", "gnome-themes-extra-data", "qt6-wayland", "qtwayland5",
+    "qt5-gtk-platformtheme", "qt6-gtk-platformtheme", "polkitd", "dbus-user-session",
+    "dbus-daemon", "bluez", "blueman",
+]
+
+[hyprland.backport_packages]
+hypridle = "0.1.8-1~bpo13+1"
+hyprlock = "0.9.6-1~bpo13+1"
+hyprpolkitagent = "0.1.3-2~bpo13+1"
+xdg-desktop-portal-hyprland = "1.4.1-1~bpo13+1"
 
 [unsupported]
 reason = "Every other OS, distribution, version and architecture stops before apply side effects"
