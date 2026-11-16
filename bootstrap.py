@@ -120,6 +120,29 @@ def _managed_uv(platform_key: tuple[str, str]) -> Path:
     return target
 
 
+def _error_text(error: BaseException | str) -> str:
+    """Keep actionable failure details without credentials, terminal controls or raw argv."""
+    if isinstance(error, subprocess.CalledProcessError):
+        return f"Command failed with exit status {error.returncode}"
+    if isinstance(error, subprocess.TimeoutExpired):
+        return f"Command timed out after {error.timeout} seconds"
+    text = re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[REDACTED]@", str(error))
+    text = re.sub(
+        r"(?im)((?:proxy-)?authorization[ \t]*[:=][ \t]*)[^\r\n]*",
+        r"\1[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"""(?i)((?:password|passwd|token|secret|api[-_]key|authorization)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)""",
+        r"\1[REDACTED]",
+        text,
+    )
+    text = " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text).split())
+    if len(text) > 2000:
+        text = text[:800] + " ... " + text[-1195:]
+    return text or "No additional error details"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Install the managed Hyprland profile on clean Debian."
@@ -471,13 +494,18 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         if user_started and paths.journal.exists():
             mark_user_stage(paths, "failed")
+        journal_note = (
+            f"journal: {paths.journal}"
+            if paths.journal.is_file() and not paths.journal.is_symlink()
+            else "journal not created (failure before the first record)"
+        )
         print(
-            f"FAILED installation: {type(exc).__name__}. See {paths.journal}; "
-            "no APT rollback is promised.",
+            f"FAILED installation: {type(exc).__name__}: {_error_text(exc)}; {journal_note}. "
+            "No APT rollback is promised.",
             file=sys.stderr,
         )
         if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-            print(str(exc.stderr)[-2000:], file=sys.stderr)
+            print(_error_text(exc.stderr), file=sys.stderr)
         return 5
     launcher = Path(environment["XDG_DATA_HOME"]) / "setup-system/bin/start-hyprland"
     recovery = launcher.parent.parent / "runtime/bin/setup-system"
