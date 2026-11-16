@@ -23,9 +23,10 @@ def test_bootstrap_preflight_does_not_download(tmp_path: Path, arguments: list[s
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("architecture", ["amd64", "arm64"])
 @pytest.mark.parametrize("ready,corrupt", [(False, False), (True, False), (False, True)])
 def test_complete_bootstrap_reaches_only_the_textual_entrypoint(
-    tmp_path: Path, ready: bool, corrupt: bool
+    tmp_path: Path, ready: bool, corrupt: bool, architecture: str
 ) -> None:
     import fcntl
     import hashlib
@@ -37,11 +38,15 @@ def test_complete_bootstrap_reaches_only_the_textual_entrypoint(
     import tarfile
     import termios
 
+    target = {"amd64": "x86_64-unknown-linux-gnu", "arm64": "aarch64-unknown-linux-gnu"}[
+        architecture
+    ]
+    machine = {"amd64": "x86_64", "arm64": "aarch64"}[architecture]
     home = tmp_path / "home with spaces"
     home.mkdir()
     uv = tmp_path / "uv.tar.gz"
     binary = b"""#!/bin/sh
-if [ "$1" = --version ]; then printf "uv 0.12.15\\n"; exit 0; fi
+if [ "$1" = --version ]; then printf "uv 0.12.15 (PLATFORM_TARGET)\\n"; exit 0; fi
 if [ "$1" = python ]; then printf 'python prepared\\n' >> "$HOME/bootstrap.log"; exit 0; fi
 while [ "$1" != -- ]; do shift; done
 shift
@@ -50,13 +55,14 @@ shift
 exec PYTHON_EXECUTABLE "$@"
 """
     binary = binary.replace(b"PYTHON_EXECUTABLE", shlex.quote(sys.executable).encode())
+    binary = binary.replace(b"PLATFORM_TARGET", target.encode())
     if ready:
         managed = home / ".local/share/setup-system/bin/uv"
         managed.parent.mkdir(parents=True)
         managed.write_bytes(binary)
         managed.chmod(0o755)
     with tarfile.open(uv, "w:gz") as archive:
-        member = tarfile.TarInfo("x86_64-unknown-linux-gnu/uv")
+        member = tarfile.TarInfo(f"uv-{target}/uv")
         member.size = len(binary)
         member.mode = 0o755
         archive.addfile(member, io.BytesIO(binary))
@@ -65,8 +71,8 @@ exec PYTHON_EXECUTABLE "$@"
     import re
 
     text = re.sub(
-        r'amd64_sha256 = "[0-9a-f]+"',
-        'amd64_sha256 = "' + hashlib.sha256(uv.read_bytes()).hexdigest() + '"',
+        rf'{architecture}_sha256 = "[0-9a-f]+"',
+        architecture + '_sha256 = "' + hashlib.sha256(uv.read_bytes()).hexdigest() + '"',
         text,
     )
     policy.write_text(text)
@@ -99,7 +105,7 @@ command.chmod(0o755)
 id() {{ case "$1" in -u) [ "$#" -eq 1 ] && printf 0 || printf 12345 ;; -g) printf 12345 ;; esac; }}
 getent() {{ printf '%s\\n' 'fixture:x:12345:12345::{home}:/bin/sh'; }}
 stat() {{ printf 12345; }}
-uname() {{ [ "$1" = -s ] && printf Linux || printf x86_64; }}
+uname() {{ [ "$1" = -s ] && printf Linux || printf {machine}; }}
 awk() {{ if [ "${{3-}}" = /etc/os-release ]; then printf debian; else command awk "$@"; fi; }}
 as_user() {{ env HOME={shlex.quote(str(home))} "$@"; }}
 fetch() {{
