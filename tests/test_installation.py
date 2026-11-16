@@ -12,7 +12,7 @@ import pytest
 
 from setup_system import installation as install
 from setup_system import runtime as runtime_provider
-from setup_system.application import installer
+from setup_system.application import interaction
 from setup_system.application.installer import InstallationService, InstallRequest, Operation
 from setup_system.network_session import NetworkReady
 from setup_system.runtime import UserRuntime
@@ -364,9 +364,9 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
     )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(os, "getgrouplist", lambda name, gid: [gid, 44])
-    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(interaction.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(
-        installer.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+        interaction.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
     )
     events: list[str] = []
     proxy = "http://127.0.0.1:18080"

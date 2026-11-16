@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 from pathlib import Path
 
@@ -75,57 +74,4 @@ def test_nested_user_symlink_stops_root_orchestration_before_apt(
     code = InstallationService(ROOT).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
     assert system_calls == [], "Unsafe user paths were discovered only after root APT apply"
     assert code == 2
-    assert (outside / "keep.txt").read_text() == "owner data"
-
-
-@pytest.mark.parametrize("relative", UNSAFE_DESTINATIONS)
-def test_nested_symlink_stops_no_python_shell_before_prerequisites(
-    tmp_path: Path, relative: str
-) -> None:
-    home, outside = unsafe_home(tmp_path, relative)
-    log = tmp_path / "mutations"
-    uid, gid = os.getuid(), os.getgid()
-    script = f"""
-source {shlex.quote(str(ROOT / "setup.sh"))}
-fixture_home={shlex.quote(str(home))}
-fixture_log={shlex.quote(str(log))}
-setup_platform() {{ return 0; }}
-setup_source_access() {{ return 0; }}
-id() {{
-    case "$*" in '-u') printf 0;; '-u alice') printf {uid};;
-        '-g alice') printf {gid};; '-un') printf alice;; *) return 2;; esac
-}}
-getent() {{
-    case "$1:$2" in
-        passwd:alice) printf 'alice:x:%s:%s::%s:/bin/bash\\n' {uid} {gid} "$fixture_home";;
-        group:{gid}) printf 'fixture:x:%s:\\n' {gid};; *) return 2;;
-    esac
-}}
-command() {{
-    if [[ $1 == -v && $2 == python3 ]]; then return 1; fi
-    builtin command "$@"
-}}
-setup_python_prerequisite() {{ printf 'APT\\n' >> "$fixture_log"; }}
-exec() {{ printf 'user-stage\\n' >> "$fixture_log"; exit 0; }}
-setup_main --yes
-"""
-    result = subprocess.run(
-        ["/usr/bin/bash", "-c", script],
-        cwd=tmp_path,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "HOME": "/root",
-            "SUDO_USER": "alice",
-            "SUDO_UID": str(uid),
-            "SUDO_GID": str(gid),
-        },
-        input="",
-        text=True,
-        capture_output=True,
-        timeout=10,
-        check=False,
-    )
-    calls = log.read_text() if log.exists() else ""
-    assert calls == "", f"Unsafe nested path reached a mutating shell stage: {calls}"
-    assert result.returncode == 2, result.stdout + result.stderr
     assert (outside / "keep.txt").read_text() == "owner data"

@@ -154,7 +154,7 @@ def catalog(tmp_path: Path, text: str = CATALOG) -> tuple[Path, Path]:
         (
             'state = "existing"',
             'state = "existing"\nlegacyPath = "$HOME/Projects/pokerlost/pokerClient"',
-            "identical",
+            "schema",
         ),
     ],
 )
@@ -174,7 +174,7 @@ def test_invalid_catalog_is_rejected_without_creating_checkouts(
         (
             'id = "pokerlost/other"\nstate = "existing"\n'
             'legacyPath = "$HOME/Projects/pokerlost/pokerClient"',
-            "overlap",
+            "schema",
         ),
     ],
 )

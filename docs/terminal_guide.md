@@ -9,9 +9,9 @@ The profile adds `$HOME/.local/bin` to `PATH` without duplicates, selects an ava
 ```zsh
 setup-system projects list
 projectCd
-projectCd --name serrja/jobdesk
-setup-system projects open --name serrja/jobdesk
-setup-system projects open --name serrja/jobdesk --tmux
+projectCd --name serrja/setupSystem
+setup-system projects open --name serrja/setupSystem
+setup-system projects open --name serrja/setupSystem --tmux
 ```
 
 `projectCd` uses the same catalog picker as `projects path` and changes cwd only after receiving a valid path. An empty choice leaves cwd unchanged. Paths with spaces and non-ASCII characters pass without `eval`. See the [Neovim guide](neovim_guide.md) for editor work and the [workspace guide](workspace_guide.md) for project layout and relocation.

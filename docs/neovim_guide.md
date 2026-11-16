@@ -7,7 +7,7 @@ This guide covers setupSystem's installed `terminalDev` profile. The editor open
 ```bash
 setup-system doctor --profile terminalDev
 setup-system projects list
-setup-system projects open --name serrja/jobdesk
+setup-system projects open --name serrja/setupSystem
 ```
 
 For another project, use its exact name from the list. Without `--name`, the command offers a picker; an empty answer cancels launch. `--tmux` creates or attaches a separate session when `tmux` is installed, otherwise it reports an error. Projects open from a specific root; `.env` and `.envrc` are not executed.
@@ -41,7 +41,7 @@ The editor starts in **normal mode**. Press `i` to enter text and `Esc` to retur
 
 ## 🔎 Everyday workflow
 
-1. Run `setup-system projects list`, then `setup-system projects open --name serrja/jobdesk`. In Neovim, press `Space ff`, type part of a filename and press Enter.
+1. Run `setup-system projects list`, then `setup-system projects open --name serrja/setupSystem`. In Neovim, press `Space ff`, type part of a filename and press Enter.
 2. Open a Python file. With basedpyright running, `gd` jumps to a definition, `gr` lists references and `Space rn` renames through LSP. Review changes before saving. LSP selects the opened root's `.venv/bin/python` when present; it does not create the environment.
 3. Press `Space sv` for another window and `Ctrl-w w` to switch windows. `:ls` lists buffers; `:bnext` selects the next. `Space tt` opens a terminal for the project's documented command. Press `Esc` twice to leave terminal mode.
 4. Inspect a hunk with `Space gh` or status with `Space gs`; then run `git diff --check`, `git diff` and targeted `git add <path>` in the terminal. Review staged changes and the outgoing range before manually committing or pushing. The editor does not do those operations automatically.
