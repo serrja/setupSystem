@@ -41,6 +41,14 @@ commit = "3aab2147e74890957785941f0c1ad87d0a44c15a"
 repo = "nvim-treesitter/nvim-treesitter"
 commit = "ca581c3436fc2b236847f5b739ebc263739e5ca6"
 
+[plugins."aerial.nvim"]
+repo = "stevearc/aerial.nvim"
+commit = "6ab1a0ce4874d21610fc5a67a6c82c7b943c635b"
+
+[plugins."nvim-web-devicons"]
+repo = "nvim-tree/nvim-web-devicons"
+commit = "ec309a0eaff6ea967e58c275996155ab5c16938d"
+
 [tools]
 debianApt = ["zsh", "ripgrep", "fzf", "fd-find", "tmux", "clangd"]
 
@@ -62,7 +70,7 @@ ninja = "1.13.2"
 
 [parsers]
 # Revisions are pinned by the nvim-treesitter commit above.
-languages = ["python", "lua", "cpp", "json", "markdown", "bash", "toml", "yaml"]
+languages = ["python", "lua", "cpp", "json", "markdown", "bash", "toml", "yaml", "javascript", "typescript", "tsx", "vue", "dart", "html", "css"]
 
 [archiveTools.stylua]
 version = "2.6.0"

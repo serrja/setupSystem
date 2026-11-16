@@ -1,25 +1,63 @@
 # Recovery and verification
 
-## 🚀 Restore configuration
+## Installation stages
 
-On Debian 12/13 with Python 3.10+ available, copy the portable `setupSystem` source into any checkout path. Debian 12's stock Python 3.11 satisfies bootstrap; the CLI uses uv-managed Python 3.14. Verify `python3 --version`, then run `python3 bootstrap.py plan` and review the resources before `python3 bootstrap.py apply --yes`. The generated `.venv` and Codex completion are caches. Managed sources are `assets/`; user-local state is in XDG config, cache and state directories. On Ubuntu, macOS and other systems, bootstrap `apply` stops before downloads or writes.
+Run `sudo bash ./setup.sh` again after fixing the reported failure. The installer
+rechecks the platform, account, package resolution and current files rather than
+trusting a stale success flag. The root-owned `/var/lib/setup-system/install.json`
+records the actual failed stage and completed system stages. Before Python exists,
+shell failures identify the prerequisite stage directly; no Python receipt is claimed.
 
-The optional Debian terminal profile is `python3 bootstrap.py apply --profile terminalDev --yes`. It installs/configures Zsh as the current user's default login shell, plus pinned Neovim, plugins, parsers, editor tools and XDG configuration on x86_64. System packages or `chsh` that need unavailable privileges are reported as blocked. Debian arm64 terminal installation remains blocked until its editor archives and parser toolchain are pinned. Run `setup-system doctor --profile terminalDev` and `setup-system shell doctor` afterward, and use the [Russian Neovim guide](neovimGuide.md) for daily work.
+APT refresh, package installation, persistent backports source and user runtime/files
+are separate stages. A failed user stage leaves the installed packages in place and
+returns a nonzero exit code. There is no transactional APT rollback. Offline,
+signature, unavailable revision or lock failures need their underlying cause fixed
+before the same command can continue. Never bypass authentication or agree to package
+removals to make this profile pass.
 
-The Happ profile is `python3 bootstrap.py apply --profile happ --yes`. On Debian, it preserves an installed package; a missing package is installed only from the pinned official release after package metadata checks. Private state, link handoff and native autostart are covered in the [Russian Happ guide](happGuide.md). Debian arm64 has a Happ/base adapter, while `terminalDev` remains blocked until its editor archives and parser toolchain are pinned.
+Package starts are deferred while installation runs so the current network/session
+can stay active. An unknown existing `policy-rc.d` requires review before package
+mutation; it is not overwritten. An interrupted setupSystem-owned temporary policy
+is recognized and removed after a successful retry. After a power loss or a forcibly
+terminated dpkg operation, inspect `sudo dpkg --audit`; review any pending package
+configuration before running `sudo dpkg --configure --pending` and retrying setup.
+Do not remove another process's APT/dpkg lock files.
 
-Run `setup-system backup` before a manual change. For a full vault snapshot, add `--include-vault --vault PATH`; a live SQLite database blocks this operation and needs its owner's backup command. To inspect an existing backup, run `setup-system restore --backup ID --dry-run`. `--apply --yes` restores absent files and preserves conflicting current files. To replace a reviewed conflict, add `--replaceCurrent`; the current file receives its own private backup first. The private manifest stores original paths, hashes and modes. Do not publish it.
+## Managed user files
 
-## 🛠 System packages
+The user runtime CLI is installed at
+`$XDG_DATA_HOME/setup-system/runtime/bin/setup-system`, normally:
 
-`setup-system apps list` distinguishes package evidence from an executable merely present on `PATH`. The current Ubuntu host has ChatGPT, Docker Engine, Compose and Buildx packages; the Debian-only CLI does not update or duplicate them. For a fresh Debian 12/13 host, inspect `setup-system apps install docker` and then explicitly run `setup-system apps install docker --yes` if Docker Engine is needed. The adapter checks Debian identity/codename, architecture, conflicting packages, the official key fingerprint and APT source before installing exact available package candidates. It never removes existing Docker data or adds the user to the privileged `docker` group. Package installation does not prove the daemon or login behavior; check those separately. See the [Docker Debian guide](https://docs.docker.com/engine/install/debian/). Review the [official ChatGPT Linux guide](https://learn.chatgpt.com/docs/linux/linux-app) before adding ChatGPT. OpenAI currently lists Debian 13 for ChatGPT; Debian 12 remains unsupported for this application. A local ChatGPT `.deb` name or `Maintainer` field alone cannot prove publisher identity; check its final download source and any published signature/checksum before installation. Do not substitute a same-named Snap.
+```bash
+"$HOME/.local/share/setup-system/runtime/bin/setup-system" workstation restore BACKUP_ID
+```
 
-The Debian `zsh` package can be installed explicitly with `setup-system apps install zsh --yes`. A local user-installed Zsh is preserved. The [terminal guide](terminalGuide.md) describes the portable managed profile. `setup-system shell apply --yes` can configure the current user's installed Zsh and attempt `chsh` after checking `/etc/shells`; it does not run the Debian package installer on Ubuntu. The [workspace guide](workspaceGuide.md) covers read-only relocation planning and full-checkout recovery separately from configuration backup.
+This previews the profile restore. Add `--apply` only after reviewing it.
+The installer prints the backup ID; private backup manifests, hashes and modes live
+under `$XDG_STATE_HOME/setup-system/backups`. Restore refuses later user edits and
+unsafe paths. Keep backups private. A repeated unchanged apply reuses its receipt
+and does not create duplicate backups.
 
-Only Debian 12/13 selects the APT execution path, using exact `ID`, version and architecture. `ID_LIKE=debian` does not authorize another distribution. Docker's Debian repository requires its own keyring and source; `apps install docker --yes` is an explicit operation and base `apply` does not invoke it. Existing Docker contexts and providers are preserved. `apps install` reports unsupported for applications without a verified adapter.
+Unknown Hyprland entrypoints, edited managed files, an unmanaged runtime directory or
+a conflicting local uv binary stop instead of being overwritten. Preserve the file,
+compare it with the intended assets, then decide how to reconcile it. User overrides
+belong in the documented Hyprland local override, which is never managed by setup.
 
-## 🔒 Scope
+The general configuration tools remain available: `setup-system backup`,
+`setup-system restore --backup ID --dry-run` and the scoped workstation restore
+above. General restore's `--apply --yes` restores absent files while preserving
+conflicts; `--replaceCurrent` backs up a reviewed conflict before replacing it.
+A live vault SQLite database requires the application's own backup mechanism.
 
-Launch Codex with `setup-system agents launch NAME --mode review` or `--mode project`. `review` and `network` are read-only; `project` can write only the selected project root when the installed permission profile is enforced. No profile grants Docker socket or `sudo`. The network profile uses Codex's proxy allowlist for command network access. Browser, connectors and MCP have separate permissions. Test enforcement with temporary sentinels in a new session; until then, treat the configured profile as unverified.
+## Session checks
 
-Keep program installation, dotfiles, agent assets, vault notes, Google Docs and Git sources under their own owners. Opening a Drive folder is navigation, not a vault sync or backup.
+Installation does not start Hyprland, log out the user or reboot. Use the exact local
+TTY launcher printed by setup; return through Super+F9 → Logout or switch consoles
+with Ctrl+Alt+F3. See [Hyprland](hyprland.md) for fallback rendering/scaling and the
+manual login/audio/portal/lock/resume checklist. A successful package or fixture test
+is not a successful graphical-session check.
+
+[Workspace recovery](workspace_guide.md), [terminal configuration](terminal_guide.md)
+and [application tools](../README.md#other-tools-and-development) retain their own
+scope. The Hyprland installer does not install Docker, move project checkouts, copy
+credentials, configure Codex or change the login shell.

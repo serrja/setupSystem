@@ -1,31 +1,47 @@
 # Testing and delivery
 
-Git, Make and Docker suffice from this exact root:
+Run `make native-check` after preparing the locked environment; `make native-ci`
+adds wheel/sdist build and isolated installed acceptance. The pinned Docker equivalent
+is `make ci-local`. [Development](development.md) owns preparation commands.
 
-```bash
-make ci-local
-make coverage
-```
+## 🧪 Scope of evidence
 
-`check` runs locked Ruff, strict mypy, compilation, bootstrap help/plan and the complete source suite once.
-`coverage` reports the fresh result without rerunning tests. The collector covers the whole
-`setup_system` package and stdlib bootstrap, including unimported modules. Statements and
-branches are separate; below 100% warns. Assertions, types, builds and missing/corrupt/stale
-reports fail. Untested installer/application branches remain visible without exclusions.
+Source tests use synthetic HOME/XDG directories, temporary Git repositories, fixtures
+and mock executors. They cover unsupported platform/user arguments before writes,
+read-only plan, command failures, ownership boundaries, conflict preservation,
+backup/recovery and reruns. They never select the developer host as an installation
+target, invoke an actual system apply, or mount a real HOME/device into a test guest.
 
-Tests use synthetic temporary homes, Git repositories and files. Backup/recovery checks assert
-private permissions, hashes, conflict preservation and symlink/traversal rejection. Catalog
-loading does not create directories or initialize Git. No source check applies workstation
-settings, invokes sudo, mounts the user HOME/socket, relocates projects or repeats Zsh/RTK.
+Real Copier copy/update tests use annotated Git fixtures offline, preserve owner
+code/settings/migrations, reject unsafe origins/conflicts and suppress template tasks.
+Native release tests build real Hatchling wheels/sdists in an exact Git export,
+verify allocated dev/stable metadata, reject mismatched source/attempt/receipt and
+confirm the original project/lock stay unchanged. They do not allocate real releases.
+The actual inline contribution guard is exercised with accepted and rejected branch
+promotions, fork identities and invalid titles.
 
-Template tests use real annotated Git fixtures and official Copier copy/update.
-They cover offline cache, immutable source checks, user code/settings/tests/migration
-preservation, unchanged project HEAD/refs, conflicts, interactive choices, task
-suppression and rejection before destination writes. They do not fetch fixture
-sources over the network. Actual catalog sources are separately checked when
-recommending a newly published tag.
+`native-verify` installs the exact wheel with locked runtime requirements in a new
+external virtual environment and checks metadata, PEP 610 noneditable provenance,
+bundled manifests/resources and CLI commands. The H02 builder checks the allocated
+version before attestation; provider verification independently inspects archive
+bytes without executing consumer code. Unit/mock evidence is distinct from a hosted
+run, published byte audit or interrupted-draft recovery.
 
-`build` exports the canonical wheel/sdist under `coverage/artifacts/`; older `dist/` outputs are retained. `verify` runs the installed CLI outside the source
-checkout and verifies its metadata and bundled platform layout resources. `image` creates a
-local non-root CLI candidate and never publishes. CI uses the same pinned Debian Docker graph
-and retains reports/distributions for 14 days. This does not establish another OS or GUI target.
+The source suite runs once per promised Python runtime in CI and produces statement
+and branch coverage. Coverage below 100% is advisory. Assertions, types, malformed
+configurations, build failures and missing/stale reports fail. Report unavailable
+network, Docker or guest capabilities explicitly; do not turn them into success.
+
+## 🖥️ Installation and session smoke
+
+A real installer smoke requires an explicitly selected disposable copy of the
+owner's clean Debian system, verified guest identity/codename/architecture and no
+passthrough of working HOME/disks. Run the public one-command entrypoint and repeat
+it there; record actual ownership, files, APT/source plan and recovery results.
+A container or mock executor does not prove this installation or graphical behavior.
+
+Check login/TTY return, renderer/GPU, audio, screen sharing, lock/resume and network
+preservation in a real session. If no approved disposable guest is available, state
+`REAL INSTALL/GUI SMOKE NOT RUN`; successful unit tests or package builds do not
+replace that evidence. Never start a compositor, reboot or interrupt an existing
+session as part of ordinary source CI.

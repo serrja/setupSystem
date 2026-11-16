@@ -1,6 +1,7 @@
 name: Contribution
 on:
   pull_request:
+    branches: [test, dev, main]
     types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
@@ -9,15 +10,32 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Check naming without executing or checking out PR code
+      - name: Check promotion and naming without executing PR code
         env:
           HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
           PR_TITLE: ${{ github.event.pull_request.title }}
-          LEGACY_BRANCH: ${{ vars.LEGACY_PUBLISHED_BRANCH }}
         run: |
           set -euo pipefail
-          types='(feat|fix|test|refactor|docs|build|ci|chore|perf|style|revert)'
-          [[ ( -n "$LEGACY_BRANCH" && "$HEAD_REF" == "$LEGACY_BRANCH" ) || "$HEAD_REF" =~ ^$types/[a-z][A-Za-z0-9]*$ ]]
+          test "$BASE_REPO" = serrja/setupSystem
+          case "$BASE_REF" in
+            test)
+              [[ "$HEAD_REF" =~ ^[a-z][A-Za-z0-9]*$ ]]
+              [[ "$HEAD_REF" != test && "$HEAD_REF" != dev && "$HEAD_REF" != main ]]
+              ;;
+            dev)
+              test "$HEAD_REPO" = "$BASE_REPO"
+              test "$HEAD_REF" = test
+              ;;
+            main)
+              test "$HEAD_REPO" = "$BASE_REPO"
+              test "$HEAD_REF" = dev
+              ;;
+            *) exit 1 ;;
+          esac
           [[ "$PR_TITLE" != *$'\n'* && "$PR_TITLE" != *$'\r'* ]]
-          pattern="^$types\\([a-z][a-z0-9-]*\\)!?: .+$"
+          types='(feat|fix|test|refactor|docs|build|ci|chore|perf|style|revert)'
+          pattern="^$types(\([a-z][a-z0-9-]*\))?!?: .+$"
           [[ "$PR_TITLE" =~ $pattern ]]
