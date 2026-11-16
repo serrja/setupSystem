@@ -36,3 +36,33 @@ def test_uv_network_failure_does_not_disclose_proxy_credentials(monkeypatch) -> 
         runtime._read_limited("https://releases.astral.sh/pinned-asset", 1024)
     assert "releases.astral.sh" in str(caught.value)
     assert "private-value" not in str(caught.value)
+
+
+def test_uv_download_identifies_installer_without_changing_pinned_url(monkeypatch) -> None:
+    from urllib.request import Request
+
+    url = runtime.RELEASE_BASE + "/uv-x86_64-unknown-linux-gnu.tar.gz"
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def geturl(self):
+            return url
+
+        def read(self, size):
+            assert size == 1025
+            return b"verified later by the pinned archive digest"
+
+    def download(request, *, timeout):
+        assert isinstance(request, Request)
+        assert request.full_url == url
+        assert request.get_header("User-agent") == "setupSystem"
+        assert timeout == 30
+        return Response()
+
+    monkeypatch.setattr(runtime, "urlopen", download)
+    assert runtime._read_limited(url, 1024) == b"verified later by the pinned archive digest"
