@@ -414,6 +414,13 @@ def test_offline_apply_uses_private_happ_after_user_session_artifact_is_deleted(
         if argv[0] == "/usr/bin/dpkg-deb":
             copied.append(Path(argv[2]))
             return metadata(argv)
+        if "--download-only" in argv or "--no-download" in argv:
+            cached = copied[0].parent / "archives/happ_4.5.4-333_amd64.deb"
+            assert cached.is_absolute() and cached.is_file()
+            assert cached.samefile(copied[0])
+            assert cached.read_bytes() == copied[0].read_bytes()
+            assert cached.stat().st_uid == os.getuid()
+            assert cached.stat().st_mode & 0o777 == 0o644
         if "--no-download" in argv:
             assert not happ.exists()
             assert copied[0].is_file() and str(copied[0]) in argv
