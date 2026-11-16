@@ -1,9 +1,7 @@
-"""Relocation preflight must preserve Git and filesystem state."""
+"""Canonical owner preparation preserves existing user configuration."""
 
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,15 +12,6 @@ from setup_system.application.project_layout import (
     prepare_owner_directories,
 )
 from setup_system.planning import Plan, Platform
-
-
-def _git(path: Path, *arguments: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(path), *arguments],
-        check=True,
-        capture_output=True,
-        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"},
-    )
 
 
 def _layout(tmp_path: Path) -> tuple[Path, Path]:
