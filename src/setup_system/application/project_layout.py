@@ -1,13 +1,10 @@
-"""Read-only catalog and Git-aware relocation planning for owned checkouts."""
+"""Canonical catalog discovery and explicit owner-directory preparation."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import re
 import subprocess
-import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,10 +18,8 @@ from setup_system.application.project_catalog import ProjectCatalog, ProjectStat
 class Project:
     id: str
     target: Path
-    legacy_path: Path | None
     origin: str | None
     state: ProjectState
-    review_owner: bool
 
 
 @dataclass(frozen=True)
@@ -33,37 +28,6 @@ class ProjectLayout:
     owner_groups: tuple[str, ...]
     projects: tuple[Project, ...]
     verify_origins: bool = False
-
-
-@dataclass(frozen=True)
-class GitSnapshot:
-    head: str
-    branch: str
-    upstream: str
-    outgoing: int
-    origin: str
-    git_metadata: str
-    worktrees: int
-    gitlinks: int
-    symlinks: int
-    unmerged: int
-    staged: int
-    unstaged: int
-    untracked: int
-    tracked_mode_digest: str
-    index_digest: str
-    staged_digest: str
-    unstaged_digest: str
-    local_environment: bool
-
-
-@dataclass(frozen=True)
-class MovePlan:
-    project: Project
-    source: Path | None
-    status: str
-    reason: str
-    snapshot: GitSnapshot | None
 
 
 def _home_path(value: str, home: Path) -> Path:
@@ -98,7 +62,6 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
         raise ValueError("Owner groups must be unique")
     projects: list[Project] = []
     seen: set[str] = set()
-    paths: dict[Path, str] = {}
     for record in catalog.project:
         project_id = record.id
         parts = project_id.split("/")
@@ -110,24 +73,13 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
         ):
             raise ValueError(f"Invalid or repeated project ID: {project_id}")
         seen.add(project_id)
-        legacy = _home_path(record.legacy_path, home) if record.legacy_path is not None else None
         target = projects_root.joinpath(*parts)
-        if legacy == target:
-            raise ValueError(f"Legacy and target paths are identical: {project_id}")
-        for path in (target, legacy):
-            if path is None:
-                continue
-            previous = paths.setdefault(path, project_id)
-            if previous != project_id:
-                raise ValueError(f"Project paths overlap: {previous} and {project_id}")
         projects.append(
             Project(
                 project_id,
                 target,
-                legacy,
                 record.origin,
                 record.state,
-                record.review_owner,
             )
         )
     return ProjectLayout(projects_root, groups, tuple(projects), projects_root != home / "Projects")
@@ -173,351 +125,31 @@ def active_projects(layout: ProjectLayout) -> dict[str, Path]:
     """Choose a single existing checkout per project, never a directory scan."""
     result: dict[str, Path] = {}
     for project in layout.projects:
-        found = [
-            path
-            for path in (project.target, project.legacy_path)
-            if path is not None and _exact_git_root(path)
-        ]
-        if len(found) > 1:
-            raise ValueError(f"Two active checkouts for {project.id}; review before opening")
-        if found:
-            if layout.verify_origins:
-                allowed = {
-                    f"git@github.com:{project.id}.git",
-                    f"https://github.com/{project.id}.git",
-                }
-                fetch_urls = _git(found[0], "remote", "get-url", "--all", "origin", required=False)
-                push_urls = _git(
-                    found[0], "remote", "get-url", "--push", "--all", "origin", required=False
+        if not _exact_git_root(project.target):
+            continue
+        if layout.verify_origins:
+            allowed = {
+                f"git@github.com:{project.id}.git",
+                f"https://github.com/{project.id}.git",
+            }
+            fetch_urls = _git(
+                project.target, "remote", "get-url", "--all", "origin", required=False
+            )
+            push_urls = _git(
+                project.target, "remote", "get-url", "--push", "--all", "origin", required=False
+            )
+            urls = (fetch_urls + push_urls).decode().splitlines()
+            if (
+                project.origin not in allowed
+                or not fetch_urls.strip()
+                or not push_urls.strip()
+                or any(url not in allowed for url in urls)
+            ):
+                raise ValueError(
+                    f"Explicit project root requires canonical fetch/push origins: {project.id}"
                 )
-                urls = (fetch_urls + push_urls).decode().splitlines()
-                if (
-                    project.origin not in allowed
-                    or not fetch_urls.strip()
-                    or not push_urls.strip()
-                    or any(url not in allowed for url in urls)
-                ):
-                    raise ValueError(
-                        f"Explicit project root requires canonical fetch/push origins: {project.id}"
-                    )
-            result[project.id] = found[0]
+        result[project.id] = project.target
     return result
-
-
-def _snapshot(path: Path) -> GitSnapshot:
-    metadata = path / ".git"
-    staged = _git(path, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only", "-z")
-    unstaged = _git(path, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z")
-    untracked = _git(path, "ls-files", "--others", "--exclude-standard", "-z")
-    index_path = Path(_git(path, "rev-parse", "--git-path", "index").decode().strip())
-    if not index_path.is_absolute():
-        index_path = path / index_path
-    modes = _git(path, "ls-files", "--stage", "-z")
-    unmerged = _git(path, "ls-files", "-u", "-z")
-    upstream = (
-        _git(path, "rev-parse", "--abbrev-ref", "@{upstream}", required=False).decode().strip()
-    )
-    outgoing = (
-        int(_git(path, "rev-list", "--count", "@{upstream}..HEAD").decode().strip())
-        if upstream
-        else 0
-    )
-    return GitSnapshot(
-        head=_git(path, "rev-parse", "HEAD", required=False).decode().strip() or "UNBORN",
-        branch=_git(path, "symbolic-ref", "--quiet", "--short", "HEAD", required=False)
-        .decode()
-        .strip()
-        or "DETACHED",
-        upstream=upstream or "none",
-        outgoing=outgoing,
-        origin=_git(path, "remote", "get-url", "origin", required=False).decode().strip() or "none",
-        git_metadata="file" if metadata.is_file() else "directory",
-        worktrees=sum(
-            line.startswith(b"worktree ")
-            for line in _git(path, "worktree", "list", "--porcelain").splitlines()
-        ),
-        gitlinks=sum(record.startswith(b"160000 ") for record in modes.split(b"\0") if record),
-        symlinks=sum(record.startswith(b"120000 ") for record in modes.split(b"\0") if record),
-        unmerged=unmerged.count(b"\0"),
-        staged=staged.count(b"\0"),
-        unstaged=unstaged.count(b"\0"),
-        untracked=untracked.count(b"\0"),
-        tracked_mode_digest=hashlib.sha256(modes).hexdigest(),
-        index_digest=hashlib.sha256(index_path.read_bytes()).hexdigest()
-        if index_path.is_file()
-        else "absent",
-        staged_digest=hashlib.sha256(
-            _git(path, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--binary")
-        ).hexdigest(),
-        unstaged_digest=hashlib.sha256(
-            _git(path, "diff", "--no-ext-diff", "--no-textconv", "--binary")
-        ).hexdigest(),
-        local_environment=(path / ".venv").exists() or (path / "build").exists(),
-    )
-
-
-def _target_blocker(
-    layout: ProjectLayout, target: Path, *, include_target: bool = True
-) -> str | None:
-    paths = (
-        (layout.projects_root, target.parent, target)
-        if include_target
-        else (layout.projects_root, target.parent)
-    )
-    for path in paths:
-        symlink = _symlink_component(path)
-        if symlink is not None:
-            return f"symlink at {symlink}"
-        if path.exists() and not path.is_dir():
-            return f"non-directory at {path}"
-        metadata = path / ".git"
-        if metadata.is_symlink() or (
-            metadata.exists() and (not metadata.is_dir() or any(metadata.iterdir()))
-        ):
-            return f"parent or destination contains Git metadata: {path}"
-    return None
-
-
-def plan_migration(
-    layout: ProjectLayout, *, current_directory: Path | None = None
-) -> tuple[MovePlan, ...]:
-    """Inspect sources and destinations; never create directories or change Git state."""
-    current_directory = Path.cwd() if current_directory is None else current_directory
-    result: list[MovePlan] = []
-    for project in layout.projects:
-        source = project.legacy_path
-        target = project.target
-        if source is not None and source.is_symlink():
-            result.append(MovePlan(project, source, "blocked", "source is a symlink", None))
-            continue
-        if target.exists() and source is not None and source.exists():
-            result.append(
-                MovePlan(project, source, "blocked", "source and destination both exist", None)
-            )
-            continue
-        if target.exists():
-            parent_blocker = _target_blocker(layout, target, include_target=False)
-            if parent_blocker is not None:
-                result.append(MovePlan(project, target, "blocked", parent_blocker, None))
-                continue
-            if _exact_git_root(target):
-                snapshot = _snapshot(target)
-                status = (
-                    "placed"
-                    if not project.origin or snapshot.origin == project.origin
-                    else "review"
-                )
-                reason = (
-                    "target checkout present"
-                    if status == "placed"
-                    else "origin differs from catalog"
-                )
-                if project.review_owner and status == "placed":
-                    status, reason = "review", "remote owner differs from proposed owner group"
-                result.append(MovePlan(project, target, status, reason, snapshot))
-            else:
-                result.append(
-                    MovePlan(
-                        project,
-                        target,
-                        "blocked",
-                        "destination exists without exact Git root",
-                        None,
-                    )
-                )
-            continue
-        if source is None or not source.exists():
-            status = "sourcePending" if project.state == "existing" else project.state
-            result.append(MovePlan(project, source, status, "no local source checkout", None))
-            continue
-        blocker = _target_blocker(layout, target)
-        if blocker is not None:
-            result.append(MovePlan(project, source, "blocked", blocker, None))
-            continue
-        if not _exact_git_root(source):
-            result.append(
-                MovePlan(project, source, "blocked", "source is not an exact Git root", None)
-            )
-            continue
-        snapshot = _snapshot(source)
-        reason = "private full-tree backup and reference review required before move"
-        status = "backupRequired"
-        if project.origin and snapshot.origin != project.origin:
-            status, reason = "review", "origin differs from catalog"
-        elif project.review_owner:
-            status, reason = "review", "remote owner differs from proposed owner group"
-        elif snapshot.git_metadata == "file" or snapshot.worktrees != 1:
-            status, reason = "review", "linked or additional worktree needs Git-aware move/repair"
-        elif snapshot.gitlinks:
-            status, reason = "review", "submodule needs separate path and Git metadata review"
-        elif snapshot.unmerged:
-            status, reason = "review", "unmerged index entries need preservation review"
-        elif snapshot.head == "UNBORN":
-            status, reason = "review", "unborn Git branch has no HEAD baseline for relocation"
-        elif current_directory == source or source in current_directory.parents:
-            status, reason = "deferredActive", "current process is inside this checkout"
-        else:
-            parent = target.parent
-            while not parent.exists():
-                parent = parent.parent
-            if source.stat().st_dev != parent.stat().st_dev:
-                status, reason = "review", "cross-filesystem copy/verify/switch required"
-        result.append(MovePlan(project, source, status, reason, snapshot))
-    return tuple(result)
-
-
-def format_migration_plan(layout: ProjectLayout, moves: tuple[MovePlan, ...]) -> str:
-    lines = [
-        f"projectsRoot: {layout.projects_root}",
-        "Read-only relocation plan; no directories or Git metadata changed.",
-        "References to review after each move: agent scopes, picker, editor/tmux, "
-        "editable installs, template sources and project docs.",
-    ]
-    for move in moves:
-        source = move.source or "absent"
-        lines.append(f"{move.project.id}: {source} -> {move.project.target} [{move.status}]")
-        backup = (
-            "required"
-            if move.status in {"backupRequired", "deferredActive", "review"}
-            else "notApplicable"
-        )
-        lines.append(f"  reason={move.reason}; backup={backup}; verification=notRun")
-        if move.snapshot is not None:
-            git = move.snapshot
-            lines.append(
-                f"  git={git.head[:12]} branch={git.branch} upstream={git.upstream} "
-                f"outgoing={git.outgoing} "
-                f"metadata={git.git_metadata} worktrees={git.worktrees} gitlinks={git.gitlinks} "
-                f"symlinks={git.symlinks} unmerged={git.unmerged} "
-                f"staged={git.staged} unstaged={git.unstaged} untracked={git.untracked} "
-                f"localEnvironment={'present' if git.local_environment else 'absent'}"
-            )
-            lines.append(
-                f"  sha256 index={git.index_digest} modes={git.tracked_mode_digest} "
-                f"stagedPatch={git.staged_digest} "
-                f"unstagedPatch={git.unstaged_digest}"
-            )
-    return "\n".join(lines)
-
-
-def _file_digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _backup_record(manifest_path: Path, source: Path, snapshot: GitSnapshot) -> None:
-    """Check the private full-tree archive before changing a checkout path."""
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schemaVersion") != 1:
-        raise ValueError("Unsupported relocation backup manifest")
-    matches = [record for record in manifest.get("repos", []) if record.get("root") == str(source)]
-    if len(matches) != 1:
-        raise ValueError("Backup has no unique record for this exact source")
-    record = matches[0]
-    archive_name = record["archive"]
-    if Path(archive_name).name != archive_name or not archive_name.endswith(".tar"):
-        raise ValueError("Unsafe backup archive name")
-    archive = manifest_path.parent / archive_name
-    if archive.is_symlink() or not archive.is_file() or _file_digest(archive) != record["sha256"]:
-        raise ValueError("Backup archive is missing or its digest differs")
-    if (
-        record["head"] != snapshot.head
-        or record["branch"] != snapshot.branch
-        or (
-            "indexSha256" in record and record["indexSha256"] != _file_digest(source / ".git/index")
-        )
-        or record["refs"] != _git(source, "show-ref").decode()
-        or record["status"]
-        != _git(source, "status", "--porcelain=v1", "--untracked-files=all").decode()
-    ):
-        raise ValueError("Checkout changed after backup; take a fresh snapshot")
-
-
-def apply_migration(
-    layout: ProjectLayout,
-    project_id: str,
-    *,
-    backup_manifest: Path,
-    result_directory: Path,
-    current_directory: Path | None = None,
-    accept_owner_review: bool = False,
-) -> Path:
-    """Atomically relocate one ordinary checkout after a verified private backup."""
-    matches = [
-        move
-        for move in plan_migration(layout, current_directory=current_directory)
-        if move.project.id == project_id
-    ]
-    if len(matches) != 1:
-        raise ValueError("Choose one exact project ID from the catalog")
-    move = matches[0]
-    if move.status == "placed":
-        return move.project.target
-    if move.status == "review" and not (
-        accept_owner_review
-        and move.project.review_owner
-        and move.reason == "remote owner differs from proposed owner group"
-    ):
-        raise ValueError(f"Relocation needs review: {move.reason}")
-    if (
-        move.status not in {"backupRequired", "review"}
-        or move.source is None
-        or move.snapshot is None
-    ):
-        raise ValueError(f"Relocation is not ready: {move.status}: {move.reason}")
-    source, target, before = move.source, move.project.target, move.snapshot
-    if not target.parent.is_dir() or target.exists() or target.is_symlink():
-        raise ValueError("Destination owner directory must exist and target must be absent")
-    if source.stat().st_dev != target.parent.stat().st_dev:
-        raise ValueError("Cross-filesystem move requires a separate copy/verify/switch procedure")
-    if (
-        before.git_metadata != "directory"
-        or before.worktrees != 1
-        or before.gitlinks
-        or before.unmerged
-    ):
-        raise ValueError("Linked worktree, submodule or unmerged index needs separate Git review")
-    if move.project.origin is not None and before.origin != move.project.origin:
-        raise ValueError("Origin differs from catalog")
-    _backup_record(backup_manifest, source, before)
-    source_inode = source.stat().st_ino
-    before_refs = _git(source, "show-ref")
-    before_status = _git(source, "status", "--porcelain=v1", "--untracked-files=all")
-    result_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if result_directory.is_symlink() or (result_directory.stat().st_mode & 0o077):
-        raise ValueError("Relocation result directory must be private")
-    result_path = result_directory / f"{project_id.replace('/', '-')}-{int(time.time())}.json"
-    if result_path.exists():
-        raise ValueError("Relocation result path already exists")
-    result = {
-        "project": project_id,
-        "source": str(source),
-        "target": str(target),
-        "backupManifest": str(backup_manifest),
-        "head": before.head,
-        "branch": before.branch,
-        "origin": before.origin,
-        "status": "moving",
-    }
-    result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    result_path.chmod(0o600)
-    os.rename(source, target)
-    after = _snapshot(target)
-    verified = (
-        target.stat().st_ino == source_inode
-        and not source.exists()
-        and before == after
-        and before_refs == _git(target, "show-ref")
-        and before_status == _git(target, "status", "--porcelain=v1", "--untracked-files=all")
-    )
-    result["status"] = "verified" if verified else "verificationFailed"
-    result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    if not verified:
-        raise RuntimeError(f"Moved checkout needs manual recovery; inspect {result_path}")
-    return result_path
 
 
 def prepare_owner_directories(layout: ProjectLayout) -> tuple[Path, ...]:

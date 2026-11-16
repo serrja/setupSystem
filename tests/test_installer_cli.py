@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_retired_installation_frontends_are_absent() -> None:
+    assert not (ROOT / "setup.sh").exists()
     assert not (ROOT / "bootstrap.py").exists()
     assert not (ROOT / "src/setup_system/user_install.py").exists()
 
@@ -91,25 +92,24 @@ def test_typer_private_subscription_file_is_mapped_without_reading(
     assert "SYNTHETIC_PRIVATE_MARKER" not in result.output
 
 
-def test_private_handoff_uses_exact_eight_positions(monkeypatch: pytest.MonkeyPatch) -> None:
-    from setup_system import entrypoint
+def test_private_handoff_uses_exact_seven_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from setup_system import worker_protocol as entrypoint
     from setup_system.application import installer
 
     environment = {
         f"XDG_{kind.upper()}_HOME": f"/home/alice/{kind}" for kind in entrypoint.XDG_KINDS
     }
     private = Path("/home/alice/private input")
-    args = entrypoint.source_arguments(
-        installer.Operation.APPLY, "alice", environment, yes=True, subscription_file=private
+    args = entrypoint.worker_arguments(
+        installer.Operation.NETWORK_STAGE, "alice", environment, subscription_file=private
     )
     assert args == [
-        "apply",
+        "network-stage",
         "alice",
         "/home/alice/config",
         "/home/alice/data",
         "/home/alice/state",
         "/home/alice/cache",
-        "1",
         str(private),
     ]
     observed = []
@@ -120,11 +120,13 @@ def test_private_handoff_uses_exact_eight_positions(monkeypatch: pytest.MonkeyPa
     assert observed[0].subscription_file == private
 
 
-@pytest.mark.parametrize("args", [[], ["apply"] * 7, ["apply"] * 9])
+@pytest.mark.parametrize(
+    "args", [[], ["apply"] * 6, ["apply"] * 8, ["apply", "alice", "/a", "/b", "/c", "/d", "-"]]
+)
 def test_malformed_private_handoff_never_calls_service(
     monkeypatch: pytest.MonkeyPatch, args: list[str]
 ) -> None:
-    from setup_system import entrypoint
+    from setup_system import worker_protocol as entrypoint
     from setup_system.application import installer
 
     monkeypatch.setattr(
@@ -133,3 +135,22 @@ def test_malformed_private_handoff_never_calls_service(
         lambda *a: pytest.fail("Malformed private handoff entered the service"),
     )
     assert entrypoint.main(ROOT, args) == 2
+
+
+def test_privileged_module_entry_does_not_write_user_bytecode(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+    import sys
+
+    package = tmp_path / "setup_system"
+    package.mkdir()
+    shutil.copyfile(ROOT / "src/setup_system/__init__.py", package / "__init__.py")
+    (package / "probe.py").write_text("VALUE = 1\n")
+    script = (
+        "import os,sys; os.geteuid=lambda:0; "
+        "sys.path.insert(0,sys.argv[1]); import setup_system.probe; "
+        "assert sys.dont_write_bytecode"
+    )
+    result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(tmp_path)], check=False)
+    assert result.returncode == 0
+    assert not list(package.rglob("*.pyc"))

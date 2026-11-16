@@ -70,7 +70,7 @@ compile:
 lock-check:
 	$(UV) lock --check
 entrypoint-check:
-	bash setup.sh --help
+	$(UV) run --locked setup-system --help
 	$(UV) run --locked python docker/check_entrypoint.py
 check: lint typecheck compile lock-check entrypoint-check test ## Native fast gate; no system apply.
 

@@ -5,15 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shlex
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from setup_system import installation as install
-from setup_system.application import installer
+from setup_system.application import interaction
 from setup_system.application.installer import InstallationService, InstallRequest, Operation
 from setup_system.network_session import NetworkReady
 
@@ -137,78 +135,6 @@ def test_untrusted_or_missing_canonical_keyring_stops_before_apt_and_journal(
     assert (directory / COMPATIBILITY).is_symlink()
 
 
-def prerequisite(
-    tmp_path: Path, directory: Path
-) -> tuple[subprocess.CompletedProcess[str], list[dict[str, object]]]:
-    source = (ROOT / "setup.sh").read_text()
-    start = source.index("setup_prerequisite_files() {")
-    function = source[start : source.index("\nsetup_handoff()", start)]
-    staging = tmp_path / "prerequisite-run"
-    staging.mkdir()
-    log = tmp_path / "external-calls.jsonl"
-    timeout = tmp_path / "fixture-timeout"
-    timeout.write_text(
-        "#!" + sys.executable + "\n"
-        "import json, pathlib, sys\n"
-        f"log = pathlib.Path({str(log)!r})\n"
-        "args = sys.argv[1:]\n"
-        "source = next(a.split('=', 1)[1] for a in args if a.startswith('Dir::Etc::sourcelist='))\n"
-        "record = {'args': args, 'source': pathlib.Path(source).read_text()}\n"
-        "with log.open('a') as stream: stream.write(json.dumps(record) + '\\n')\n"
-    )
-    timeout.chmod(0o700)
-    # Remap fixed host paths at the test boundary, then execute the production body.
-    function = function.replace("/usr/share/keyrings/", str(directory) + "/")
-    function = function.replace(
-        "/run/setup-system-prerequisites.XXXXXXXX",
-        shlex.quote(str(staging / "setup-system-prerequisites.XXXXXXXX")),
-    )
-    function = function.replace("/usr/bin/timeout", shlex.quote(str(timeout)))
-    script = (
-        f"source {shlex.quote(str(ROOT / 'setup.sh'))}\n"
-        "setup_ca_ready() { return 0; }\n"
-        f"setup_root={shlex.quote(str(ROOT))}\n" + function + "\nsetup_python_prerequisite\n"
-    )
-    result = subprocess.run(
-        ["bash", "-c", script],
-        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
-        text=True,
-        capture_output=True,
-        timeout=20,
-        check=False,
-    )
-    records = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-    assert not list(staging.iterdir()), "Prerequisite staging leaked after return"
-    return result, records
-
-
-def test_no_python_shell_uses_canonical_trixie_keyring_without_following_alias(
-    tmp_path: Path,
-) -> None:
-    directory = keyrings(tmp_path)
-    result, calls = prerequisite(tmp_path, directory)
-    assert result.returncode == 0, result.stderr
-    assert len(calls) == 3
-    assert all(f"Signed-By: {directory / CANONICAL}" in call["source"] for call in calls)
-    arguments = [call["args"] for call in calls]
-    assert "update" in arguments[0] and "--simulate" in arguments[1] and "--yes" in arguments[2]
-    assert all("Acquire::AllowInsecureRepositories=false" in args for args in arguments)
-    assert all("APT::Get::AllowUnauthenticated=false" in args for args in arguments)
-    assert all("--no-remove" in args for args in arguments[1:])
-    assert (directory / COMPATIBILITY).readlink() == Path(CANONICAL)
-    assert (directory / CANONICAL).read_bytes() == b"fixture Debian archive certificates"
-
-
-@pytest.mark.parametrize("kind", ["missing", "symlink"])
-def test_no_python_shell_rejects_missing_or_symlink_canonical_keyring(
-    tmp_path: Path, kind: str
-) -> None:
-    directory = keyrings(tmp_path, kind)
-    result, calls = prerequisite(tmp_path, directory)
-    assert result.returncode != 0 and "keyring" in result.stderr
-    assert not calls and (directory / COMPATIBILITY).is_symlink()
-
-
 class FailureNetwork:
     """No provider or filesystem activity is needed to exercise a package-stage failure."""
 
@@ -235,9 +161,9 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
     monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
     monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
-    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(interaction.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(
-        installer.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+        interaction.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
     )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     reason = "canonical Debian archive keyring is missing"
@@ -279,9 +205,9 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
     monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
     monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
-    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(interaction.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(
-        installer.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+        interaction.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
     )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()

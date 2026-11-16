@@ -8,6 +8,7 @@ import os
 import selectors
 import signal
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,25 +115,24 @@ class TemporaryNetwork:
 
     def start(self, subscription: str | None) -> NetworkReady:
         from setup_system.application.installer import Operation
-        from setup_system.entrypoint import source_arguments
+        from setup_system.worker_protocol import worker_arguments
 
         if os.geteuid() != 0:
             raise RuntimeError("The installation coordinator must own the privilege transition")
         if self.process is not None:
             raise RuntimeError("Temporary network session is already started")
-        arguments = source_arguments(
+        arguments = worker_arguments(
             Operation.NETWORK_STAGE,
             self.target.name,
             self.environment,
-            yes=True,
             subscription_file=self.subscription_file,
         )
         self.process = self.factory(
             [
-                "/usr/bin/python3",
+                sys.executable,
                 "-I",
                 "-B",
-                str(self.root / "src/setup_system/_installer_entry.py"),
+                str(self.root / "src/setup_system/_worker_entry.py"),
                 *arguments,
             ],
             cwd=self.target.home,

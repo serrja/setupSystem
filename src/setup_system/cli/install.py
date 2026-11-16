@@ -75,7 +75,7 @@ def install_apply(
         ),
     ] = None,
 ) -> None:
-    """Run the same use case; setup.sh also prepares missing clean-Debian prerequisites."""
+    """Apply the checked installation plan through the shared application service."""
     request = _request(
         Operation.APPLY,
         user,

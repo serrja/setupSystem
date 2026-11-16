@@ -10,7 +10,15 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
-dependencies = ["typer>=0.27.2,<1", "pydantic>=2.12,<3", "copier==9.17.2", "pyyaml>=6,<7", "plumbum>=2,<3", "packaging>=25,<27"]
+dependencies = [
+    "typer>=0.27.2,<1",
+    "pydantic>=2.12,<3",
+    "copier==9.17.2",
+    "pyyaml>=6,<7",
+    "plumbum>=2,<3",
+    "packaging>=25,<27",
+    "textual>=6,<7",
+]
 
 [project.scripts]
 setup-system = "setup_system.cli.main:app"
@@ -20,6 +28,11 @@ dev = ["hatchling>=1.27,<2", "mypy>=2.3,<3", "pytest>=9,<10", "pytest-cov>=7,<8"
 
 [tool.hatch.build]
 exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", ".codex", ".codex/**", ".local", ".local/**", "backups", "backups/**", ".env", ".env.*", "/core.[0-9]*", "/.coverage", "/.coverage.*", ".vscode", ".vscode/**"]
+
+[tool.hatch.build.targets.sdist]
+# Ship only runtime inputs; local reports/caches must never enter a source release.
+include = ["/src/setup_system", "/assets", "/manifests", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
+exclude = ["**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_system"]

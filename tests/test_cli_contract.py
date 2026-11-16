@@ -29,11 +29,12 @@ def test_command_groups_and_public_option_names_remain_available() -> None:
         "shell",
         "templates",
         "workstation",
+        "tui",
     }
     groups = {
         "install": {"plan", "apply"},
         "apps": {"install", "list"},
-        "projects": {"list", "planMigration", "move", "prepare", "path", "open"},
+        "projects": {"list", "prepare", "path", "open"},
         "templates": {"list", "path", "versions", "create", "update", "cache"},
         "workstation": {"plan", "doctor", "font-probe", "prefetch", "apply", "backup", "restore"},
     }

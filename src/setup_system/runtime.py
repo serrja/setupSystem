@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -18,17 +19,36 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-RUNTIME_PYTHON = "3.14.7"
-UV_VERSION = "0.12.15"
+
+def _runtime_policy() -> dict[str, str]:
+    source = Path(__file__).resolve().parents[2] / "manifests/runtime.toml"
+    if not source.is_file():
+        source = Path(__file__).resolve().parent / "manifests/runtime.toml"
+    data = tomllib.loads(source.read_text())
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in data.items()):
+        raise ValueError("Runtime policy values must be strings")
+    return {str(key): str(value) for key, value in data.items()}
+
+
+_RUNTIME = _runtime_policy()
+RUNTIME_PYTHON = _RUNTIME["python"]
+UV_VERSION = _RUNTIME["uv"]
 UV_PLATFORMS = {
-    ("debian", "x86_64"): "x86_64-unknown-linux-gnu",
-    ("debian", "arm64"): "aarch64-unknown-linux-gnu",
+    ("debian", "x86_64"): _RUNTIME["amd64_target"],
+    ("debian", "arm64"): _RUNTIME["arm64_target"],
 }
-RELEASE_BASE = f"https://releases.astral.sh/github/uv/releases/download/{UV_VERSION}"
+RELEASE_BASE = _RUNTIME["uv_base"] + "/" + UV_VERSION
 UV_SHA256 = {
-    "x86_64-unknown-linux-gnu": "f97935763c04be3e692460a7aaeaaab8fc3b78fcf8b389da820b38ae7423a638",
-    "aarch64-unknown-linux-gnu": "0e9a3499b0587d449c9ff684c0160da607826e4af1cee220bc87f378702d3e08",
+    _RUNTIME[architecture + "_target"]: _RUNTIME[architecture + "_sha256"]
+    for architecture in ("amd64", "arm64")
 }
+
+
+def _runtime_receipt() -> bytes:
+    return (
+        json.dumps({"owner": "setupSystem", "runtimePython": RUNTIME_PYTHON}, separators=(",", ":"))
+        + "\n"
+    ).encode()
 
 
 def _read_limited(url: str, limit: int) -> bytes:
@@ -245,7 +265,7 @@ class UserRuntime:
         data = validate_user_path(Path(os.environ["XDG_DATA_HOME"]), target)
         runtime = validate_user_path(data / "setup-system/runtime", target)
         receipt = validate_user_path(data / "setup-system/runtime.json", target)
-        expected = b'{"owner":"setupSystem","runtimePython":"3.14.7"}\n'
+        expected = _runtime_receipt()
         if not runtime.is_dir() or not receipt.is_file() or receipt.read_bytes() != expected:
             raise ValueError("User runtime is not prepared; re-run the same installation command")
         command = validate_user_path(runtime / "bin/setup-system", target)
@@ -280,7 +300,7 @@ class UserRuntime:
         from setup_system.storage import atomic_write
 
         receipt = validate_user_path(data / "setup-system/runtime.json", target)
-        expected_receipt = b'{"owner":"setupSystem","runtimePython":"3.14.7"}\n'
+        expected_receipt = _runtime_receipt()
         if receipt.exists() and receipt.read_bytes() != expected_receipt:
             raise ValueError(
                 "Existing runtime ownership receipt differs; review it before retrying"
