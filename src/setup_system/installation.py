@@ -186,7 +186,16 @@ def _write_system(path: Path, content: bytes, mode: int = 0o600) -> None:
     _system_path(path)
     if path.exists() and path.read_bytes() == content:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
+    missing: list[Path] = []
+    directory = path.parent
+    while not directory.exists():
+        missing.append(directory)
+        directory = directory.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        # Only directories just created below the validated parent are changed.
+        directory.chmod(0o700)
+    _system_path(path)
     descriptor, name = tempfile.mkstemp(prefix=".setup-system-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
