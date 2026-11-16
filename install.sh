@@ -119,13 +119,15 @@ bootstrap_main() {
     case "$uv_target" in x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu) ;; *) fail 'Invalid runtime architecture' ;; esac
     uv_command=$target_home/.local/share/setup-system/bin/uv
     if [ -f "$uv_command" ] && [ ! -L "$uv_command" ] && \
-        [ "$(as_user "$uv_command" --version)" = "uv $uv" ]; then
+        uv_report=$(as_user "$uv_command" --version) && \
+        [ "$(printf '%s\n' "$uv_report" | awk 'NR == 1 {print $1 " " $2}')" = "uv $uv" ]; then
         : # Reuse the existing pinned user runtime tool.
     else
         fetch "$uv_base/$uv/uv-$uv_target.tar.gz" "$workspace/uv.tar.gz" 83886080
         printf '%s  %s\n' "$uv_hash" "$workspace/uv.tar.gz" | sha256sum --check --status || fail 'Runtime checksum mismatch'
-        as_user tar -xzf "$workspace/uv.tar.gz" -C "$workspace" --no-same-owner --no-same-permissions "$uv_target/uv"
-        uv_command=$workspace/$uv_target/uv
+        uv_member=uv-$uv_target/uv
+        as_user tar -xzf "$workspace/uv.tar.gz" -C "$workspace" --no-same-owner --no-same-permissions "$uv_member"
+        uv_command=$workspace/$uv_member
     fi
     native=$(printf '%s' "${release#v}" | sed 's/-dev\./.dev/')
     base=https://github.com/serrja/setupSystem/releases/download/$release
