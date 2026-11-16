@@ -2,7 +2,9 @@
 
 Run from the exact repository root. Native checks use uv 0.12.15, locked dependencies
 and Python 3.14.7; CI additionally checks the CLI's Python 3.12 minimum. They need no
-Docker, sudo, GitHub credentials or graphical session.
+Docker, sudo, GitHub credentials or graphical session. The isolated resolver regressions
+require `apt-get` and `apt-cache`; they use private cached indexes and simulated plans,
+without network access, package installation or host APT state changes.
 
 ```bash
 uv python install 3.14.7
