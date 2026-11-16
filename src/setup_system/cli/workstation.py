@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+from typing import Literal
 
 import typer
 
@@ -29,6 +31,16 @@ def workstation_font_probe() -> None:
     typer.echo("\n".join(workstation.FONT_PROBE))
 
 
+@workstation_app.command("prefetch")
+def workstation_prefetch(profile: Literal["hyprland"] = "hyprland") -> None:
+    """Cache verified user downloads without requiring the graphical system stage."""
+    try:
+        workstation.prefetch_workstation(ROOT)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Verified downloads cached for {profile}; no user configuration applied")
+
+
 @workstation_app.command("apply")
 def workstation_apply(
     profile: workstation.Profile = "fonts",
@@ -37,8 +49,11 @@ def workstation_apply(
     terminal_profile: str | None = None,
     reset_terminal_cell_spacing: bool = False,
     refresh_terminal_font: bool = False,
+    offline: bool = False,
 ) -> None:
     """Back up and apply selected user files after reviewing the configuration plan."""
+    if profile == "hyprland" and os.geteuid() == 0:
+        raise typer.BadParameter("Hyprland user configuration cannot run as root")
     if not yes:
         raise typer.BadParameter("Review workstation plan, then pass --yes to apply")
     try:
@@ -49,8 +64,9 @@ def workstation_apply(
             terminal_profile=terminal_profile,
             reset_terminal_cell_spacing=reset_terminal_cell_spacing,
             refresh_terminal_font=refresh_terminal_font,
+            offline=offline,
         )
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"backup: {folder}; GUI login/validation: not performed")
 

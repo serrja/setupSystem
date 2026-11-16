@@ -23,7 +23,7 @@ def package_arguments(
     architecture: str | None = None,
     root: Path | None = None,
 ) -> list[str]:
-    """Select one compatible package set; the privileged bootstrap owns execution."""
+    """Select one compatible package set; the privileged system adapter owns execution."""
     capabilities = load_capabilities(root)
     profile = cast(dict[str, object], capabilities["hyprland"])
     aliases = cast(dict[str, str], capabilities["architectures"])
