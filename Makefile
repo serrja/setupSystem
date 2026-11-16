@@ -14,7 +14,7 @@ endif
 ifneq ($(CONTAINERIZED),1)
 QUALITY_IMAGE := setupsystem:quality
 RUNTIME_IMAGE := setupsystem:candidate
-QUALITY_EXTRA_TARGETS := compile lock-check bootstrap-check
+QUALITY_EXTRA_TARGETS := compile lock-check entrypoint-check
 BUILD_DOCKERFILE := Dockerfile.quality
 COVERAGE_REPORT := coverage/python/coverage.json
 INSTALLED_TEST_IMAGE := setupsystem:installed
@@ -66,13 +66,13 @@ typecheck:
 test:
 	env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR $(UV) run --locked pytest --cov --cov-report=term-missing --cov-report=json --cov-report=xml --junitxml=coverage/python/junit.xml
 compile:
-	$(UV) run --locked python -m compileall -q bootstrap.py src
+	$(UV) run --locked python -m compileall -q src
 lock-check:
 	$(UV) lock --check
-bootstrap-check:
-	$(UV) run --locked python bootstrap.py --help
-	$(UV) run --locked python docker/check_bootstrap.py
-check: lint typecheck compile lock-check bootstrap-check test ## Native fast gate; no system apply.
+entrypoint-check:
+	bash setup.sh --help
+	$(UV) run --locked python docker/check_entrypoint.py
+check: lint typecheck compile lock-check entrypoint-check test ## Native fast gate; no system apply.
 
 acceptance: check
 build:

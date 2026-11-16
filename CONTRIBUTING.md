@@ -18,7 +18,7 @@ make native-ci
 ```
 
 `native-check` runs locked formatting/lint, types, compilation, lock validation,
-read-only bootstrap checks and fixture tests. `native-ci` adds wheel/sdist builds and
+read-only entrypoint checks and fixture tests. `native-ci` adds wheel/sdist builds and
 installation into a disposable environment outside the checkout. No gate installs
 workstation packages or changes the developer HOME. Docker `make ci-local` is an
 alternative full gate with source/artifact receipts; see [development](docs/development.md).
@@ -29,7 +29,7 @@ Record actual failed, unsupported and unavailable checks in the PR.
 Create one lowerCamelCase working branch from fresh `origin/test`, for example
 `refactorG03HyprlandSetup`. Preserve the owner's main checkout and dirty files; use a
 separate worktree when needed. Use English Conventional Commits such as
-`fix(bootstrap): validate the sudo account before apply` and review staged paths,
+`fix(installer): validate the sudo account before apply` and review staged paths,
 complete diffs, secrets and exact source SHA before committing.
 
 Open the working PR against `test`; promote `test` to `dev`, then `dev` to `main` with

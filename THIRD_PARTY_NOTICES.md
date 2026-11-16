@@ -15,6 +15,15 @@ with pinned hashes and its OFL.txt preserved beside the installed fonts. Noto Sa
 and Noto Color Emoji use the distro packages and their installed copyright/license
 files. Font binaries are not redistributed here. See manifests/fonts.toml.
 
-The optional Hyprland profile uses the public Lua API of upstream v0.55.2 and
+The Hyprland profile uses the public Lua API of upstream v0.55.2 and
 Debian-packaged desktop components; their licenses remain with those packages.
 No third-party dotfiles installer or graphical shell is vendored.
+
+## Temporary download client
+
+Xray-core 26.11.9 retains its Mozilla Public License 2.0. The installer downloads
+its official release archive with the exact digest and source reference recorded
+in [the network manifest](manifests/network.toml). The upstream archive contains
+its license. No Xray binary or source is redistributed in setupSystem releases;
+the temporary executable, archive and connection configuration are removed after
+download preparation. User-supplied optional seeds remain their own upstream copies.

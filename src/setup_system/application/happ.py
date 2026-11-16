@@ -10,10 +10,13 @@ import platform as system_platform
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -159,34 +162,158 @@ def _manifest(project_root: Path) -> dict[str, object]:
     return tomllib.loads((project_root / "manifests/happ.toml").read_text(encoding="utf-8"))
 
 
+def _download_path(target: Path) -> Path:
+    if os.geteuid() == 0:
+        raise ValueError("Happ downloads must run as the target user")
+    if not target.is_absolute() or ".." in target.parts or any(ord(c) < 32 for c in str(target)):
+        raise ValueError("Unsafe Happ download destination")
+    for path in (target, *target.parents):
+        if path.is_symlink():
+            raise ValueError("Happ download destination traverses a symlink")
+        if path != target and path.exists() and not path.is_dir():
+            raise ValueError("Happ download parent is not a directory")
+    existing = target.parent
+    while not existing.exists():
+        existing = existing.parent
+    details = existing.stat()
+    if details.st_uid != os.geteuid() or details.st_mode & 0o022:
+        raise ValueError("Happ download parent is not privately controlled by the target user")
+    if target.exists():
+        details = target.lstat()
+        if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid():
+            raise ValueError("Happ download must be a user-owned regular file")
+    return target
+
+
+def _happ_digest(path: Path, expected: str) -> bool:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        details = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_uid != os.geteuid()
+            or details.st_size > 200 * 1024 * 1024
+        ):
+            raise ValueError("Happ package must be a bounded user-owned regular file")
+        digest = hashlib.sha256()
+        remaining = 200 * 1024 * 1024
+        while chunk := stream.read(min(1024 * 1024, remaining + 1)):
+            remaining -= len(chunk)
+            if remaining < 0:
+                raise ValueError("Happ package exceeds its size limit")
+            digest.update(chunk)
+        return digest.hexdigest() == expected
+
+
 def _download(url: str, sha256: str, target: Path, limit: int) -> None:
-    target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    target.parent.chmod(0o700)
-    candidate = target.with_name(target.name + f".{os.getpid()}.part")
-    digest = hashlib.sha256()
-    total = 0
+    candidate: Path | None = None
+    host = "github.com"
     try:
-        with urlopen(Request(url, headers={"User-Agent": "setupSystem/0.1"}), timeout=45) as source:
-            final = urlsplit(source.geturl())
-            if final.scheme != "https" or final.hostname not in {
-                "github.com",
-                "release-assets.githubusercontent.com",
-                "objects.githubusercontent.com",
-            }:
-                raise RuntimeError("Unexpected Happ release redirect")
-            with candidate.open("wb") as output:
-                candidate.chmod(0o600)
+        descriptor, name = tempfile.mkstemp(prefix=".happ-download-", dir=target.parent)
+        candidate = Path(name)
+        with os.fdopen(descriptor, "wb") as output:
+            os.fchmod(output.fileno(), 0o600)
+            digest = hashlib.sha256()
+            total = 0
+            with urlopen(
+                Request(url, headers={"User-Agent": "setupSystem/0.1"}), timeout=45
+            ) as source:
+                final = urlsplit(source.geturl())
+                if final.scheme != "https" or final.hostname not in {
+                    "github.com",
+                    "release-assets.githubusercontent.com",
+                    "objects.githubusercontent.com",
+                }:
+                    raise ValueError("Unexpected Happ release redirect")
                 while block := source.read(1024 * 1024):
                     total += len(block)
                     if total > limit:
-                        raise RuntimeError("Happ release asset exceeds size limit")
+                        raise ValueError("Happ release asset exceeds size limit")
                     digest.update(block)
                     output.write(block)
+            output.flush()
+            os.fsync(output.fileno())
         if digest.hexdigest() != sha256:
-            raise RuntimeError("Happ release digest mismatch")
-        os.replace(candidate, target)
+            raise ValueError("Happ release digest mismatch")
+        os.link(candidate, target, follow_symlinks=False)
+    except HTTPError as exc:
+        host = urlsplit(exc.url).hostname or host
+        raise ValueError(f"Happ download failed: HTTP {exc.code} from {host}") from None
+    except (URLError, TimeoutError):
+        raise ValueError(f"Happ download failed for host {host}") from None
     finally:
-        candidate.unlink(missing_ok=True)
+        if candidate is not None:
+            candidate.unlink(missing_ok=True)
+
+
+def _happ_metadata(target: Path, version: str, architecture: str) -> None:
+    result = _run(["dpkg-deb", "-f", str(target), "Package", "Version", "Architecture"])
+    fields = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition(":")
+        if not separator or key in fields:
+            raise ValueError("Invalid Happ package metadata")
+        fields[key] = value.strip()
+    if result.returncode != 0 or fields != {
+        "Package": "happ",
+        "Version": version,
+        "Architecture": architecture,
+    }:
+        raise ValueError("Happ .deb package metadata differs from the pinned release")
+
+
+def download_happ(project_root: Path, destination: Path) -> Path:
+    """Download only a pinned, metadata-verified .deb without installing or running Happ."""
+    target = _download_path(destination)
+    platform_adapter = detect_platform()
+    if not platform_adapter.implemented or platform_adapter.distribution != "debian":
+        raise ValueError("No supported Debian Happ download provider")
+    key = {"x86_64": "amd64", "arm64": "arm64"}.get(platform_adapter.architecture)
+    if key is None:
+        raise ValueError("Unsupported Happ package architecture")
+    manifest = _manifest(project_root)
+    release, package_version = str(manifest["version"]), str(manifest["packageVersion"])
+    linux = manifest["linux"]
+    if not isinstance(linux, dict) or not isinstance(linux.get(key), dict):
+        raise ValueError("Invalid Happ release manifest")
+    asset = linux[key]
+    suffix = "x64" if key == "amd64" else "arm64"
+    expected_url = (
+        "https://github.com/Happ-proxy/happ-desktop/releases/download/"
+        + release
+        + "/Happ.linux."
+        + suffix
+        + ".deb"
+    )
+    checksum = asset.get("sha256")
+    if (
+        re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", release) is None
+        or asset.get("url") != expected_url
+        or asset.get("packageArchitecture") != key
+        or not isinstance(checksum, str)
+        or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+    ):
+        raise ValueError("Invalid pinned official Happ release identity")
+    if target.exists():
+        if not _happ_digest(target, checksum):
+            raise ValueError("Existing Happ download differs; preserve it for review")
+        _happ_metadata(target, package_version, key)
+        return target
+    missing: list[Path] = []
+    parent = target.parent
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for parent in reversed(missing):
+        parent.mkdir(mode=0o700)
+        parent.chmod(0o700)
+    _download_path(target)
+    with tempfile.TemporaryDirectory(prefix=".happ-package-", dir=target.parent) as temporary:
+        candidate = Path(temporary) / "happ.deb"
+        _download(expected_url, checksum, candidate, 200 * 1024 * 1024)
+        _happ_metadata(candidate, package_version, key)
+        os.link(candidate, target, follow_symlinks=False)
+    return target
 
 
 def setup_happ(project_root: Path, platform_adapter: Platform | None = None) -> str:
@@ -205,26 +332,8 @@ def setup_happ(project_root: Path, platform_adapter: Platform | None = None) -> 
     sudo = shutil.which("sudo")
     if not sudo or _run([sudo, "-n", "true"]).returncode != 0:
         return "blocked: targeted sudo is unavailable; no download or package change was made"
-    linux = manifest["linux"]
-    if not isinstance(linux, dict):
-        raise ValueError("Invalid Happ release manifest")
     key = "amd64" if platform_adapter.architecture == "x86_64" else "arm64"
-    asset = linux[key]
-    if not isinstance(asset, dict):
-        raise ValueError("Invalid Happ release asset")
-    target = state_root() / "downloads" / f"happ-{release}-{key}.deb"
-    if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != asset["sha256"]:
-        _download(str(asset["url"]), str(asset["sha256"]), target, 200 * 1024 * 1024)
-    metadata = _run(["dpkg-deb", "-f", str(target), "Package", "Version", "Architecture"])
-    fields = metadata.stdout.splitlines()
-    if (
-        metadata.returncode != 0
-        or len(fields) != 3
-        or fields[0] != "happ"
-        or fields[1] != package_version
-        or fields[2] != asset["packageArchitecture"]
-    ):
-        raise RuntimeError("Happ .deb package metadata differs from the pinned release")
+    target = download_happ(project_root, state_root() / "downloads" / f"happ-{release}-{key}.deb")
     install = subprocess.run(
         [sudo, "-n", "apt-get", "install", "-y", str(target)], timeout=900, check=False
     )

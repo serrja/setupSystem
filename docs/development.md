@@ -4,7 +4,9 @@ Run from the exact repository root. Native checks use uv 0.12.15, locked depende
 and Python 3.14.7; CI additionally checks the CLI's Python 3.12 minimum. They need no
 Docker, sudo, GitHub credentials or graphical session. The isolated resolver regressions
 require `apt-get` and `apt-cache`; they use private cached indexes and simulated plans,
-without network access, package installation or host APT state changes.
+without network access, package installation or host APT state changes. Source-access
+probes also need `/usr/bin/python3`, supplied explicitly by the Debian quality image.
+The locked development and application runtime remains Python 3.14.7.
 
 ```bash
 uv python install 3.14.7
@@ -15,7 +17,7 @@ make native-ci
 ```
 
 `native-check` runs `make CONTAINERIZED=1 check`: Ruff check/format, strict mypy,
-compilation, lock validation, read-only bootstrap checks and the full fixture suite.
+compilation, lock validation, read-only entrypoint checks and the full fixture suite.
 Tests run once per supported runtime in CI. `native-build` creates one wheel and one
 sdist under `coverage/native-artifacts/`; `native-verify` installs the wheel and locked
 runtime dependencies into a disposable environment outside the source checkout.
