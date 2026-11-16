@@ -260,9 +260,15 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
 
     runtime = UserRuntime(source)
     allocate(source, "0.3.0")
-    (source / "manifests/platforms.toml").write_text('owner = "fixture"\n')
+    for manifest in ("platforms.toml", "network.toml", "happ.toml"):
+        (source / "manifests" / manifest).write_text('owner = "fixture"\n')
     (source / "src/setup_system/application").mkdir()
-    for filename in ("_installer_entry.py", "runtime.py", "application/installer.py"):
+    for filename in (
+        "_installer_entry.py",
+        "runtime.py",
+        "application/installer.py",
+        "network_worker.py",
+    ):
         (source / "src/setup_system" / filename).write_text('"""Fixture source."""\n')
     (source / "assets/hyprland").mkdir()
     (source / "assets/hyprland/profile.lua").write_text("-- Fixture profile.\n")
@@ -280,7 +286,9 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
     monkeypatch.setattr(install, "validate_installation_paths", lambda *args: None)
     monkeypatch.setattr(
-        install, "install_system", lambda *args, **kwargs: pytest.fail("APT reached invalid bundle")
+        install,
+        "prepare_packages",
+        lambda *args, **kwargs: pytest.fail("APT reached invalid bundle"),
     )
     monkeypatch.setattr(
         install,
@@ -296,3 +304,62 @@ def test_invalid_allocated_build_inputs_fail_before_system_apply(
     )
     assert "Preflight failed:" in capsys.readouterr().err
     assert hashes(source) == before and not list(home.iterdir())
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ready",
+        "missing-runtime",
+        "missing-receipt",
+        "changed-receipt",
+        "not-executable",
+        "symlink",
+        "root",
+    ],
+)
+def test_prepared_runtime_handoff_is_read_only_and_rejects_unsafe_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from setup_system import installation
+
+    home = tmp_path / "prepared desktop home"
+    runtime = home / "data/setup-system/runtime"
+    (runtime / "bin").mkdir(parents=True)
+    command = runtime / "bin/setup-system"
+    command.write_text("#!/bin/sh\nexit 0\n")
+    command.chmod(0o700)
+    receipt = runtime.parent / "runtime.json"
+    receipt.write_bytes(b'{"owner":"setupSystem","runtimePython":"3.14.7"}\n')
+    target = installation.TargetUser("runtime_fixture", os.getuid(), os.getgid(), home, "/bin/bash")
+    monkeypatch.setattr(installation, "resolve_target", lambda _: target)
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / "data"))
+    monkeypatch.setattr(
+        installation,
+        "run_command",
+        lambda *a, **kw: pytest.fail("Offline handoff executed a command"),
+    )
+    if case == "missing-runtime":
+        command.unlink()
+        command.parent.rmdir()
+        runtime.rmdir()
+    elif case == "missing-receipt":
+        receipt.unlink()
+    elif case == "changed-receipt":
+        receipt.write_text("Unmanaged user data; preserve this file")
+    elif case == "not-executable":
+        command.chmod(0o600)
+    elif case == "symlink":
+        original = runtime.parent / "external-command"
+        command.rename(original)
+        command.symlink_to(original)
+    elif case == "root":
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+    before = hashes(home)
+    if case == "ready":
+        assert UserRuntime(ROOT).existing() == runtime
+        assert UserRuntime(ROOT).existing() == runtime
+    else:
+        with pytest.raises((ValueError, RuntimeError)):
+            UserRuntime(ROOT).existing()
+    assert hashes(home) == before

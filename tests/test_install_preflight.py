@@ -52,7 +52,7 @@ def test_nested_user_symlink_stops_root_orchestration_before_apt(
         lambda: planning.Platform("debian", "13", "x86_64", True, False, ""),
     )
     system_calls: list[str] = []
-    monkeypatch.setattr(install, "install_system", lambda *a, **kw: system_calls.append("APT"))
+    monkeypatch.setattr(install, "prepare_packages", lambda *a, **kw: system_calls.append("APT"))
     monkeypatch.setattr(install, "mark_user_stage", lambda *a, **kw: None)
 
     def user_executor(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

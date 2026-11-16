@@ -14,12 +14,17 @@ install_app = typer.Typer(help="Plan or apply the one-command workstation instal
 
 
 def _request(
-    operation: Operation, user: str | None, yes: bool, paths: tuple[Path | None, ...]
+    operation: Operation,
+    user: str | None,
+    yes: bool,
+    paths: tuple[Path | None, ...],
+    subscription_file: Path | None = None,
 ) -> InstallRequest:
     return InstallRequest(
         operation,
         user=user,
         yes=yes,
+        subscription_file=subscription_file,
         overrides={
             kind: path
             for kind, path in zip(("config", "data", "state", "cache"), paths, strict=True)
@@ -36,6 +41,12 @@ def install_plan(
     xdg_data_home: Path | None = None,
     xdg_state_home: Path | None = None,
     xdg_cache_home: Path | None = None,
+    vpn_config_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Private HTTPS subscription input file inside verified HOME; never a URL."
+        ),
+    ] = None,
 ) -> None:
     """Inspect without preparing prerequisites, refreshing metadata or changing files."""
     request = _request(
@@ -43,6 +54,7 @@ def install_plan(
         user,
         False,
         (xdg_config_home, xdg_data_home, xdg_state_home, xdg_cache_home),
+        vpn_config_file,
     )
     raise typer.Exit(InstallationService(source).run(request))
 
@@ -56,9 +68,19 @@ def install_apply(
     xdg_data_home: Path | None = None,
     xdg_state_home: Path | None = None,
     xdg_cache_home: Path | None = None,
+    vpn_config_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Private HTTPS subscription input file inside verified HOME; never a URL."
+        ),
+    ] = None,
 ) -> None:
     """Run the same use case; setup.sh also prepares missing clean-Debian prerequisites."""
     request = _request(
-        Operation.APPLY, user, yes, (xdg_config_home, xdg_data_home, xdg_state_home, xdg_cache_home)
+        Operation.APPLY,
+        user,
+        yes,
+        (xdg_config_home, xdg_data_home, xdg_state_home, xdg_cache_home),
+        vpn_config_file,
     )
     raise typer.Exit(InstallationService(source).run(request))

@@ -35,12 +35,23 @@ def test_command_groups_and_public_option_names_remain_available() -> None:
         "apps": {"install", "list"},
         "projects": {"list", "planMigration", "move", "prepare", "path", "open"},
         "templates": {"list", "path", "versions", "create", "update", "cache"},
-        "workstation": {"plan", "doctor", "font-probe", "apply", "backup", "restore"},
+        "workstation": {"plan", "doctor", "font-probe", "prefetch", "apply", "backup", "restore"},
     }
     for name, expected in groups.items():
         group = command.commands[name]
         assert isinstance(group, TyperGroup)
         assert set(group.commands) == expected
+    workstation_group = command.commands["workstation"]
+    assert isinstance(workstation_group, TyperGroup)
+    assert "--offline" in {
+        option for param in workstation_group.commands["apply"].params for option in param.opts
+    }
+    install_group = command.commands["install"]
+    assert isinstance(install_group, TyperGroup)
+    for operation in ("plan", "apply"):
+        assert "--vpn-config-file" in {
+            option for param in install_group.commands[operation].params for option in param.opts
+        }
     restore = command.commands["restore"]
     assert {option for param in restore.params for option in param.opts} >= {
         "--backup",

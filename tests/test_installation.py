@@ -12,7 +12,9 @@ import pytest
 
 from setup_system import installation as install
 from setup_system import runtime as runtime_provider
+from setup_system.application import installer
 from setup_system.application.installer import InstallationService, InstallRequest, Operation
+from setup_system.network_session import NetworkReady
 from setup_system.runtime import UserRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,22 +118,29 @@ def test_apt_simulation_refuses_removal_and_downgrade() -> None:
     "case", ["offline", "signature", "missing-package", "apt-lock", "timeout", "interrupted"]
 )
 def test_system_failure_records_actual_stage_and_never_user_success(
-    tmp_path: Path, case: str
+    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths], case: str
 ) -> None:
-    paths = install.SystemPaths(
-        tmp_path / "etc/setup-system.sources",
-        tmp_path / "state/install.json",
-        tmp_path / "keyring.gpg",
-        tmp_path / "run",
-        tmp_path / "policy-rc.d",
-    )
-    paths.keyring.write_bytes(b"test trust anchor")
-    paths.runtime.mkdir()
+    root, target, happ, paths = package_fixture
     calls: list[list[str]] = []
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "/usr/bin/dpkg-query":
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        if argv[0] == "/usr/bin/systemctl":
+            text = (
+                "systemd 257 (257.9-1~deb13u1)\n"
+                if "--version" in argv
+                else ("257.9-1~deb13u1\n" if "--property=Version" in argv else "")
+            )
+            return subprocess.CompletedProcess(argv, 0, text, "")
+        if argv[0] == "/usr/bin/dpkg-deb":
+            return subprocess.CompletedProcess(
+                argv, 0, "Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\n", ""
+            )
+        if "/usr/bin/apt-get" not in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         calls.append(argv)
-        package_apply = "install" in argv and "--simulate" not in argv
+        package_apply = "--no-download" in argv
         if case == "timeout" and package_apply:
             raise subprocess.TimeoutExpired(argv, 1)
         if case == "interrupted" and package_apply:
@@ -145,7 +154,17 @@ def test_system_failure_records_actual_stage_and_never_user_success(
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     with pytest.raises((subprocess.SubprocessError, KeyboardInterrupt)):
-        install.install_system(ROOT, run=run, paths=paths, release=RELEASE, architecture="amd64")
+        with install.prepare_packages(
+            root,
+            target=target,
+            happ=happ,
+            proxy=None,
+            run=run,
+            paths=paths,
+            release=RELEASE,
+            architecture="amd64",
+        ) as prepared:
+            prepared.install()
     journal = paths.journal.read_text()
     expected = (
         "metadata"
@@ -160,25 +179,57 @@ def test_system_failure_records_actual_stage_and_never_user_success(
     )
 
 
-def test_system_repeat_and_full_package_set(tmp_path: Path) -> None:
-    paths = install.SystemPaths(
-        tmp_path / "etc/setup-system.sources",
-        tmp_path / "state/install.json",
-        tmp_path / "keyring.gpg",
-        tmp_path / "run",
-        tmp_path / "policy-rc.d",
-    )
-    paths.keyring.write_bytes(b"test")
-    paths.runtime.mkdir()
+def test_system_repeat_and_full_package_set(
+    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+) -> None:
+    root, target, happ, paths = package_fixture
     calls: list[list[str]] = []
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, "Inst hyprland (0.55.2 Debian)", "")
+        if argv[0] == "/usr/bin/dpkg-query":
+            return subprocess.CompletedProcess(argv, 1, "", "")
+        if argv[0] == "/usr/bin/systemctl":
+            text = (
+                "systemd 257 (257.9-1~deb13u1)\n"
+                if "--version" in argv
+                else ("257.9-1~deb13u1\n" if "--property=Version" in argv else "")
+            )
+            return subprocess.CompletedProcess(argv, 0, text, "")
+        if argv[0] == "/usr/bin/dpkg-deb":
+            return subprocess.CompletedProcess(
+                argv, 0, "Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\n", ""
+            )
+        if "/usr/bin/apt-get" in argv:
+            calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, "Inst hyprland (0.55.2+ds-1~bpo13+1 Debian)", ""
+        )
 
-    install.install_system(ROOT, run=run, paths=paths, release=RELEASE, architecture="amd64")
+    with install.prepare_packages(
+        root,
+        target=target,
+        happ=happ,
+        proxy=None,
+        run=run,
+        paths=paths,
+        release=RELEASE,
+        architecture="amd64",
+    ) as prepared:
+        prepared.install()
+        prepared.activate_happ()
     original = paths.backports.read_bytes()
-    install.install_system(ROOT, run=run, paths=paths, release=RELEASE, architecture="amd64")
+    with install.prepare_packages(
+        root,
+        target=target,
+        happ=happ,
+        proxy=None,
+        run=run,
+        paths=paths,
+        release=RELEASE,
+        architecture="amd64",
+    ) as prepared:
+        prepared.install()
+        prepared.activate_happ()
     assert paths.backports.read_bytes() == original and original.count(b"trixie-backports") == 1
     package_calls = [call for call in calls if "install" in call]
     assert all("--no-remove" in call for call in package_calls)
@@ -186,25 +237,24 @@ def test_system_repeat_and_full_package_set(tmp_path: Path) -> None:
     assert not paths.policy.exists()
 
 
-def test_unknown_service_policy_stops_before_any_mutation(tmp_path: Path) -> None:
-    paths = install.SystemPaths(
-        tmp_path / "sources",
-        tmp_path / "journal",
-        tmp_path / "keyring",
-        tmp_path / "run",
-        tmp_path / "policy",
-    )
-    paths.keyring.write_bytes(b"trust")
+def test_unknown_service_policy_stops_before_any_mutation(
+    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+) -> None:
+    root, target, happ, paths = package_fixture
     paths.policy.write_bytes(b"#!/bin/sh\nexit 0\n")
     paths.policy.chmod(0o600)
     with pytest.raises(ValueError, match="service policy"):
-        install.install_system(
-            ROOT,
+        with install.prepare_packages(
+            root,
+            target=target,
+            happ=happ,
+            proxy=None,
             paths=paths,
             run=lambda *a, **kw: pytest.fail("APT ran"),
             release=RELEASE,
             architecture="amd64",
-        )
+        ):
+            pytest.fail("Unknown policy entered package preparation")
     assert not paths.journal.exists() and paths.policy.read_bytes().endswith(b"exit 0\n")
 
 
@@ -300,8 +350,11 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
     home = tmp_path / "home with spaces"
     home.mkdir()
     target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
+    paths = install.SystemPaths(journal=tmp_path / "journal.json")
+    paths.journal.write_text('{"schema":1,"completed":[]}\n')
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=0.55.2+ds-1~bpo13+1"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
     monkeypatch.setattr(
         install.pwd,
         "getpwnam",
@@ -311,17 +364,59 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
     )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(os, "getgrouplist", lambda name, gid: [gid, 44])
-    events: list[object] = []
-    monkeypatch.setattr(install, "install_system", lambda *a, **kw: events.append("system"))
-    monkeypatch.setattr(install, "mark_user_stage", lambda paths, status: events.append(status))
+    monkeypatch.setattr(installer.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        installer.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+    )
+    events: list[str] = []
+    proxy = "http://127.0.0.1:18080"
+
+    class Network:
+        closed = False
+
+        def start(self, subscription: str | None) -> NetworkReady:
+            assert subscription == "https://subscription.invalid/fixture"
+            events.append("network-start")
+            return NetworkReady(proxy, home / "not-created-happ.deb")
+
+        def close(self) -> None:
+            if not self.closed:
+                events.append("network-close")
+                self.closed = True
+
+    network = Network()
+
+    class Packages:
+        def __enter__(self) -> Packages:
+            events.append("downloads")
+            return self
+
+        def __exit__(self, *exception: object) -> None:
+            pass
+
+        def install(self) -> None:
+            assert network.closed
+            events.append("system")
+
+        def activate_happ(self) -> None:
+            assert network.closed
+            events.append("activate")
+
+    def mark(paths: install.SystemPaths, status: str, **options: object) -> None:
+        assert options["completed"] == (
+            ("user-downloads", "user-configuration") if user_code == 0 else ("user-downloads",)
+        )
+        events.append(status)
+
+    monkeypatch.setattr(install, "mark_user_stage", mark)
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert kwargs["user"] == target.uid and kwargs["group"] == target.gid
-        assert kwargs["extra_groups"] == [target.gid, 44]
         env = kwargs["env"]
         assert isinstance(env, dict)
         assert env["HOME"] == str(home) and "GH_TOKEN" not in env
         if argv[:4] == ["/usr/bin/python3", "-I", "-B", "-c"]:
+            assert kwargs["user"] == target.uid and kwargs["group"] == target.gid
+            assert kwargs["extra_groups"] == [target.gid, 44]
             assert len(argv) == 5 and kwargs["cwd"] == Path("/")
             assert kwargs["umask"] == 0o077
             assert not {"APT_CONFIG", "PYTHONPATH", "LD_PRELOAD"} & env.keys()
@@ -330,14 +425,43 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
             assert payload["root"] == str(ROOT) and payload["paths"]
             events.append("source-access")
             return subprocess.CompletedProcess(argv, 0, '{"ok": true}\n', "")
-        events.append("user")
         assert env["XDG_CONFIG_HOME"] == str(home / "custom config")
         assert kwargs["cwd"] == home and kwargs["umask"] == 0o077
+        if Operation.PREPARE_USER.value in argv:
+            assert argv[:3] == ["/usr/bin/python3", "-I", "-B"]
+            assert kwargs["user"] == target.uid and kwargs["group"] == target.gid
+            assert kwargs["extra_groups"] == [target.gid, 44]
+            assert env["HTTP_PROXY"] == env["HTTPS_PROXY"] == proxy
+            events.append("prefetch")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        assert argv[:12] == [
+            "/usr/bin/unshare",
+            "--net",
+            "--",
+            "/usr/bin/setpriv",
+            "--reuid",
+            str(target.uid),
+            "--regid",
+            str(target.gid),
+            "--init-groups",
+            "/usr/bin/python3",
+            "-I",
+            "-B",
+        ]
+        assert not {"user", "group", "extra_groups"} & kwargs.keys()
+        assert env["UV_OFFLINE"] == "true" and not {"HTTP_PROXY", "HTTPS_PROXY"} & env.keys()
+        events.append("user")
         return subprocess.CompletedProcess(argv, user_code, "user-output\n", "")
 
     monkeypatch.setattr(install, "run_command", run)
+    service = InstallationService(
+        ROOT,
+        paths=paths,
+        network=lambda *a, **kw: network,
+        packages=lambda *a, **kw: Packages(),
+    )
     assert (
-        InstallationService(ROOT).run(
+        service.run(
             InstallRequest(
                 Operation.APPLY,
                 user="alice",
@@ -347,7 +471,17 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
         )
         == user_code
     )
-    assert events == ["source-access", "system", "user", "complete" if user_code == 0 else "failed"]
+    assert events == [
+        "source-access",
+        "network-start",
+        "downloads",
+        "prefetch",
+        "network-close",
+        "system",
+        "activate",
+        "user",
+        "complete" if user_code == 0 else "failed",
+    ]
     output = capsys.readouterr()
     assert ("Installation completed" in output.out) is (user_code == 0)
     assert not list(home.iterdir())
@@ -360,12 +494,17 @@ def test_plan_never_calls_runtime_or_packages(
     monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=pin"])
     monkeypatch.setattr(install, "resolve_target", lambda name: target)
     monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
-    monkeypatch.setattr(install, "install_system", lambda *a, **kw: pytest.fail("APT side effect"))
+    monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
     monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("Runtime side effect"))
     monkeypatch.setattr(
         runtime_provider, "managed_uv", lambda *a: pytest.fail("Download side effect")
     )
-    assert InstallationService(ROOT).run(InstallRequest(Operation.PLAN)) == 0
+
+    def forbidden(*args: object, **options: object) -> None:
+        pytest.fail("Read-only plan entered the network or package executor")
+
+    service = InstallationService(ROOT, network=forbidden, packages=forbidden)
+    assert service.run(InstallRequest(Operation.PLAN)) == 0
     assert not list(tmp_path.iterdir())
 
 
@@ -395,6 +534,7 @@ def test_user_runtime_uses_lock_without_checkout_venv(
     assert UserRuntime(ROOT).prepare() == tmp_path / ".local/share/setup-system/runtime"
     assert calls[0] == ["/fake/uv", "python", "install", "3.14.7"]
     assert "--locked" in calls[1] and "--no-editable" in calls[1]
+    assert calls[1][calls[1].index("--reinstall-package") + 1] == "setup-system"
     assert os.environ["UV_PROJECT_ENVIRONMENT"] == str(
         tmp_path / ".local/share/setup-system/runtime"
     )
@@ -552,9 +692,14 @@ def test_uv_staging_does_not_follow_predictable_stale_symlink(
     assert (destination / "uv").read_bytes() == b"uv"
 
 
+@pytest.mark.parametrize("operation", [Operation.PREPARE_USER, Operation.USER_STAGE])
 @pytest.mark.parametrize("case", ["root", "failure", "success"])
 def test_user_stage_uses_existing_typer_cli_and_propagates_apply_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], case: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: str,
+    operation: Operation,
 ) -> None:
     from typer.testing import CliRunner
 
@@ -587,17 +732,30 @@ def test_user_stage_uses_existing_typer_cli_and_propagates_apply_result(
 
         def prepare(self) -> Path:
             assert os.geteuid() != 0
-            events.append("runtime")
+            events.append("runtime-prepare")
+            return runtime_path
+
+        def existing(self) -> Path:
+            assert os.geteuid() != 0
+            events.append("runtime-existing")
             return runtime_path
 
     def apply(root: Path, profile: str, **options: object) -> Path:
         if case == "root":
             pytest.fail("User apply reached with root identity")
-        assert root == ROOT and profile == "hyprland"
+        assert root == ROOT and profile == "hyprland" and options["offline"] is True
         events.append("apply")
         if case == "failure":
             raise ValueError("Unmanaged configuration requires review")
         return tmp_path / "backup-id"
+
+    def prefetch(root: Path) -> None:
+        if case == "root":
+            pytest.fail("User prefetch reached with root identity")
+        assert root == ROOT
+        events.append("prefetch")
+        if case == "failure":
+            raise ValueError("Unmanaged configuration requires review")
 
     real_runner = install.run_command
 
@@ -607,10 +765,11 @@ def test_user_stage_uses_existing_typer_cli_and_propagates_apply_result(
         assert argv == [
             str(runtime_path / "bin/setup-system"),
             "workstation",
-            "apply",
-            "--profile",
-            "hyprland",
-            "--yes",
+            *(
+                ["prefetch", "--profile", "hyprland"]
+                if operation == Operation.PREPARE_USER
+                else ["apply", "--profile", "hyprland", "--offline", "--yes"]
+            ),
         ]
         assert options["cwd"] == target.home
         events.append("cli")
@@ -618,41 +777,47 @@ def test_user_stage_uses_existing_typer_cli_and_propagates_apply_result(
         return subprocess.CompletedProcess(argv, result.exit_code, result.output, "")
 
     monkeypatch.setattr(workstation, "apply", apply)
+    monkeypatch.setattr(workstation, "prefetch_workstation", prefetch)
     monkeypatch.setattr(install, "run_command", execute)
     service = InstallationService(ROOT, runtime=PreparedRuntime())
     assert (
-        service.run(InstallRequest(Operation.USER_STAGE, user="alice", yes=True))
+        service.run(InstallRequest(operation, user="alice", yes=True))
         == {
             "root": 2,
             "failure": 5,
             "success": 0,
         }[case]
     )
-    assert events == ([] if case == "root" else ["runtime", "cli", "apply"])
+    expected = (
+        ["runtime-prepare", "cli", "prefetch"]
+        if operation == Operation.PREPARE_USER
+        else ["runtime-existing", "cli", "apply"]
+    )
+    assert events == ([] if case == "root" else expected)
     output = capsys.readouterr()
-    assert ("backup-id" in output.out) is (case == "success")
+    marker = "Verified downloads cached" if operation == Operation.PREPARE_USER else "backup-id"
+    assert (marker in output.out) is (case == "success")
     assert not list(tmp_path.iterdir())
 
 
-def test_nonexecutable_administrator_policy_stops_before_mutation(tmp_path: Path) -> None:
-    paths = install.SystemPaths(
-        tmp_path / "sources",
-        tmp_path / "journal",
-        tmp_path / "keyring",
-        tmp_path / "run",
-        tmp_path / "policy",
-    )
-    paths.keyring.write_bytes(b"trust")
+def test_nonexecutable_administrator_policy_stops_before_mutation(
+    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+) -> None:
+    root, target, happ, paths = package_fixture
     paths.policy.write_bytes(b"#!/bin/sh\nexit 101\n")
     paths.policy.chmod(0o644)
     with pytest.raises(ValueError, match="executable"):
-        install.install_system(
-            ROOT,
+        with install.prepare_packages(
+            root,
+            target=target,
+            happ=happ,
+            proxy=None,
             paths=paths,
             run=lambda *a, **kw: pytest.fail("APT ran before policy validation"),
             release=RELEASE,
             architecture="amd64",
-        )
+        ):
+            pytest.fail("Nonexecutable policy entered package preparation")
     assert not paths.journal.exists()
     assert paths.policy.stat().st_mode & 0o777 == 0o644
 

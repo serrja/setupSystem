@@ -235,6 +235,24 @@ class UserRuntime:
                     shutil.copy2(self.root / relative, stage / relative)
             yield stage
 
+    def existing(self) -> Path:
+        """Use the prepared user environment without downloads or build hooks."""
+        from setup_system.installation import resolve_target, validate_user_path
+
+        if os.geteuid() == 0:
+            raise RuntimeError("User runtime cannot be used as root")
+        target = resolve_target(None)
+        data = validate_user_path(Path(os.environ["XDG_DATA_HOME"]), target)
+        runtime = validate_user_path(data / "setup-system/runtime", target)
+        receipt = validate_user_path(data / "setup-system/runtime.json", target)
+        expected = b'{"owner":"setupSystem","runtimePython":"3.14.7"}\n'
+        if not runtime.is_dir() or not receipt.is_file() or receipt.read_bytes() != expected:
+            raise ValueError("User runtime is not prepared; re-run the same installation command")
+        command = validate_user_path(runtime / "bin/setup-system", target)
+        if not command.is_file() or not os.access(command, os.X_OK):
+            raise ValueError("Prepared setup-system CLI is not executable")
+        return runtime
+
     def prepare(self) -> Path:
         """Prepare the locked environment only after losing root privileges."""
         from setup_system.installation import resolve_target, run_command, validate_user_path
@@ -286,6 +304,8 @@ class UserRuntime:
                     "--locked",
                     "--no-dev",
                     "--no-editable",
+                    "--reinstall-package",
+                    "setup-system",
                     "--managed-python",
                     "--python",
                     RUNTIME_PYTHON,

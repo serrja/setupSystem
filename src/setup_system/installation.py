@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import grp
+import hashlib
 import json
 import os
 import platform
@@ -18,8 +19,10 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from setup_system.adapters.debian.hyprland import package_arguments, profile_capabilities
+from setup_system.planning import load_capabilities
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,8 @@ class SystemPaths:
     keyring: Path = Path("/usr/share/keyrings/debian-archive-keyring.pgp")
     runtime: Path = Path("/run")
     policy: Path = Path("/usr/sbin/policy-rc.d")
+    happ_unit: Path = Path("/etc/systemd/system/happd.service")
+    happ_runtime_unit: Path = Path("/run/systemd/system/happd.service")
 
 
 def validate_user_path(path: Path, target: TargetUser) -> Path:
@@ -476,21 +481,286 @@ print(json.dumps({"ok": True}))
         raise ValueError(message)
 
 
-def install_system(
+@dataclass
+class PreparedPackages:
+    """Keep one prepared package selection alive until its offline application finishes."""
+
+    _apply: Callable[[], None]
+    _activate: Callable[[], None]
+    _active: bool = True
+    _installed: bool = False
+    _activated: bool = False
+
+    def install(self) -> None:
+        if not self._active:
+            raise RuntimeError("Prepared package context is closed")
+        if not self._installed:
+            self._apply()
+            self._installed = True
+
+    def activate_happ(self) -> None:
+        """Activate the native vendor helper after the caller closes temporary networking."""
+        if not self._active:
+            raise RuntimeError("Prepared package context is closed")
+        if not self._installed:
+            raise RuntimeError("Offline packages must be installed before Happ activation")
+        if not self._activated:
+            self._activate()
+            self._activated = True
+
+
+def validate_service_manager(
+    *,
+    root: Path | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
+) -> None:
+    """Require the matrix's reviewed manager API without changing units or PID 1."""
+    profile = profile_capabilities(root)
+    expected = profile.get("init_version")
+    if profile.get("init_system") != "systemd" or expected != "257":
+        raise ValueError("Happ service controls are reviewed for systemd 257 only")
+    environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
+    try:
+        client = run(
+            ["/usr/bin/systemctl", "--version"],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+        if (
+            client.returncode
+            or re.match(r"systemd " + re.escape(expected) + r"(?:[ .(]|$)", client.stdout) is None
+        ):
+            raise ValueError("Happ requires the reviewed Debian systemd 257 client")
+        manager = run(
+            [
+                "/usr/bin/systemctl",
+                "--system",
+                "--no-pager",
+                "--no-ask-password",
+                "show",
+                "--property=Version",
+                "--value",
+            ],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+        if (
+            manager.returncode
+            or re.match(re.escape(expected) + r"(?:[.~-]|$)", manager.stdout.strip()) is None
+        ):
+            raise ValueError("Happ requires an accessible systemd 257 system manager as init")
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("Happ requires systemctl and an accessible systemd 257 manager") from exc
+
+
+def _check_happ_unit_policy(paths: SystemPaths) -> None:
+    for path in (paths.happ_unit, paths.happ_runtime_unit):
+        if path.is_symlink():
+            raise ValueError(
+                "Happ service is masked or redirected by an administrator; "
+                "review it without overwriting"
+            )
+        if path.exists() and not path.is_file():
+            raise ValueError(
+                "Existing Happ service unit is not a regular administrator-controlled file"
+            )
+        _system_path(path)
+
+
+def _check_existing_happ(
+    expected_version: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
+) -> None:
+    """Refuse implicit Happ upgrades or repairs that could disrupt an active connection."""
+    message = (
+        "Happ package state requires manual review before installation; "
+        "only an absent package or the exact configured pinned release is supported"
+    )
+    environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
+    try:
+        result = run(
+            [
+                "/usr/bin/dpkg-query",
+                "--no-pager",
+                "--show",
+                r"--showformat=${Status}\n${Version}\n",
+                "happ",
+            ],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError(message) from None
+    if result.returncode == 1 and result.stdout == "":
+        return
+    if result.returncode == 0 and result.stdout == f"install ok installed\n{expected_version}\n":
+        return
+    raise ValueError(message)
+
+
+def _loopback_proxy(proxy: str | None) -> str | None:
+    if proxy is None:
+        return None
+    try:
+        parsed = urlsplit(proxy)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Invalid download proxy") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is None
+        or not 1024 <= port <= 65535
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or any(ord(character) <= 32 or ord(character) >= 127 for character in proxy)
+    ):
+        raise ValueError("Download proxy must be credential-free loopback HTTP on a high port")
+    host = "[::1]" if parsed.hostname == "::1" else "127.0.0.1"
+    return f"http://{host}:{port}"
+
+
+def _copy_happ(source: Path, target: TargetUser, destination: Path, digest: str) -> None:
+    """Read a bounded regular user file once and verify the privately staged bytes."""
+    validate_user_path(source, target)
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_uid != target.uid
+            or not 0 < details.st_size <= 200 * 1024 * 1024
+        ):
+            raise ValueError(
+                "Happ artifact must be a bounded regular file owned by the target user"
+            )
+        output = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        checksum = hashlib.sha256()
+        total = 0
+        with os.fdopen(output, "wb") as staged:
+            os.fchmod(staged.fileno(), 0o600)
+            while block := os.read(descriptor, 1024 * 1024):
+                total += len(block)
+                if total > 200 * 1024 * 1024:
+                    raise ValueError("Happ artifact exceeds its size limit")
+                checksum.update(block)
+                staged.write(block)
+            staged.flush()
+            os.fsync(staged.fileno())
+        if total != details.st_size or checksum.hexdigest() != digest:
+            raise ValueError("Happ artifact digest differs from the pinned release")
+    finally:
+        os.close(descriptor)
+
+
+def _freeze_selection(arguments: list[str], output: str, happ_version: str) -> list[str]:
+    """Retain explicit requests and constrain the simulated dependency closure exactly."""
+    selected: dict[str, str] = {}
+    for line in output.splitlines():
+        if not line.startswith("Inst "):
+            continue
+        match = re.match(r"Inst (\S+)(?: \[[^]]+\])? \((\S+) ", line)
+        if (
+            match is None
+            or not re.fullmatch(r"[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?", match[1])
+            or not re.fullmatch(r"[A-Za-z0-9.+:~_-]+", match[2])
+        ):
+            raise RuntimeError("Cannot freeze an unrecognized APT simulation entry")
+        name, version = match[1], match[2]
+        if name in selected and selected[name] != version:
+            raise RuntimeError("APT simulation selected conflicting package versions")
+        if name.split(":", 1)[0] == "happ":
+            if version != happ_version:
+                raise RuntimeError("APT simulation selected an unexpected Happ version")
+            continue
+        selected[name] = version
+    frozen: list[str] = []
+    for argument in arguments:
+        if argument.startswith("/"):
+            frozen.append(argument)
+            continue
+        name, separator, pinned = argument.partition("=")
+        choices = [key for key in selected if key == name or key.split(":", 1)[0] == name]
+        if len(choices) == 1:
+            version = selected.pop(choices[0])
+            if separator and pinned != version:
+                raise RuntimeError("APT simulation conflicts with an exact package pin")
+            frozen.append(f"{name}={version}")
+        else:
+            frozen.append(argument)
+    return [*frozen, *(f"{name}={version}" for name, version in selected.items())]
+
+
+@contextlib.contextmanager
+def prepare_packages(
     root: Path,
     *,
+    target: TargetUser,
+    happ: Path,
+    proxy: str | None,
     run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
     paths: SystemPaths | None = None,
     release: dict[str, str] | None = None,
     architecture: str | None = None,
-) -> None:
+) -> Iterator[PreparedPackages]:
+    """Download through an explicit proxy, then expose a fully offline package stage."""
     paths = SystemPaths() if paths is None else paths
     packages = package_arguments(root=root, os_release=release, architecture=architecture)
     profile = profile_capabilities(root)
-    codename = str(profile["codename"])
-    backports = str(profile["backports"])
+    proxy = _loopback_proxy(proxy)
+    aliases = cast(dict[str, str], load_capabilities(root)["architectures"])
+    machine = architecture if architecture is not None else platform.machine()
+    machine = aliases.get(machine, machine)
+    apt_architecture = next(
+        (
+            item
+            for item in cast(list[str], profile["apt_architectures"])
+            if aliases.get(item, item) == machine
+        ),
+        None,
+    )
+    if apt_architecture is None:
+        raise ValueError("No exact Debian package architecture matches this target")
+    if target.uid <= 0:
+        raise ValueError("Happ installation needs a verified non-root target user")
+    validate_user_path(happ, target)
     if paths.keyring.is_symlink() or not paths.keyring.is_file():
         raise ValueError(f"Installed regular Debian archive keyring is required: {paths.keyring}")
+    manifest_path = root / "manifests/happ.toml"
+    if (
+        manifest_path.is_symlink()
+        or not manifest_path.is_file()
+        or manifest_path.stat().st_size > 1024 * 1024
+    ):
+        raise ValueError("Happ manifest must be a bounded regular file")
+    manifest = tomllib.loads(manifest_path.read_text())
+    linux = manifest.get("linux")
+    asset = linux.get(apt_architecture) if isinstance(linux, dict) else None
+    if not isinstance(asset, dict):
+        raise ValueError("Missing pinned Happ package for the target architecture")
+    digest, happ_version = asset.get("sha256"), manifest.get("packageVersion")
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or not isinstance(happ_version, str)
+        or re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,200}", happ_version) is None
+        or asset.get("packageArchitecture") != apt_architecture
+    ):
+        raise ValueError("Invalid pinned Happ digest, version or target architecture")
+    codename, backports = str(profile["codename"]), str(profile["backports"])
     backport_source = (
         "# Managed by setupSystem; official Debian backports only.\n"
         "Types: deb\nURIs: http://deb.debian.org/debian\n"
@@ -500,9 +770,17 @@ def install_system(
     if paths.backports.exists() and paths.backports.read_bytes() != backport_source:
         raise ValueError("Existing backports file differs; review it without overwriting")
     _check_service_policy(paths.policy)
+    _check_happ_unit_policy(paths)
     _system_path(paths.journal)
-    state: dict[str, Any] = {"schema": 1, "status": "running", "stage": "metadata", "completed": []}
-    _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
+    if (
+        not paths.runtime.is_absolute()
+        or any(parent.is_symlink() for parent in (paths.runtime, *paths.runtime.parents))
+        or not paths.runtime.is_dir()
+    ):
+        raise ValueError("APT staging needs a regular trusted runtime directory")
+    runtime_details = paths.runtime.stat()
+    if runtime_details.st_uid != os.geteuid() or runtime_details.st_mode & 0o022:
+        raise ValueError("APT staging directory is not privately controlled")
     environment = {
         "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
         "LANG": "C",
@@ -510,27 +788,78 @@ def install_system(
         "DEBIAN_FRONTEND": "noninteractive",
     }
 
-    def execute(argv: list[str], timeout: int = 180) -> subprocess.CompletedProcess[str]:
-        return run(
-            argv, env=environment, text=True, capture_output=True, check=True, timeout=timeout
+    def execute(
+        argv: list[str],
+        timeout: int = 180,
+        *,
+        manager_offline: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        command_environment = (
+            {**environment, "SYSTEMD_OFFLINE": "1"} if manager_offline else environment
         )
+        result = run(
+            argv,
+            env=command_environment,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=timeout,
+        )
+        if result.returncode:
+            raise subprocess.CalledProcessError(
+                result.returncode, argv, result.stdout, result.stderr
+            )
+        return result
 
-    def checkpoint(stage: str, completed: str | None = None) -> None:
-        if completed:
-            state["completed"].append(completed)
-        state["stage"] = stage
-        _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
-
+    validate_service_manager(root=root, run=run)
+    _check_existing_happ(happ_version, run=run)
     try:
-        with tempfile.TemporaryDirectory(
-            prefix="setup-system-apt-", dir=paths.runtime
-        ) as temporary:
-            stage = Path(temporary)
-            stage.chmod(0o755)
-            for name in ("lists/partial", "archives/partial"):
-                (stage / name).mkdir(parents=True, mode=0o755)
+        execute(["/usr/bin/unshare", "--net", "--", "/usr/bin/true"], timeout=15)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(
+            "Offline package apply requires root network namespace support (unshare --net)"
+        ) from exc
+    with tempfile.TemporaryDirectory(prefix="setup-system-apt-", dir=paths.runtime) as temporary:
+        stage = Path(temporary)
+        stage.chmod(0o700)
+        local_happ = stage / "happ.deb"
+        _copy_happ(happ, target, local_happ, digest)
+        metadata = execute(
+            ["/usr/bin/dpkg-deb", "--field", str(local_happ), "Package", "Version", "Architecture"]
+        )
+        fields: dict[str, str] = {}
+        for line in metadata.stdout.splitlines():
+            name, separator, value = line.partition(":")
+            if not separator or name in fields:
+                raise ValueError("Happ archive metadata differs from the pinned release")
+            fields[name] = value.strip()
+        if fields != {"Package": "happ", "Version": happ_version, "Architecture": apt_architecture}:
+            raise ValueError("Happ archive metadata differs from the pinned release")
+        # Verified package bytes and signed metadata are public. Keep root-only writes,
+        # but allow APT's native _apt sandbox to traverse its acquisition cache.
+        local_happ.chmod(0o644)
+        stage.chmod(0o755)
+        state: dict[str, Any] = {
+            "schema": 1,
+            "status": "running",
+            "stage": "metadata",
+            "completed": [],
+        }
+
+        def checkpoint(next_stage: str, completed: str | None = None) -> None:
+            if completed:
+                state["completed"].append(completed)
+            state["stage"] = next_stage
+            _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
+
+        checkpoint("metadata")
+        prepared: PreparedPackages | None = None
+        try:
+            for name in ("lists", "lists/partial", "archives", "archives/partial"):
+                directory = stage / name
+                directory.mkdir(mode=0o755)
+                directory.chmod(0o755)
             sources = stage / "debian.sources"
-            # A private source list ignores third-party/trusted=yes sources on the host.
             sources.write_text(
                 "Types: deb\nURIs: http://deb.debian.org/debian\n"
                 f"Suites: {codename} {codename}-updates {backports}\n"
@@ -538,6 +867,7 @@ def install_system(
                 "Types: deb\nURIs: http://security.debian.org/debian-security\n"
                 f"Suites: {codename}-security\nComponents: main\nSigned-By: {paths.keyring}\n"
             )
+            sources.chmod(0o644)
             options = [
                 "-o",
                 f"Dir::Etc::sourcelist={sources}",
@@ -558,11 +888,17 @@ def install_system(
                 "-o",
                 "Acquire::http::Timeout=30",
                 "-o",
+                "Acquire::https::Timeout=30",
+                "-o",
                 "DPkg::Lock::Timeout=30",
             ]
-            print("Stage: metadata (authorized signed Debian refresh)", flush=True)
-            execute(["/usr/bin/apt-get", *options, "update"])
-            checkpoint("resolution", "metadata")
+            online = [
+                *options,
+                "-o",
+                f"Acquire::http::Proxy={proxy or 'DIRECT'}",
+                "-o",
+                f"Acquire::https::Proxy={proxy or 'DIRECT'}",
+            ]
             install = [
                 "--no-remove",
                 "--no-install-recommends",
@@ -570,29 +906,145 @@ def install_system(
                 "python3",
                 "ca-certificates",
                 *packages,
+                str(local_happ),
             ]
-            simulation = execute(["/usr/bin/apt-get", *options, "--simulate", *install])
+            print("Stage: metadata (authorized signed Debian refresh)", flush=True)
+            execute(["/usr/bin/apt-get", *online, "update"])
+            checkpoint("resolution", "metadata")
+            simulation = execute(["/usr/bin/apt-get", *online, "--simulate", *install])
             validate_simulation(simulation.stdout)
-            checkpoint("packages", "resolution")
-            print("Stage: packages (no removals; existing service starts deferred)", flush=True)
-            with _defer_services(paths.policy):
-                execute(["/usr/bin/apt-get", *options, "--yes", *install], timeout=1800)
-            checkpoint("source", "packages")
-            # Persist only after APT verified signed metadata and installed the exact set.
-            _write_system(paths.backports, backport_source, 0o644)
-            state["status"] = "system-complete"
-            checkpoint("user-runtime", "source")
-    except BaseException as exc:
-        state["status"] = "failed"
-        state["error"] = type(exc).__name__
-        _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
-        raise
+            selection = _freeze_selection(install[3:], simulation.stdout, str(happ_version))
+            install = [*install[:3], *selection]
+            checkpoint("downloads", "resolution")
+            print(
+                "Stage: downloads (packages only; no installation or service changes)", flush=True
+            )
+            execute(
+                ["/usr/bin/apt-get", *online, "--download-only", "--yes", *install], timeout=1800
+            )
+            state["status"] = "prepared"
+            checkpoint("user-prefetch", "downloads")
+
+            def apply_offline() -> None:
+                state["status"] = "running"
+                checkpoint("packages")
+                _check_existing_happ(happ_version, run=run)
+                _check_happ_unit_policy(paths)
+                offline = [
+                    *options,
+                    "-o",
+                    "Acquire::http::Proxy=DIRECT",
+                    "-o",
+                    "Acquire::https::Proxy=DIRECT",
+                ]
+                print(
+                    "Stage: packages (offline network namespace; existing service starts deferred)",
+                    flush=True,
+                )
+                with _defer_services(paths.policy):
+                    execute(
+                        [
+                            "/usr/bin/unshare",
+                            "--net",
+                            "--",
+                            "/usr/bin/apt-get",
+                            *offline,
+                            "--yes",
+                            "--no-download",
+                            *install,
+                        ],
+                        timeout=1800,
+                        # systemd v257 skips online-only vendor commands; enablement stays local.
+                        manager_offline=True,
+                    )
+                checkpoint("source", "packages")
+                _write_system(paths.backports, backport_source, 0o644)
+                state["status"] = "packages-complete"
+                checkpoint("happ-service", "source")
+
+            def activate_happ() -> None:
+                state["status"] = "running"
+                checkpoint("happ-service")
+                _check_happ_unit_policy(paths)
+                command = ["/usr/bin/systemctl", "--system", "--no-pager", "--no-ask-password"]
+                try:
+                    execute([*command, "daemon-reload"], timeout=30)
+                    current = run(
+                        [*command, "--quiet", "is-active", "happd.service"],
+                        env=environment,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=30,
+                    )
+                    if current.returncode not in {0, 3, 4}:
+                        raise RuntimeError("Cannot inspect happd.service activation state")
+                    if current.returncode:
+                        execute([*command, "start", "happd.service"], timeout=60)
+                    execute([*command, "--quiet", "is-active", "happd.service"], timeout=30)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    raise RuntimeError(
+                        "Vendor happd.service could not be activated; review its system journal"
+                    ) from exc
+                state["status"] = "system-complete"
+                checkpoint("user-runtime", "happ-service")
+
+            prepared = PreparedPackages(apply_offline, activate_happ)
+            yield prepared
+        except BaseException as exc:
+            state["status"] = "failed"
+            state["error"] = type(exc).__name__
+            _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
+            raise
+        finally:
+            if prepared is not None:
+                prepared._active = False
 
 
-def mark_user_stage(paths: SystemPaths, status: str) -> None:
+def mark_user_stage(
+    paths: SystemPaths,
+    status: str,
+    *,
+    stage: str | None = "user",
+    completed: tuple[str, ...] = (),
+) -> None:
+    """Merge user progress into the latest package journal after its context has closed."""
+    stages = {
+        "metadata",
+        "resolution",
+        "downloads",
+        "user-prefetch",
+        "packages",
+        "source",
+        "happ-service",
+        "user-runtime",
+        "user",
+        "user-downloads",
+        "temporary-network",
+        "package-downloads",
+        "temporary-network-cleanup",
+    }
+    if status not in {"running", "complete", "failed"} or (
+        stage is not None and stage not in stages
+    ):
+        raise ValueError("Invalid user installation stage or status")
+    if any(item not in {"user-downloads", "user-configuration"} for item in completed):
+        raise ValueError("Invalid completed user installation stage")
     _system_path(paths.journal)
+    if paths.journal.stat().st_size > 1024 * 1024:
+        raise ValueError("Installation journal exceeds its size limit")
     state = json.loads(paths.journal.read_text())
-    state["stage"] = "user"
+    if not isinstance(state, dict):
+        raise ValueError("Installation journal must be an object")
+    previous = state.get("completed", [])
+    if not isinstance(previous, list) or any(not isinstance(item, str) for item in previous):
+        raise ValueError("Installation journal has invalid completed stages")
+    if stage is None:
+        stage = state.get("stage")
+        if not isinstance(stage, str) or stage not in stages:
+            raise ValueError("Installation journal has an unknown current stage")
+    state["completed"] = list(dict.fromkeys([*previous, *completed]))
+    state["stage"] = stage
     state["status"] = status
     _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
 
