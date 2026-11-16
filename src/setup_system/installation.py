@@ -859,6 +859,10 @@ def prepare_packages(
                 directory = stage / name
                 directory.mkdir(mode=0o755)
                 directory.chmod(0o755)
+            # APT does not cache local .deb inputs during --download-only. Offline
+            # installation needs its canonical archive name as well as the input path.
+            cached_happ = stage / "archives" / f"happ_{happ_version}_{apt_architecture}.deb"
+            os.link(local_happ, cached_happ, follow_symlinks=False)
             sources = stage / "debian.sources"
             sources.write_text(
                 "Types: deb\nURIs: http://deb.debian.org/debian\n"
