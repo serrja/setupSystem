@@ -23,6 +23,13 @@ terminated dpkg operation, inspect `sudo dpkg --audit`; review any pending packa
 configuration before running `sudo dpkg --configure --pending` and retrying setup.
 Do not remove another process's APT/dpkg lock files.
 
+Keep the verified source bundle and its lockfile unchanged when recovering runtime
+preparation. Allocated release versions are reconciled only in private temporary
+build files under the target user's cache; all dependency versions and hashes stay
+locked. The temporary copy is removed when preparation returns, including handled
+failures. Fix the reported error and rerun the same entrypoint instead of regenerating
+the lockfile or installing Python packages as root.
+
 ## Managed user files
 
 The user runtime CLI is installed at
