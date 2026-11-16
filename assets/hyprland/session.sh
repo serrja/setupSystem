@@ -21,7 +21,14 @@ start() { "$@" & children="$children $!"; }
 start waybar -c "$profile_dir/waybar.json" -s "$profile_dir/style.css"
 start mako --config "$profile_dir/mako.conf"
 start hypridle -c "$profile_dir/hypridle.conf"
-start nm-applet --indicator
+start swaybg -i "$profile_dir/wallpaper.svg" -m fill
+# Existing connections and system services are preserved by the installer.
+if systemctl is-active --quiet NetworkManager.service; then start nm-applet --indicator; fi
+for controller in /sys/class/bluetooth/hci*; do
+    [ -e "$controller" ] || continue
+    start blueman-applet
+    break
+done
 start /usr/libexec/hyprpolkitagent
 start wl-paste --type text --watch cliphist store
 start wl-paste --type image --watch cliphist store

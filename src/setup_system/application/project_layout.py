@@ -32,6 +32,7 @@ class ProjectLayout:
     projects_root: Path
     owner_groups: tuple[str, ...]
     projects: tuple[Project, ...]
+    verify_origins: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
                 record.review_owner,
             )
         )
-    return ProjectLayout(projects_root, groups, tuple(projects))
+    return ProjectLayout(projects_root, groups, tuple(projects), projects_root != home / "Projects")
 
 
 def _git(path: Path, *args: str, required: bool = True) -> bytes:
@@ -180,6 +181,25 @@ def active_projects(layout: ProjectLayout) -> dict[str, Path]:
         if len(found) > 1:
             raise ValueError(f"Two active checkouts for {project.id}; review before opening")
         if found:
+            if layout.verify_origins:
+                allowed = {
+                    f"git@github.com:{project.id}.git",
+                    f"https://github.com/{project.id}.git",
+                }
+                fetch_urls = _git(found[0], "remote", "get-url", "--all", "origin", required=False)
+                push_urls = _git(
+                    found[0], "remote", "get-url", "--push", "--all", "origin", required=False
+                )
+                urls = (fetch_urls + push_urls).decode().splitlines()
+                if (
+                    project.origin not in allowed
+                    or not fetch_urls.strip()
+                    or not push_urls.strip()
+                    or any(url not in allowed for url in urls)
+                ):
+                    raise ValueError(
+                        f"Explicit project root requires canonical fetch/push origins: {project.id}"
+                    )
             result[project.id] = found[0]
     return result
 

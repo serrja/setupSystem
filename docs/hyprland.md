@@ -1,135 +1,161 @@
-# Рабочий стол Hyprland
-
-Профиль подготовлен для Debian 13 и официального пакета
-[Hyprland 0.55.2 из trixie-backports](https://packages.debian.org/trixie-backports/hyprland).
-Конфигурация Lua сверена с официальным тегом v0.55.2, commit
-`39d7e209c79d451efab1b21151d5938289da838d`, и
-[документацией серии 0.55](https://wiki.hypr.land/0.55.0/Configuring/Start/).
-Применение требует установленную 0.55.2; другой номер требует пересмотра профиля.
-Наличие файлов в Git не подтверждает вход, блокировку или совместимость оборудования.
-
-## Подготовка и установка
-
-Сначала [установите Debian](debian.md), сохраните рабочую DE, вход через TTY и
-backup пользовательских конфигураций. Проверьте ОС, GPU/драйвер, мониторы и пакеты:
+# Hyprland workstation
 
 ```bash
-cat /etc/os-release
-uname -m
-lspci -nnk
-apt-cache policy hyprland hyprlock hypridle xdg-desktop-portal-hyprland
-setup-system workstation plan --profile hyprland
-setup-system workstation backup --profile hyprland
+sudo bash ./setup.sh
 ```
 
-Подключение официального backports — отдельное действие администратора по
-[инструкции Debian](https://backports.debian.org/Instructions/), с сохранением текущих
-APT sources. Профиль не добавляет sources, sid/testing или случайные Git-сборки.
-После обновления списка пакетов просмотрите план установки. На Ubuntu эту команду
-не запускайте: backend её отклонит.
+Run this from a verified setupSystem source checkout on an already installed, minimal
+Debian system. The installer prepares the system packages, a pinned user runtime and
+the managed user configuration in the same invocation. It does not start a session.
+See [Debian prerequisites](debian.md) and the [recovery guide](recovery.md).
+
+## Compatibility and package sources
+
+The Hyprland profile supports **Debian 13 / trixie, amd64 and arm64**. General
+setupSystem capabilities also cover Debian 12; that does not promise Hyprland support
+on Debian 12. The installer checks the actual release, codename and architecture.
+Unsupported targets stop before installation. No testing/unstable distribution switch
+or source build is used.
+
+[Official trixie-backports](https://backports.debian.org/Instructions/) supplies
+[Hyprland 0.55.2](https://packages.debian.org/trixie-backports/hyprland),
+hypridle 0.1.8, hyprlock 0.9.6, hyprpolkitagent 0.1.3 and the Hyprland portal 1.4.1.
+Their exact Debian package revisions and the base-package set live in the single
+[capability manifest](../manifests/platforms.toml). Availability was checked in the
+[amd64](https://deb.debian.org/debian/dists/trixie-backports/main/binary-amd64/Packages.xz)
+and [arm64](https://deb.debian.org/debian/dists/trixie-backports/main/binary-arm64/Packages.xz)
+indexes. Base packages remain unqualified so official security/updates candidates and
+newer installed versions stay eligible; only the compatible backports set is pinned.
+Apply additionally verifies the signed source and current dependency resolution.
+Missing pins, a failed refresh, an APT lock or any proposed package removal is an error.
+
+The explicit package set also has the hard dependency chains needed by a minimal
+system with `--no-install-recommends`: Hyprland → libxkbcommon0 → xkb-data and
+Hyprland → libegl1 → libegl-mesa0 → mesa-libgallium; Hyprland directly requires
+libgl1-mesa-dri. dbus-user-session requires libpam-systemd and systemd. These are
+Debian package `Depends`, not optional recommendations. The profile uses Debian's
+default systemd/logind and PAM login; it does not replace another init system.
+The [pam_systemd contract](https://manpages.debian.org/trixie/libpam-systemd/pam_systemd.8.en.html)
+creates the user runtime directory on a fresh local login. Mesa's presence supplies
+the EGL/DRI implementation; it does not establish that a particular GPU or renderer
+has passed a real graphical test.
+
+Read-only inspection needs no root and never prepares packages or a runtime:
 
 ```bash
-setup-system workstation apply --profile hyprland --install-debian-packages --yes
-setup-system workstation doctor --profile hyprland
+bash ./setup.sh plan
 ```
 
-APT сначала выполняет симуляцию и запрещает удаление пакетов через `--no-remove`.
-Установка требует штатного sudo и подтверждения APT. После неё проверяется реальная
-версия Hyprland, затем записывается профиль с backup. Без пакетного флага apply
-настраивает уже установленную подходящую версию. Драйверы, display manager, системные
-библиотеки, автологин и текущий сеанс команда не заменяет.
+A plan without Python is a preliminary shell report. The complete package simulation
+uses refreshed metadata only after apply has been accepted. A preliminary plan is not
+proof that installation or graphical login will succeed.
 
-Пользовательский вход — `hypr/hyprland.lua`, управляемые файлы —
-`hypr/setup-system/`. Существующий непустой входной файл требует ручного согласования
-`require("setup-system.profile")`: сохраните личные правила и устраните конфликты
-старых binds/autostart. Не включайте два профиля одновременно. Мониторы по умолчанию
-используют preferred mode и автоматический масштаб; уточните конкретные outputs
-после `hyprctl monitors`, сохраняя пользовательские настройки после include.
+## User files and first login
 
-## Компоненты и сеанс
+The target is the verified account that invoked sudo. Direct root login must specify
+`--user NAME`; UID 0 cannot be a desktop target. HOME comes from that account's passwd
+entry. Explicit `--xdg-config-home`, `--xdg-data-home`, `--xdg-state-home` and
+`--xdg-cache-home` paths must remain within that HOME and avoid symlinks. The final
+installer output shows the actual chosen paths.
 
-| Функция | Компонент | Поведение |
-| --- | --- | --- |
-| Панель | Waybar | Workspaces, часы, RU/EN, звук, сеть, яркость, батарея, tray |
-| Launcher и меню | Wofi | Приложения, clipboard, подтверждение питания |
-| Уведомления | Mako | Три сообщения, без тяжёлых эффектов |
-| Терминал | foot | Только в будущем Hyprland-профиле, текущий терминал не заменяется |
-| Блокировка / idle | hyprlock / hypridle | Блокировка через 5 минут, дисплеи через 10; lock до suspend |
-| Clipboard | wl-clipboard + cliphist | История копирования, выбор через Wofi |
-| Скриншот | grim + slurp | Выделенная область в clipboard, временный файл удаляется |
-| Звук | PipeWire + WirePlumber + pavucontrol | Один audio stack, без второго daemon |
-| Сеть | NetworkManager + nm-applet | Настройка через nm-connection-editor |
-| Яркость / питание | brightnessctl / logind | Аппаратные клавиши, подтверждение logout/reboot/poweroff |
-| Polkit | hyprpolkitagent | Один агент в Hyprland-сеансе |
-| Portals | Hyprland + GTK | ScreenCast/ScreenShot через Hyprland, FileChooser через GTK |
-
-Session helper запускается только событием старта Hyprland, экспортирует Wayland
-окружение в D-Bus/systemd и запускает нужные пользовательские процессы один раз.
-При завершении сеанса он останавливает только свои дочерние процессы. PipeWire и
-WirePlumber используют штатные user units; их не отключают при выходе. XDG portal
-службы активируются через D-Bus. Не запускайте параллельно старый bar/notification/
-Polkit autostart. XWayland и GTK/Qt Wayland-пакеты сохранены; приложения не принуждаются
-к глобальному backend. Keyring остаётся существующим системным компонентом.
-
-Единые шрифты задаются [одним manifest-профилем](fonts.md): JetBrainsMono Nerd Font
-Mono для foot, Waybar/Wofi, Mako и Hyprlock; emoji — только fallback. `apply`
-подставляет значения в assets, поэтому исходные файлы с placeholders не копируют
-вручную. Clipboard/power menus используют тот же Wofi style. Палитра тёмная, отступы 4/8 px,
-без blur и анимаций. Это ограничение эффектов для предсказуемого профиля, не заявление
-о замеренном ускорении текущего компьютера. Sysctl, security updates, firewall,
-журналирование, CPU-защита и энергосбережение не отключаются.
-
-## Клавиши
-
-Клавиши запуска используют Return/F-клавиши, поэтому работают одинаково при RU/EN.
-Обычные комбинации приложений и Vim остаются доступными.
-
-| Действие | Клавиши | Контекст | Примечание |
-| --- | --- | --- | --- |
-| Терминал / приложения | Super+Return / Super+F1 | Hyprland | foot / Wofi |
-| Фокус / перемещение | Super+стрелки / Super+Shift+стрелки | Окна | Направление |
-| Изменить размер | Super+Ctrl+стрелки | Окно | Шаг 20 px |
-| Переместить / размер мышью | Super+ЛКМ / Super+ПКМ | Окно | Drag |
-| Workspace / перенести окно | Super+1…0 / Super+Shift+1…0 | Hyprland | 0 означает 10 |
-| Закрыть / floating / fullscreen | Super+F4 / Super+F5 / Super+F11 | Окно | Закрытие обрабатывает приложение |
-| RU/EN | Super+Space | Клавиатура | XKB group toggle |
-| Блокировка | Super+Escape | Сеанс | Через logind и hypridle |
-| Скриншот области | Super+Print | Сеанс | В clipboard |
-| История clipboard | Super+F8 | Сеанс | Wofi |
-| Звук / сеть | Super+F2 / Super+F3 | Сеанс | Штатные диалоги |
-| Питание | Super+F9 | Сеанс | Разрушительные действия требуют выбора Confirm |
-| Справка | Super+F12 | Сеанс | Локальная шпаргалка, q закрывает |
-| Громкость / яркость | Аппаратные клавиши | Сеанс | Без перехвата клавиш редактора |
-
-## Реальный переход и восстановление
-
-После backup и установки самостоятельно завершите текущий сеанс и выберите Hyprland
-в существующем display manager. Агент не должен завершать свой GUI или перезагружать
-компьютер без подтверждения. Выполните реальную проверку: все мониторы/масштаб и RU/EN,
-звук/микрофон, сеть, clipboard, screenshot, GTK/Qt file chooser и screen sharing,
-XWayland-приложение, Polkit, lock/unlock, lid/suspend/resume и доступ через TTY.
-Сохраните версии и результаты; затем назначьте сессию основной штатным выбором входа.
-Автологин не включается.
-
-Только после успешной проверки составьте точный список пакетов старой DE и выполните
-`apt-get --simulate remove PACKAGE1 PACKAGE2`. Просмотрите каждое удаление, сохраните
-список установленных пакетов и backup. Не используйте wildcard purge или слепой
-autoremove. Общие GTK/Qt-библиотеки, драйверы, сеть/звук, Polkit, keyring, portals,
-XWayland и пользовательские приложения остаются. При недоступной GUI-проверке
-удаление DE ожидает; в текущей задаче смена оболочки вообще исключена владельцем.
-
-Из TTY (Ctrl+Alt+F3) войдите своим пользователем и выполните:
+From a local Linux text console, log in as that user and run the printed entrypoint.
+With default XDG paths it is:
 
 ```bash
-setup-system workstation restore BACKUP_ID
-setup-system workstation restore BACKUP_ID --apply
-systemctl status display-manager
-journalctl --user -b --no-pager -n 100
+"$HOME/.local/share/setup-system/bin/start-hyprland"
 ```
 
-Если применялся только новый профиль, rollback удалит его неизменённые новые файлы
-и восстановит прежние. Выберите сохранённую DE на экране входа. Если display manager
-не работает, выясните причину через `journalctl -b -u display-manager`; его restart
-выполняется вручную после сохранения работы и завершит активные GUI-сеансы. Не
-удаляйте fallback до проверенного восстановления. Общий [recovery guide](recovery.md)
-содержит остальные backup-команды.
+This managed wrapper restores the chosen XDG directories and invokes Debian's
+`/usr/bin/start-hyprland`. It requires a real local user runtime directory, refuses
+root, SSH and an already running graphical session, and uses the login session's
+D-Bus bus or `dbus-run-session`. It is never sourced by `.bashrc` or Zsh startup.
+No autologin, forced logout, display-manager replacement or automatic reboot occurs.
+Use **Super+F9 → Logout** to return to the login console, or **Ctrl+Alt+F2** to switch
+to another TTY for troubleshooting.
+
+The managed Lua entrypoint is `$XDG_CONFIG_HOME/hypr/hyprland.lua`; profile assets are
+in `hypr/setup-system/`. Existing unknown or edited managed files cause a conflict
+before replacement. User files are backed up with hashes and provenance. A successful
+repeat apply reuses unchanged files and creates no duplicate backup. System package
+changes are not transactionally rolled back.
+
+## Daily controls
+
+| Keys | Action |
+| --- | --- |
+| Super+Return | Foot terminal |
+| Super+E | Thunar file manager |
+| Super+F1 | Wofi application launcher |
+| Super+F2 / F3 | Audio / network settings |
+| Super+F4 / F5 / F11 | Close / toggle floating / fullscreen |
+| Super+arrows | Move focus |
+| Super+Shift+arrows | Move a window |
+| Super+Ctrl+arrows | Resize a window |
+| Super+1…0 | Workspaces 1…10 |
+| Super+Shift+1…0 | Move window to workspace |
+| Super+mouse drag | Move / resize with left / right button |
+| Super+Space | Switch the default US/Russian layout |
+| Super+Escape | Lock |
+| Super+Print | Copy a selected screenshot |
+| Super+F8 / F9 / F12 | Clipboard history / power menu / key help |
+| Media / brightness keys | Sound, playback and available backlight |
+
+Waybar, Mako, Wofi, Foot, Thunar and Swaybg each have one role. Adwaita icons/cursors,
+a restrained dark theme and the shared pinned font policy provide the initial style.
+The original wallpaper is shipped in this repository. The font archive is verified
+and installed by the user stage; [fonts](fonts.md) describes its provenance.
+
+Inside the Hyprland session, the helper imports the actual Wayland environment into
+the user manager and starts PipeWire sockets, WirePlumber, panel, notifications,
+clipboard and idle/lock helpers. The authentication agent runs as the user. The
+Hyprland portal handles screen capture and the GTK portal handles file selection.
+NetworkManager's applet appears only when its service is already active; the installer
+does not replace network configuration. Blueman's applet runs when a Bluetooth
+controller exists. Existing locale and timezone values are retained. Power and
+brightness use the available hardware and logind; no kernel, swap, driver or login
+shell tuning is required.
+
+Brightness keys and panel scrolling use a small unprivileged helper and logind's
+[Session.SetBrightness API](https://manpages.debian.org/trixie/systemd/org.freedesktop.login1.5.en.html).
+It discovers an actual `/sys/class/backlight` device, prefers its native/raw interface,
+requires a local active session and changes brightness in five-percent steps within
+a two-to-one-hundred-percent range. Values go through the authenticated system bus;
+the helper never writes sysfs, adds privileged groups, installs udev grants or invokes
+sudo. Debian's brightnessctl build does not include logind support, and its optional
+udev rules require video/input groups, so that direct-write command is not used.
+An absent backlight (common with external monitors), inactive/remote session or driver
+permission failure returns an explicit error. Use the monitor's physical controls
+where no kernel backlight interface exists. Hardware behavior remains unverified
+until the real guest smoke test.
+
+## Personal overrides and fallbacks
+
+Create `$XDG_CONFIG_HOME/hypr/local.lua` for personal settings; it is loaded after the
+managed profile and is never replaced. For example:
+
+```lua
+-- Use a fixed scale for all automatically discovered monitors.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "1" })
+hl.config({ input = { kb_layout = "us,ru", kb_options = "grp:win_space_toggle" } })
+```
+
+The initial monitor rule uses preferred mode, automatic position and automatic scale;
+no connector name, GPU or absolute HOME is embedded. If auto scale is unsuitable,
+use `"1"`, `"1.25"` or `"2"` after checking the actual monitor. For a troublesome GPU,
+return to a TTY and inspect the compositor log before choosing a hardware-specific
+setting. No proprietary driver or renderer override is imposed.
+
+Restore commands preview by default and refuse to replace later edits. With default XDG
+paths, use the installed runtime CLI below; for custom paths use the exact command
+printed by the installer:
+
+```bash
+"$HOME/.local/share/setup-system/runtime/bin/setup-system" workstation restore BACKUP_ID
+"$HOME/.local/share/setup-system/runtime/bin/setup-system" workstation restore BACKUP_ID --apply
+```
+
+The profile tests cover generated files, no-write planning, conflicts, quoted paths,
+repeat apply and restore using fixtures. **REAL INSTALL / GUI SMOKE NOT RUN** unless
+a separate acceptance record identifies a disposable guest and the tested source SHA.
+Renderer/GPU, actual login, audio, screen sharing, lock/resume and network/TTY retention
+must be checked in that guest; package or mock success does not establish them.

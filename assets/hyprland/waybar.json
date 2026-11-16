@@ -37,7 +37,9 @@
     "on-click": "nm-connection-editor"
   },
   "backlight": {
-    "format": "Light {percent}%"
+    "format": "Light {percent}%",
+    "on-scroll-up": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/brightness.sh\" up",
+    "on-scroll-down": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/brightness.sh\" down"
   },
   "battery": {
     "format": "Bat {capacity}%"
