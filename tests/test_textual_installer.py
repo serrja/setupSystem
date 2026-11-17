@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
 from textual.widgets import Input, Label
 
 from setup_system.application.installer import InstallRequest, Operation
@@ -98,6 +99,64 @@ def test_secret_input_and_failed_stage_do_not_report_success(tmp_path: Path) -> 
             assert "Stopped" in str(app.query_one("#status", Label).render())
             assert secret.value == ""
             assert not app.busy
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("size", [(80, 25), (100, 40)])
+def test_keyboard_only_plan_confirmation_and_secret_submission(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
+    async def exercise() -> None:
+        service = Service(code=5)
+        app = application(tmp_path, service)
+        async with app.run_test(size=size) as pilot:
+            assert app.focused is app.query_one("#user", Input)
+            await pilot.press(*"alice", "enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert [(r.operation, r.user) for r in service.requests] == [(Operation.PLAN, "alice")]
+            assert not service.applied
+            assert app.focused is app.query_one("#plan")
+            await pilot.press("tab", "enter")
+            await pilot.pause()
+            assert isinstance(app.screen, Prompt)
+            assert app.focused is app.screen.query_one("#confirm")
+            assert not service.applied
+            assert "Checked complete fixture plan" in app.screen.plan
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, Prompt) and app.screen.secret
+            secret = app.screen.query_one("#secret", Input)
+            assert app.focused is secret and secret.password
+            await pilot.press(*"https://fixture.invalid/q-subscription", "enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert service.applied and app.last_code == 5 and not app.busy
+            assert secret.value == ""
+            assert all("https://fixture.invalid" not in line for line in app.output_lines)
+            assert app.focused is app.query_one("#plan")
+            assert not list(tmp_path.iterdir())
+
+    asyncio.run(exercise())
+
+
+def test_keyboard_can_cancel_confirmation_without_applying(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        service = Service()
+        app = application(tmp_path, service)
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.press("tab", "tab", "enter")
+            await pilot.pause()
+            assert isinstance(app.screen, Prompt)
+            await pilot.press("tab")
+            assert app.focused is app.screen.query_one("#cancel")
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not service.applied and app.last_code == 2
+            assert app.focused is app.query_one("#plan")
+            assert not list(tmp_path.iterdir())
 
     asyncio.run(exercise())
 

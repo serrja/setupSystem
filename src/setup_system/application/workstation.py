@@ -19,18 +19,24 @@ import tomllib
 import zipfile
 from pathlib import Path
 from typing import Literal, cast
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from setup_system.adapters.debian.hyprland import (
     HYPRLAND_VERSION,
     package_arguments,
-    profile_capabilities,
 )
 from setup_system.adapters.debian.packages import installed_version
+from setup_system.capabilities import load_policy
+from setup_system.downloads import (
+    GITHUB_RELEASE_HOSTS,
+    DownloadError,
+    DownloadFailure,
+    DownloadPolicy,
+    ProxyPolicy,
+    read_https,
+)
+from setup_system.font_policy import font_cache_name, load_font_archive
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 Profile = Literal["fonts", "hyprland"]
@@ -157,7 +163,7 @@ def _hyprland_version() -> str | None:
 
 def _required_commands(root: Path) -> None:
     """Fail before user writes if the system stage did not deliver the configured tools."""
-    commands = cast(list[str], profile_capabilities(root)["commands"])
+    commands = load_policy(root).hyprland.commands
     missing = [name for name in commands if shutil.which(name) is None]
     agent = Path("/usr/libexec/hyprpolkitagent")
     if not agent.is_file() or not os.access(agent, os.X_OK):
@@ -500,42 +506,7 @@ def plan(root: Path, profile: Profile, *, terminal_profile: str | None = None) -
 
 
 def _font_manifest(root: Path) -> dict[str, object]:
-    value = tomllib.loads((root / "manifests/fonts.toml").read_text())["jetbrains_mono_nerd_font"]
-    if not isinstance(value, dict):
-        raise ValueError("Invalid pinned font manifest")
-    version, digest = value.get("version"), value.get("sha256")
-    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", version):
-        raise ValueError("Invalid pinned font version")
-    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-        raise ValueError("Invalid pinned font digest")
-    expected_url = (
-        "https://github.com/ryanoasis/nerd-fonts/releases/download/v"
-        + version
-        + "/JetBrainsMono.zip"
-    )
-    if value.get("url") != expected_url:
-        raise ValueError("Font archive must use its pinned official release URL")
-    files = value.get("files")
-    if not isinstance(files, list) or not 1 <= len(files) <= 16:
-        raise ValueError("Invalid pinned font file list")
-    names: set[str] = set()
-    for item in files:
-        if not isinstance(item, dict):
-            raise ValueError("Invalid pinned font file identity")
-        name, checksum = item.get("name"), item.get("sha256")
-        if (
-            not isinstance(name, str)
-            or Path(name).name != name
-            or name in {"", ".", ".."}
-            or "\\" in name
-            or any(ord(character) < 32 for character in name)
-            or name in names
-            or not isinstance(checksum, str)
-            or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
-        ):
-            raise ValueError("Invalid pinned font file identity")
-        names.add(name)
-    return cast(dict[str, object], value)
+    return load_font_archive(root).as_manifest()
 
 
 def _font_cache_path(path: Path) -> Path:
@@ -557,7 +528,7 @@ def _font_cache(
     manifest: dict[str, object],
 ) -> tuple[Path, Path, bytes]:
     folder = _xdg("XDG_CACHE_HOME", ".cache") / "setup-system/downloads"
-    name = "JetBrainsMono-" + str(manifest["version"]) + "-" + str(manifest["sha256"]) + ".zip"
+    name = font_cache_name(str(manifest["version"]), str(manifest["sha256"]))
     archive = _font_cache_path(folder / name)
     receipt = _font_cache_path(archive.with_suffix(".zip.json"))
     provenance = {
@@ -657,24 +628,18 @@ def prefetch_workstation(root: Path) -> None:
     if archive.exists():
         content = _font_archive(archive, str(manifest["sha256"]))
     else:
-        host = "github.com"
+        policy = DownloadPolicy(
+            GITHUB_RELEASE_HOSTS,
+            MAX_FONT_ARCHIVE_BYTES,
+            60,
+            ProxyPolicy.from_loopback_environment(os.environ),
+        )
         try:
-            with urlopen(str(manifest["url"]), timeout=60) as response:
-                final = urlsplit(response.geturl())
-                if final.scheme != "https" or final.hostname not in {
-                    "github.com",
-                    "release-assets.githubusercontent.com",
-                    "objects.githubusercontent.com",
-                }:
-                    raise ValueError("Font download redirected outside the pinned release hosts")
-                content = response.read(MAX_FONT_ARCHIVE_BYTES + 1)
-        except HTTPError as exc:
-            host = urlsplit(exc.url).hostname or host
-            raise ValueError(f"Font download failed: HTTP {exc.code} from {host}") from None
-        except (URLError, TimeoutError):
-            raise ValueError(f"Font download failed for host {host}") from None
-        if len(content) > MAX_FONT_ARCHIVE_BYTES:
-            raise ValueError("Font archive exceeds its size limit")
+            content = read_https(str(manifest["url"]), policy)
+        except DownloadError as exc:
+            if exc.kind == DownloadFailure.SIZE:
+                raise ValueError("Font archive exceeds its size limit") from None
+            raise ValueError(f"Font download failed: {exc}") from None
         if hashlib.sha256(content).hexdigest() != manifest["sha256"]:
             raise ValueError("Font archive digest mismatch")
     _font_contents(content, manifest)
@@ -766,7 +731,7 @@ def apply(
     ):
         raise ValueError("GNOME options belong to the fonts profile")
     if profile == "hyprland":
-        expected = str(profile_capabilities(root)["upstream_version"])
+        expected = load_policy(root).hyprland.upstream_version
         if (
             report.installed_hyprland is None
             or re.search(

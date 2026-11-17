@@ -16,10 +16,17 @@ import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
+from setup_system.capabilities import load_policy
+from setup_system.downloads import (
+    GITHUB_RELEASE_HOSTS,
+    DownloadError,
+    DownloadFailure,
+    DownloadPolicy,
+    ProxyPolicy,
+    copy_https,
+)
 from setup_system.planning import Platform, detect_platform
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
@@ -207,40 +214,24 @@ def _happ_digest(path: Path, expected: str) -> bool:
 
 def _download(url: str, sha256: str, target: Path, limit: int) -> None:
     candidate: Path | None = None
-    host = "github.com"
+    policy = DownloadPolicy(
+        GITHUB_RELEASE_HOSTS, limit, 45, ProxyPolicy.from_loopback_environment(os.environ)
+    )
     try:
         descriptor, name = tempfile.mkstemp(prefix=".happ-download-", dir=target.parent)
         candidate = Path(name)
         with os.fdopen(descriptor, "wb") as output:
             os.fchmod(output.fileno(), 0o600)
-            digest = hashlib.sha256()
-            total = 0
-            with urlopen(
-                Request(url, headers={"User-Agent": "setupSystem/0.1"}), timeout=45
-            ) as source:
-                final = urlsplit(source.geturl())
-                if final.scheme != "https" or final.hostname not in {
-                    "github.com",
-                    "release-assets.githubusercontent.com",
-                    "objects.githubusercontent.com",
-                }:
-                    raise ValueError("Unexpected Happ release redirect")
-                while block := source.read(1024 * 1024):
-                    total += len(block)
-                    if total > limit:
-                        raise ValueError("Happ release asset exceeds size limit")
-                    digest.update(block)
-                    output.write(block)
+            result = copy_https(url, output, policy)
             output.flush()
             os.fsync(output.fileno())
-        if digest.hexdigest() != sha256:
+        if result.sha256 != sha256:
             raise ValueError("Happ release digest mismatch")
         os.link(candidate, target, follow_symlinks=False)
-    except HTTPError as exc:
-        host = urlsplit(exc.url).hostname or host
-        raise ValueError(f"Happ download failed: HTTP {exc.code} from {host}") from None
-    except (URLError, TimeoutError):
-        raise ValueError(f"Happ download failed for host {host}") from None
+    except DownloadError as exc:
+        if exc.kind == DownloadFailure.SIZE:
+            raise ValueError("Happ release asset exceeds size limit") from None
+        raise ValueError(f"Happ download failed: {exc}") from None
     finally:
         if candidate is not None:
             candidate.unlink(missing_ok=True)
@@ -268,9 +259,10 @@ def download_happ(project_root: Path, destination: Path) -> Path:
     platform_adapter = detect_platform()
     if not platform_adapter.implemented or platform_adapter.distribution != "debian":
         raise ValueError("No supported Debian Happ download provider")
-    key = {"x86_64": "amd64", "arm64": "arm64"}.get(platform_adapter.architecture)
-    if key is None:
-        raise ValueError("Unsupported Happ package architecture")
+    try:
+        key = load_policy(project_root).debian_architecture(platform_adapter.architecture)
+    except ValueError:
+        raise ValueError("Unsupported Happ package architecture") from None
     manifest = _manifest(project_root)
     release, package_version = str(manifest["version"]), str(manifest["packageVersion"])
     linux = manifest["linux"]
@@ -332,7 +324,7 @@ def setup_happ(project_root: Path, platform_adapter: Platform | None = None) -> 
     sudo = shutil.which("sudo")
     if not sudo or _run([sudo, "-n", "true"]).returncode != 0:
         return "blocked: targeted sudo is unavailable; no download or package change was made"
-    key = "amd64" if platform_adapter.architecture == "x86_64" else "arm64"
+    key = load_policy(project_root).debian_architecture(platform_adapter.architecture)
     target = download_happ(project_root, state_root() / "downloads" / f"happ-{release}-{key}.deb")
     install = subprocess.run(
         [sudo, "-n", "apt-get", "install", "-y", str(target)], timeout=900, check=False

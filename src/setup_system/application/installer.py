@@ -16,6 +16,7 @@ from typing import Protocol
 from setup_system import installation as system
 from setup_system.application.interaction import ConsoleInteraction, Interaction
 from setup_system.diagnostics import error_text
+from setup_system.installation_state import InstallStage
 from setup_system.network_session import NetworkReady, TemporaryNetwork
 from setup_system.runtime import RUNTIME_PYTHON, UV_VERSION, UserRuntime
 
@@ -90,6 +91,12 @@ class UnsupportedTargetError(ValueError):
     """The selected machine cannot execute this installation profile."""
 
 
+@dataclass
+class ApplyProgress:
+    stage: InstallStage = InstallStage.TEMPORARY_NETWORK
+    user_prepared: bool = False
+
+
 class InstallationService:
     """Own preflight and download/cleanup/offline-apply ordering behind explicit ports."""
 
@@ -130,6 +137,11 @@ class InstallationService:
             "src/setup_system/worker_protocol.py",
             "src/setup_system/application/interaction.py",
             "src/setup_system/runtime.py",
+            "src/setup_system/capabilities.py",
+            "src/setup_system/downloads.py",
+            "src/setup_system/font_policy.py",
+            "src/setup_system/installation_state.py",
+            "src/setup_system/adapters/debian/package_session.py",
             "src/setup_system/application/installer.py",
             "src/setup_system/network_worker.py",
         ):
@@ -294,45 +306,56 @@ class InstallationService:
             self.interaction.write(f"Preflight failed: {error_text(exc)}", error=True)
             return 2
         if private:
-            try:
-                if request.operation == Operation.NETWORK_STAGE:
-                    from setup_system.network_worker import serve_network
-
-                    os.environ.update(plan.environment)
-                    return serve_network(self.root, plan.target, request.subscription_file)
-                return self._user_action(plan, prepare=request.operation == Operation.PREPARE_USER)
-            except (
-                OSError,
-                ValueError,
-                RuntimeError,
-                subprocess.SubprocessError,
-                KeyboardInterrupt,
-            ) as exc:
-                self.interaction.write(
-                    f"FAILED user runtime/configuration: {type(exc).__name__}: {error_text(exc)}",
-                    error=True,
-                )
-                return 5
+            return self._run_private(plan, request)
         self.show_plan(plan)
         if request.operation == Operation.PLAN:
             return 0
+        if not self._consent(request):
+            return 2
+        return self._apply(plan, request)
+
+    def _run_private(self, plan: InstallPlan, request: InstallRequest) -> int:
+        try:
+            if request.operation == Operation.NETWORK_STAGE:
+                from setup_system.network_worker import serve_network
+
+                os.environ.update(plan.environment)
+                return serve_network(self.root, plan.target, request.subscription_file)
+            return self._user_action(plan, prepare=request.operation == Operation.PREPARE_USER)
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+            KeyboardInterrupt,
+        ) as exc:
+            self.interaction.write(
+                f"FAILED user runtime/configuration: {type(exc).__name__}: {error_text(exc)}",
+                error=True,
+            )
+            return 5
+
+    def _consent(self, request: InstallRequest) -> bool:
         if os.geteuid() != 0:
             self.interaction.write(
                 "Run setup-system install apply with root privileges and a verified target user.",
                 error=True,
             )
-            return 2
+            return False
         if not request.yes:
             if not self.interaction.interactive:
                 self.interaction.write("No TTY: apply requires explicit --yes consent.", error=True)
-                return 2
+                return False
             if not self.interaction.confirm("Apply the complete plan?"):
-                return 2
+                return False
         if request.subscription_file is None and not self.interaction.interactive:
             self.interaction.write(
                 "No TTY: temporary VPN requires a private --vpn-config-file.", error=True
             )
-            return 2
+            return False
+        return True
+
+    def _apply(self, plan: InstallPlan, request: InstallRequest) -> int:
         try:
             from setup_system.network_worker import subscription_address
 
@@ -347,59 +370,25 @@ class InstallationService:
                 error=True,
             )
             return 2
-        paths = self.paths
-        network = self.network(
-            self.root, plan.target, plan.environment, subscription_file=request.subscription_file
-        )
-        stage = "temporary-network"
-        user_prepared = False
+        progress = ApplyProgress()
         try:
+            network = self.network(
+                self.root,
+                plan.target,
+                plan.environment,
+                subscription_file=request.subscription_file,
+            )
             self.interaction.write(
                 "Stage: temporary download network and verified Happ artifact", flush=True
             )
             try:
                 ready = network.start(subscription)
                 subscription = None
-                stage = "package-downloads"
-                with self.packages(
-                    self.root,
-                    target=plan.target,
-                    happ=ready.happ,
-                    proxy=ready.http_proxy,
-                    paths=paths,
-                    run=system.run_command,
-                    emit=self.interaction.write,
-                ) as packages:
-                    stage = "user-downloads"
-                    self.interaction.write(
-                        "Stage: locked user runtime and font downloads", flush=True
-                    )
-                    code = self._user_process(plan, Operation.PREPARE_USER, proxy=ready.http_proxy)
-                    if code:
-                        raise RuntimeError(f"User downloads failed with exit {code}")
-                    user_prepared = True
-                    stage = "temporary-network-cleanup"
-                    network.close()
-                    self.interaction.write(
-                        "Temporary download client/config removed; "
-                        "package and user-file apply use offline namespaces.",
-                        flush=True,
-                    )
-                    stage = "packages"
-                    packages.install()
-                    stage = "happ-service"
-                    packages.activate_happ()
-                    stage = "user"
-                    self.interaction.write(
-                        "Stage: offline user configuration through Typer", flush=True
-                    )
-                    code = self._user_process(plan, Operation.USER_STAGE)
-                    if code:
-                        raise RuntimeError(f"User configuration failed with exit {code}")
+                self._apply_packages(plan, network, ready, progress)
             finally:
                 network.close()
             system.mark_user_stage(
-                paths, "complete", completed=("user-downloads", "user-configuration")
+                self.paths, "complete", completed=("user-downloads", "user-configuration")
             )
         except (
             OSError,
@@ -408,31 +397,83 @@ class InstallationService:
             subprocess.SubprocessError,
             KeyboardInterrupt,
         ) as exc:
-            if paths.journal.is_file() and not paths.journal.is_symlink():
-                try:
-                    system.mark_user_stage(
-                        paths,
-                        "failed",
-                        stage=None
-                        if stage in {"package-downloads", "packages", "happ-service"}
-                        else stage,
-                        completed=("user-downloads",) if user_prepared else (),
-                    )
-                except (OSError, ValueError) as journal_error:
-                    self.interaction.write(
-                        f"Journal update failed: {error_text(journal_error)}", error=True
-                    )
-                journal = f"journal: {paths.journal}"
-            else:
-                journal = "journal not created (failure before the first record)"
+            return self._failed(progress, exc)
+        return self._complete(plan)
+
+    def _apply_packages(
+        self,
+        plan: InstallPlan,
+        network: NetworkPort,
+        ready: NetworkReady,
+        progress: ApplyProgress,
+    ) -> None:
+        progress.stage = InstallStage.PACKAGE_DOWNLOADS
+        with self.packages(
+            self.root,
+            target=plan.target,
+            happ=ready.happ,
+            proxy=ready.http_proxy,
+            paths=self.paths,
+            run=system.run_command,
+            emit=self.interaction.write,
+        ) as packages:
+            progress.stage = InstallStage.USER_DOWNLOADS
+            self.interaction.write("Stage: locked user runtime and font downloads", flush=True)
+            code = self._user_process(plan, Operation.PREPARE_USER, proxy=ready.http_proxy)
+            if code:
+                raise RuntimeError(f"User downloads failed with exit {code}")
+            progress.user_prepared = True
+            progress.stage = InstallStage.TEMPORARY_NETWORK_CLEANUP
+            network.close()
             self.interaction.write(
-                f"FAILED installation stage {stage}: {error_text(exc)}; {journal}. "
-                "No APT rollback is promised.",
-                error=True,
+                "Temporary download client/config removed; "
+                "package and user-file apply use offline namespaces.",
+                flush=True,
             )
-            if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-                self.interaction.write(error_text(exc.stderr), error=True)
-            return 5
+            progress.stage = InstallStage.PACKAGES
+            packages.install()
+            progress.stage = InstallStage.HAPP_SERVICE
+            packages.activate_happ()
+            progress.stage = InstallStage.USER
+            self.interaction.write("Stage: offline user configuration through Typer", flush=True)
+            code = self._user_process(plan, Operation.USER_STAGE)
+            if code:
+                raise RuntimeError(f"User configuration failed with exit {code}")
+
+    def _failed(self, progress: ApplyProgress, exc: BaseException) -> int:
+        paths = self.paths
+        if paths.journal.is_file() and not paths.journal.is_symlink():
+            try:
+                system.mark_user_stage(
+                    paths,
+                    "failed",
+                    stage=None
+                    if progress.stage
+                    in {
+                        InstallStage.PACKAGE_DOWNLOADS,
+                        InstallStage.PACKAGES,
+                        InstallStage.HAPP_SERVICE,
+                    }
+                    else progress.stage,
+                    completed=("user-downloads",) if progress.user_prepared else (),
+                )
+            except (OSError, ValueError) as journal_error:
+                self.interaction.write(
+                    f"Journal update failed: {error_text(journal_error)}", error=True
+                )
+            journal = f"journal: {paths.journal}"
+        else:
+            journal = "journal not created (failure before the first record)"
+        self.interaction.write(
+            f"FAILED installation stage {progress.stage}: {error_text(exc)}; {journal}. "
+            "No APT rollback is promised.",
+            error=True,
+        )
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            self.interaction.write(error_text(exc.stderr), error=True)
+        return 5
+
+    def _complete(self, plan: InstallPlan) -> int:
         launcher = Path(plan.environment["XDG_DATA_HOME"]) / "setup-system/bin/start-hyprland"
         recovery = launcher.parent.parent / "runtime/bin/setup-system"
         self.interaction.write(

@@ -28,6 +28,8 @@ class InstallationPort(Protocol):
 class Prompt(ModalScreen[str | None]):
     """One explicit confirmation or secret input; secrets never enter the log widget."""
 
+    AUTO_FOCUS: ClassVar[str | None] = "#secret, #confirm"
+
     DEFAULT_CSS = """
     Prompt { align: center middle; }
     Prompt > Vertical { width: 80%; height: auto; border: round $accent; padding: 1 2; }
@@ -52,6 +54,7 @@ class Prompt(ModalScreen[str | None]):
                 yield RichLog(
                     id="review", markup=False, highlight=False, wrap=True, auto_scroll=False
                 )
+            yield Label("Tab/Shift+Tab: select; Enter: activate; Esc: cancel.")
             with Horizontal():
                 yield Button(
                     "Continue" if self.secret else "Apply complete plan",
@@ -145,6 +148,7 @@ class TextualInteraction:
 class InstallationApp(App[int]):
     """Run one checked operation at a time and keep recovery diagnostics visible."""
 
+    AUTO_FOCUS: ClassVar[str | None] = "#user"
     TITLE = "setupSystem"
     SUB_TITLE = "Debian → Hyprland"
     CSS = """
@@ -180,6 +184,7 @@ class InstallationApp(App[int]):
         with Vertical(id="fields"):
             yield Label("Target user (leave empty to use the verified sudo caller)")
             yield Input(value=self.request.user or "", id="user")
+            yield Label("Enter in user field: read-only plan. Tab/Shift+Tab: select an action.")
             yield Label(f"Verified local source: {self.root}", markup=False)
         with Horizontal(id="actions"):
             yield Button("Read-only plan", id="plan", variant="primary")
@@ -188,6 +193,10 @@ class InstallationApp(App[int]):
         yield Label("Inspect the plan before installation. No changes have been made.", id="status")
         yield RichLog(id="output", markup=False, highlight=False, wrap=True)
         yield Footer()
+
+    @on(Input.Submitted, "#user")
+    def submit_user(self) -> None:
+        self.plan()
 
     @on(Button.Pressed, "#plan")
     def plan(self) -> None:
@@ -242,6 +251,7 @@ class InstallationApp(App[int]):
         self.query_one("#user", Input).disabled = False
         for button in self.query(Button):
             button.disabled = False
+        self.query_one("#plan", Button).focus()
         self.query_one("#status", Label).update(
             "Completed (exit 0)"
             if message.code == 0
