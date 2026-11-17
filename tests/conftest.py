@@ -49,3 +49,16 @@ def package_fixture(
         happ_runtime_unit=tmp_path / "run-systemd/happd.service",
     )
     return root, target, happ, paths
+
+
+class NoDesktop:
+    """Isolate existing package/user orchestration fixtures from host login and boot state."""
+
+    def plan(self, target: object, environment: object, *, timezone: str | None = None) -> None:
+        return None
+
+    def revalidate(self, plan: object) -> None:
+        raise AssertionError("No desktop operation was planned")
+
+    def apply(self, plan: object) -> None:
+        raise AssertionError("No desktop operation was planned")

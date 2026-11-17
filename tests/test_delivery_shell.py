@@ -187,3 +187,64 @@ fetch https://fixture.invalid/archive {shlex.quote(str(destination))} 8192
     assert "download-file" in arguments
     assert not {"update", "install"} & set(arguments)
     assert destination.read_bytes() == b"fixture"
+
+
+@pytest.mark.parametrize(
+    "marker,filesystem,encrypted,unlock,readable,success",
+    [
+        (False, "ext4", False, "unknown", True, True),
+        (True, "ext4", False, "unknown", True, False),
+        (True, "ecryptfs", False, "unknown", True, True),
+        (False, "ext4", True, "Yes", True, True),
+        (False, "ext4", True, "No", True, False),
+        (False, "ext4", True, "Yes\nUnlocked: No", True, False),
+        (False, "ext4", True, "Yes\nUnlocked: Yes", True, False),
+        (False, "ext4", True, "unknown", True, False),
+        (False, "ext4", False, "unknown", False, False),
+    ],
+)
+def test_encrypted_home_preflight_never_creates_runtime_files(
+    tmp_path: Path,
+    marker: bool,
+    filesystem: str,
+    encrypted: bool,
+    unlock: str,
+    readable: bool,
+    success: bool,
+) -> None:
+    import shlex
+
+    home = tmp_path / "ordinary HOME with spaces"
+    home.mkdir()
+    if marker:
+        (home / ".ecryptfs").mkdir()
+    before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    script = (ROOT / "install.sh").read_text().rsplit('bootstrap_main "$@"', 1)[0]
+    script += f"""
+target_home={shlex.quote(str(home))}
+findmnt() {{ printf '%s\\n' {shlex.quote(filesystem)}; }}
+as_user() {{
+ case "$*" in
+  *lsattr*) printf '%s\\n' '{"---E---" if encrypted else "-------"} {home}';;
+  *fscrypt*) printf '%s\\n' 'Unlocked: {unlock}';;
+  *find*) return {0 if readable else 1};;
+  *) exit 91;;
+ esac
+}}
+fscrypt() {{ exit 92; }}
+lsattr() {{ exit 92; }}
+fetch() {{ exit 93; }}
+check_home_unlock
+printf 'HOME ACCESS VERIFIED\\n'
+"""
+    result = subprocess.run(
+        ["sh", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(home)},
+    )
+    assert result.returncode == (0 if success else 2), result.stdout + result.stderr
+    assert ("HOME ACCESS VERIFIED" in result.stdout) is success
+    assert sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*")) == before
+    assert not (home / ".local").exists() and not (home / ".cache").exists()

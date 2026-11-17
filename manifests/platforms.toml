@@ -48,7 +48,7 @@ preflight_paths = [
     "cache:setup-system/downloads/",
 ]
 commands = [
-    "Hyprland", "hyprctl", "start-hyprland", "foot", "wofi", "thunar", "waybar",
+    "Hyprland", "hyprctl", "hyprland-dialog", "hyprland-run", "start-hyprland", "foot", "wofi", "thunar", "waybar",
     "mako", "hypridle", "hyprlock", "swaybg", "wl-paste", "wl-copy", "grim", "slurp",
     "cliphist", "notify-send", "busctl", "wpctl", "pavucontrol",
     "nm-connection-editor", "nm-applet", "blueman-applet", "playerctl",
@@ -65,10 +65,11 @@ base_packages = [
     "fonts-dejavu-core", "fonts-noto-core", "fonts-noto-color-emoji",
     "adwaita-icon-theme", "gnome-themes-extra-data", "qt6-wayland", "qtwayland5",
     "qt5-gtk-platformtheme", "qt6-gtk-platformtheme", "polkitd", "dbus-user-session",
-    "dbus-daemon", "bluez", "blueman",
+    "dbus-daemon", "bluez", "blueman", "greetd", "gtkgreet", "cage",
 ]
 
 [hyprland.backport_packages]
+hyprland-guiutils = "0.2.2-1~bpo13+1"
 # These three binaries require the same xkbcommon source version.
 libxkbcommon0 = "1.13.1-1~bpo13+1"
 libxkbcommon-x11-0 = "1.13.1-1~bpo13+1"

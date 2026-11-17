@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import NoDesktop
 
 from setup_system import installation as install
 from setup_system import runtime as runtime_provider
@@ -460,6 +461,7 @@ def test_orchestration_drops_uid_gid_groups_and_reports_real_user_result(
         paths=paths,
         network=lambda *a, **kw: network,
         packages=lambda *a, **kw: Packages(),
+        desktop=NoDesktop(),
     )
     assert (
         service.run(
@@ -504,7 +506,7 @@ def test_plan_never_calls_runtime_or_packages(
     def forbidden(*args: object, **options: object) -> None:
         pytest.fail("Read-only plan entered the network or package executor")
 
-    service = InstallationService(ROOT, network=forbidden, packages=forbidden)
+    service = InstallationService(ROOT, network=forbidden, packages=forbidden, desktop=NoDesktop())
     assert service.run(InstallRequest(Operation.PLAN)) == 0
     assert not list(tmp_path.iterdir())
 

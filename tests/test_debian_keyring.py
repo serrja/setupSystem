@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import NoDesktop
 
 from setup_system import installation as install
 from setup_system.application import interaction
@@ -179,6 +180,7 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
             paths=paths,
             network=lambda *a, **kw: network,
             packages=fail,
+            desktop=NoDesktop(),
         ).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
         == 5
     )
@@ -249,6 +251,7 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
             paths=paths,
             network=lambda *a, **kw: network,
             packages=fail,
+            desktop=NoDesktop(),
         ).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
         == 5
     )

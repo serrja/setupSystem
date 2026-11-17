@@ -1,13 +1,15 @@
 # Hyprland workstation
 
 ```bash
-sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"
+sh install.sh --release vX.Y.Z
 ```
 
-Run this from a verified setupSystem source checkout on an already installed, minimal
-Debian system. The installer prepares the system packages, a pinned user runtime and
-the managed user configuration in the same invocation. It does not start a session.
-See [Debian prerequisites](debian.md) and the [recovery guide](recovery.md).
+Use the inspected `install.sh` from the same verified GitHub release as `vX.Y.Z`.
+Direct root login adds `--user NAME` for the existing ordinary account. Delivery
+prepares the pinned user runtime and opens Textual; choose Install to review and
+confirm the complete plan. Installation configures the existing minimal Debian system
+and enables graphical login for the next normal boot. It does not start a session
+or reboot. See [Debian prerequisites](debian.md) and the [recovery guide](recovery.md).
 
 ## Compatibility and package sources
 
@@ -19,7 +21,11 @@ or source build is used.
 
 [Official trixie-backports](https://backports.debian.org/Instructions/) supplies
 [Hyprland 0.55.2](https://packages.debian.org/trixie-backports/hyprland),
+[hyprland-guiutils 0.2.2](https://packages.debian.org/trixie-backports/hyprland-guiutils),
 hypridle 0.1.8, hyprlock 0.9.6, hyprpolkitagent 0.1.3 and the Hyprland portal 1.4.1.
+The explicit guiutils package supplies `hyprland-dialog` and `hyprland-run`; Hyprland
+does not pull it in automatically. The graphical login uses Debian
+`greetd`, `gtkgreet` and `cage` without a full GNOME/KDE desktop.
 Their exact Debian package revisions and the base-package set live in the single
 [capability manifest](../manifests/platforms.toml). Availability was checked in the
 [amd64](https://deb.debian.org/debian/dists/trixie-backports/main/binary-amd64/Packages.xz)
@@ -46,9 +52,10 @@ Read-only inspection needs no root and never prepares packages or a runtime:
 setup-system install plan --source /absolute/source/path
 ```
 
-A plan without Python is a preliminary shell report. The complete package simulation
-uses refreshed metadata only after apply has been accepted. A preliminary plan is not
-proof that installation or graphical login will succeed.
+`sh install.sh --help` is available before Python and only describes delivery.
+Full planning uses the delivered CLI; it does not prepare prerequisites. The complete
+package simulation uses refreshed metadata only after apply has been accepted.
+A preliminary plan is not proof that installation or graphical login will succeed.
 
 ## User files and first login
 
@@ -58,8 +65,14 @@ entry. Explicit `--xdg-config-home`, `--xdg-data-home`, `--xdg-state-home` and
 `--xdg-cache-home` paths must remain within that HOME and avoid symlinks. The final
 installer output shows the actual chosen paths.
 
-From a local Linux text console, log in as that user and run the printed entrypoint.
-With default XDG paths it is:
+At the next normal boot, greetd presents the graphical login on VT7. Authenticate
+with the existing ordinary account through Debian's PAM stack; Hyprland starts after
+successful authentication. There is no autologin, forced logout, immediate session
+switch or automatic reboot. An existing different display manager causes a review
+error instead of being replaced.
+
+A local TTY remains the fallback. Log in as the target user and run the printed
+entrypoint. With default XDG paths it is:
 
 ```bash
 "$HOME/.local/share/setup-system/bin/start-hyprland"
@@ -69,9 +82,16 @@ This managed wrapper restores the chosen XDG directories and invokes Debian's
 `/usr/bin/start-hyprland`. It requires a real local user runtime directory, refuses
 root, SSH and an already running graphical session, and uses the login session's
 D-Bus bus or `dbus-run-session`. It is never sourced by `.bashrc` or Zsh startup.
-No autologin, forced logout, display-manager replacement or automatic reboot occurs.
-Use **Super+F9 → Logout** to return to the login console, or **Ctrl+Alt+F2** to switch
-to another TTY for troubleshooting.
+Use **Super+F9 → Logout** to return to the graphical login, or to the console when
+using the TTY fallback. **Ctrl+Alt+F3** switches to a troubleshooting TTY.
+
+Existing disk/HOME encryption is inspected, not created, removed or migrated. Existing
+disk-unlock prompts and the account's PAM unlock integration remain in place. Locked
+or unverifiable encrypted HOME access must be resolved through the existing login
+before installation. An unknown result is not evidence that data is unencrypted.
+GRUB remains installed with hidden menu and zero timeout, including recordfail.
+Encryption prompts still require their normal unlock; no GRUB recovery-key waiting
+window is guaranteed. See [recovery](recovery.md) before changing boot settings.
 
 The managed Lua entrypoint is `$XDG_CONFIG_HOME/hypr/hyprland.lua`; profile assets are
 in `hypr/setup-system/`. Existing unknown or edited managed files cause a conflict
@@ -85,7 +105,7 @@ changes are not transactionally rolled back.
 | --- | --- |
 | Super+Return | Foot terminal |
 | Super+E | Thunar file manager |
-| Super+F1 | Wofi application launcher |
+| Super+D / F1 | Wofi application launcher |
 | Super+F2 / F3 | Audio / network settings |
 | Super+F4 / F5 / F11 | Close / toggle floating / fullscreen |
 | Super+arrows | Move focus |
@@ -111,9 +131,28 @@ clipboard and idle/lock helpers. The authentication agent runs as the user. The
 Hyprland portal handles screen capture and the GTK portal handles file selection.
 NetworkManager's applet appears only when its service is already active; the installer
 does not replace network configuration. Blueman's applet runs when a Bluetooth
-controller exists. Existing locale and timezone values are retained. Power and
-brightness use the available hardware and logind; no kernel, swap, driver or login
-shell tuning is required.
+controller exists. Optional helper failures are logged independently at
+`$XDG_STATE_HOME/setup-system/hyprland-session.log` (default: `~/.local/state/`);
+a failed audio/user-bus command does not prevent the other helpers from starting.
+Power and brightness use the available hardware and logind; no kernel, swap, driver
+or login shell tuning is required.
+
+Waybar shows each present system battery; peripheral batteries and absent devices are
+excluded. A desktop without a system battery has no battery widget. Backlight controls
+appear only for an available kernel device. The clock uses the system's local timezone;
+its tooltip includes the date, seconds and timezone. Check the installation plan's
+clock observations when the time is wrong. Leaving Textual's timezone field blank,
+or omitting `--timezone` on `install plan`/`install apply`, preserves the current zone.
+An explicit installed IANA zone such as `Europe/Paris` is validated before changes.
+Existing locale values are preserved. Existing time providers are retained; where
+inspection conclusively finds no provider, the plan may add `systemd-timesyncd` and
+enable synchronization. Unknown provider state does not authorize a replacement.
+
+Debian's Waybar 0.12 workspace clicks use the older Hyprland IPC syntax. The managed
+panel therefore uses custom workspace buttons and one user-session bridge to the
+pinned compositor's Lua dispatch API. Buttons and scrolling use that adapter; workspace
+state comes from the current compositor rather than fixed active labels. Other panel
+roles use Waybar's native modules.
 
 Brightness keys and panel scrolling use a small unprivileged helper and logind's
 [Session.SetBrightness API](https://manpages.debian.org/trixie/systemd/org.freedesktop.login1.5.en.html).

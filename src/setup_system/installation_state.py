@@ -18,6 +18,7 @@ class InstallStage(StrEnum):
     HAPP_SERVICE = "happ-service"
     USER_RUNTIME = "user-runtime"
     USER = "user"
+    SYSTEM_DESKTOP = "system-desktop"
     USER_DOWNLOADS = "user-downloads"
     TEMPORARY_NETWORK = "temporary-network"
     PACKAGE_DOWNLOADS = "package-downloads"
@@ -93,7 +94,10 @@ class InstallJournal:
             selected = self.stage if stage is None else InstallStage(stage)
         except ValueError as exc:
             raise ValueError("Invalid user installation stage or status") from exc
-        if any(item not in {"user-downloads", "user-configuration"} for item in completed):
+        if any(
+            item not in {"user-downloads", "user-configuration", "system-desktop"}
+            for item in completed
+        ):
             raise ValueError("Invalid completed user installation stage")
         self.stage = selected
         self.status = InstallStatus(status)
