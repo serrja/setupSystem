@@ -5,30 +5,20 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from setup_system.application.apps import app_status, catalog, install_zsh
-from setup_system.application.configuration import apply_configuration
+from setup_system.application.apps import app_status, catalog
 from setup_system.application.happ import (
     backup_happ,
     format_happ_status,
     inspect_happ,
-    setup_happ,
 )
-from setup_system.application.terminal_dev import (
-    install_archive_tool,
-    install_language_tools,
-    install_neovim,
-    install_parsers,
-    install_plugins,
-    install_system_tools,
-)
+from setup_system.application.user_profiles import UserProfileService
 from setup_system.cli._context import ROOT
-from setup_system.cli.shell import _apply_default_shell
+from setup_system.cli._interaction import TyperInteraction
 from setup_system.planning import create_plan, format_plan
 from setup_system.storage import new_backup
 from setup_system.storage import restore as restore_backup
@@ -57,53 +47,9 @@ def apply(
     profile: Annotated[str, typer.Option(help="base, terminalDev or happ.")] = "base",
 ) -> None:
     """Apply the freshly checked user configuration plan."""
-    result = create_plan(ROOT, profile)
-    if not result.platform.implemented or result.blocked:
-        typer.echo(format_plan(result), err=True)
-        raise typer.Exit(4)
-    if not yes:
-        typer.echo(format_plan(result))
-        if not typer.confirm("Apply user configuration?", default=False):
-            raise typer.Exit(2)
-    if profile == "terminalDev":
-        try:
-            typer.echo(install_zsh(catalog(ROOT)["zsh"]))
-        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            typer.echo(f"Zsh installation blocked: {exc}", err=True)
-            raise typer.Exit(4) from exc
-    try:
-        backup, statuses = apply_configuration(ROOT, terminal_dev=profile == "terminalDev")
-    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-        typer.echo(f"failed: {exc}", err=True)
-        raise typer.Exit(5) from exc
-    typer.echo(f"backup: {backup}")
-    for path, status in statuses:
-        typer.echo(f"{status}: {path}")
-    if profile == "terminalDev":
-        _apply_default_shell()
-        try:
-            typer.echo(install_neovim(ROOT, result.platform))
-            for status in install_plugins(ROOT):
-                typer.echo(status)
-            for tool_name in ("stylua", "tree-sitter"):
-                typer.echo(install_archive_tool(ROOT, result.platform, tool_name))
-            for status in install_language_tools(ROOT):
-                typer.echo(status)
-            typer.echo(install_parsers(ROOT))
-            tool_status, blocked = install_system_tools(ROOT, result.platform)
-            typer.echo(tool_status)
-        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            typer.echo(f"terminalDev failed: {exc}", err=True)
-            raise typer.Exit(5) from exc
-        if blocked:
-            raise typer.Exit(4)
-    if profile == "happ":
-        try:
-            typer.echo(setup_happ(ROOT, result.platform))
-            typer.echo(format_happ_status(inspect_happ(result.platform)))
-        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            typer.echo(f"Happ setup failed: {exc}", err=True)
-            raise typer.Exit(5) from exc
+    code = UserProfileService(ROOT, interaction=TyperInteraction()).run(profile, yes=yes)
+    if code:
+        raise typer.Exit(code)
 
 
 @app.command()

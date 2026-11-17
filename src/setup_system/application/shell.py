@@ -15,6 +15,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from setup_system.application.interaction import Interaction
 from setup_system.storage import atomic_write, managed_block, new_backup, state_root
 
 
@@ -258,3 +259,27 @@ def restore_shell(backup_id: str) -> list[tuple[Path, str]]:
             atomic_write(path, content, mode, preserve_existing_mode=False)
         results.append((path, "restored"))
     return results
+
+
+def configure_login_shell(root: Path, interaction: Interaction) -> int:
+    """Apply the explicit portable shell profile and report account-change failures."""
+    try:
+        backup, results, status = apply_shell(root)
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+        interaction.write(f"shell failed: {exc}", error=True)
+        return 5
+    interaction.write(f"shell backup: {backup}")
+    for path, result in results:
+        interaction.write(f"{result}: {path}")
+    if status.zsh is None:
+        return 4
+    if status.login_shell != status.zsh:
+        try:
+            changed, detail = change_login_shell(status.zsh)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            interaction.write(f"login shell blocked: {exc}", error=True)
+            return 4
+        interaction.write(f"login shell: {detail}")
+        if not changed:
+            return 4
+    return 0

@@ -15,16 +15,27 @@ from urllib.error import HTTPError
 import pytest
 from typer.testing import CliRunner
 
+from setup_system import downloads
 from setup_system.application import happ, workstation
 from setup_system.cli import workstation as commands
 from setup_system.planning import Platform
 
 
 class Response(io.BytesIO):
+    status = 200
+
     url = "https://release-assets.githubusercontent.com/pinned-asset"
 
     def geturl(self) -> str:
         return self.url
+
+
+def mock_open(monkeypatch: pytest.MonkeyPatch, respond) -> None:
+    class Opener:
+        def open(self, *args, **kwargs):
+            return respond(*args, **kwargs)
+
+    monkeypatch.setattr(downloads, "build_opener", lambda *handlers: Opener())
 
 
 @pytest.fixture
@@ -33,6 +44,9 @@ def context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path
     home.mkdir(mode=0o700)
     root = tmp_path / "source"
     (root / "manifests").mkdir(parents=True)
+    (root / "manifests/platforms.toml").write_bytes(
+        (Path(__file__).resolve().parents[1] / "manifests/platforms.toml").read_bytes()
+    )
     for name, directory in (
         ("HOME", home),
         ("XDG_CACHE_HOME", home / "cache"),
@@ -81,9 +95,7 @@ def test_prefetch_needs_no_graphical_commands_and_offline_reuses_bytes(
 ) -> None:
     root, home, data = context
     calls: list[object] = []
-    monkeypatch.setattr(
-        workstation, "urlopen", lambda *a, **kw: calls.append(a[0]) or Response(data)
-    )
+    mock_open(monkeypatch, lambda *a, **kw: calls.append(a[0]) or Response(data))
     monkeypatch.setattr(workstation, "_run", lambda *a: pytest.fail("GUI command"))
     monkeypatch.setattr(workstation, "_required_commands", lambda *a: pytest.fail("GUI stage"))
     workstation.prefetch_workstation(root)
@@ -93,7 +105,7 @@ def test_prefetch_needs_no_graphical_commands_and_offline_reuses_bytes(
     assert provenance["sha256"] == hashlib.sha256(data).hexdigest()
     assert not (home / "data").exists()
     before = {p: p.read_bytes() for p in (home / "cache").rglob("*") if p.is_file()}
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("offline network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("offline network"))
     workstation.prefetch_workstation(root)
     files = workstation._font_files(root, offline=True)
     assert {p.name: value for p, value in files.items()} == {
@@ -109,7 +121,7 @@ def test_offline_cache_failure_never_downloads_or_replaces(
 ) -> None:
     root, home, data = context
     if kind != "missing":
-        monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: Response(data))
+        mock_open(monkeypatch, lambda *a, **kw: Response(data))
         workstation.prefetch_workstation(root)
         archive = next((home / "cache").rglob("*.zip"))
         archive.unlink()
@@ -120,7 +132,7 @@ def test_offline_cache_failure_never_downloads_or_replaces(
             outside.write_bytes(b"user content")
             archive.symlink_to(outside)
     before = {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("offline network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("offline network"))
     with pytest.raises((ValueError, RuntimeError)):
         workstation._font_files(root, offline=True)
     assert {p: p.read_bytes() for p in before} == before
@@ -137,7 +149,7 @@ def test_prefetch_rejects_symlinked_cache_before_network(
     outside = home / "other"
     outside.mkdir()
     (home / "cache").symlink_to(outside, target_is_directory=True)
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises((ValueError, RuntimeError)):
         workstation.prefetch_workstation(root)
     assert not list(outside.iterdir())
@@ -165,11 +177,11 @@ def test_happ_download_is_verified_nonroot_and_does_not_touch_private_state(
     private.write_bytes(b"private settings stay intact")
     target = home / "session" / "happ.deb"
     package = b"pinned Happ fixture"
-    monkeypatch.setattr(happ, "urlopen", lambda *a, **kw: Response(package))
+    mock_open(monkeypatch, lambda *a, **kw: Response(package))
     assert happ.download_happ(root, target) == target
     assert target.read_bytes() == package and target.stat().st_uid == os.getuid()
     assert target.stat().st_mode & 0o777 == 0o600
-    monkeypatch.setattr(happ, "urlopen", lambda *a, **kw: pytest.fail("repeat network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("repeat network"))
     assert happ.download_happ(root, target) == target
     assert private.read_bytes() == b"private settings stay intact"
 
@@ -186,7 +198,7 @@ def test_happ_never_overwrites_unknown_destinations(
         target.write_bytes(b"user file")
     else:
         target.symlink_to(private)
-    monkeypatch.setattr(happ, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises((ValueError, RuntimeError)):
         happ.download_happ(root, target)
     assert private.read_bytes() == b"keep"
@@ -203,8 +215,7 @@ def test_http_failure_reports_only_status_and_host(
     def failure(*args: object, **kwargs: object) -> Response:
         raise HTTPError("https://github.com/release?token=" + secret, 403, secret, {}, None)
 
-    module = workstation if operation == "font" else happ
-    monkeypatch.setattr(module, "urlopen", failure)
+    mock_open(monkeypatch, failure)
     with pytest.raises((ValueError, RuntimeError)) as problem:
         if operation == "font":
             workstation.prefetch_workstation(root)
@@ -247,7 +258,7 @@ def test_installed_matching_fonts_need_no_cache_or_network(
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         for name in ("Regular.ttf", "OFL.txt"):
             (destination / name).write_bytes(archive.read(name))
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     assert workstation._font_files(root, offline=True) == {}
     assert not (home / "cache").exists()
 
@@ -258,7 +269,7 @@ def test_download_cache_rejects_foreign_file_owner(
 ) -> None:
     root, home, data = context
     if operation == "font":
-        monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: Response(data))
+        mock_open(monkeypatch, lambda *a, **kw: Response(data))
         workstation.prefetch_workstation(root)
         target = next((home / "cache").rglob("*.zip"))
     else:
@@ -275,8 +286,7 @@ def test_download_cache_rejects_foreign_file_owner(
         return details
 
     monkeypatch.setattr(Path, "lstat", foreign)
-    module = workstation if operation == "font" else happ
-    monkeypatch.setattr(module, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match=r"owner|owned"):
         if operation == "font":
             workstation.prefetch_workstation(root)
@@ -290,7 +300,7 @@ def test_happ_rejects_invalid_package_without_publishing_destination(
 ) -> None:
     root, home, _ = context
     package = b"corrupt" if kind == "digest" else b"pinned Happ fixture"
-    monkeypatch.setattr(happ, "urlopen", lambda *a, **kw: Response(package))
+    mock_open(monkeypatch, lambda *a, **kw: Response(package))
     if kind == "metadata":
         monkeypatch.setattr(
             happ, "_run", lambda argv: subprocess.CompletedProcess(argv, 0, "Package: other\n", "")
@@ -305,12 +315,12 @@ def test_oversized_cached_font_archive_fails_without_reading_or_downloading(
     context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, home, data = context
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: Response(data))
+    mock_open(monkeypatch, lambda *a, **kw: Response(data))
     workstation.prefetch_workstation(root)
     target = next((home / "cache").rglob("*.zip"))
     with target.open("wb") as output:
         output.truncate(workstation.MAX_FONT_ARCHIVE_BYTES + 1)
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match="bounded"):
         workstation._font_files(root, offline=True)
     assert target.stat().st_size == workstation.MAX_FONT_ARCHIVE_BYTES + 1
@@ -361,7 +371,7 @@ def test_offline_rejects_unknown_cache_provenance_without_rewriting(
     context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     root, home, data = context
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: Response(data))
+    mock_open(monkeypatch, lambda *a, **kw: Response(data))
     workstation.prefetch_workstation(root)
     archive = next((home / "cache").rglob("*.zip"))
     receipt = archive.with_suffix(".zip.json")
@@ -373,7 +383,7 @@ def test_offline_rejects_unknown_cache_provenance_without_rewriting(
     else:
         receipt.symlink_to(preserved)
     before = {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError):
         workstation._font_files(root, offline=True)
     with pytest.raises(ValueError):
@@ -428,12 +438,12 @@ def test_download_and_offline_cache_accept_exact_shared_limit(context, monkeypat
 
     class BoundedResponse(Response):
         def read(self, size):
-            assert size == len(data) + 1
+            assert 0 < size <= len(data) + 1
             return super().read(size)
 
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: BoundedResponse(data))
+    mock_open(monkeypatch, lambda *a, **kw: BoundedResponse(data))
     workstation.prefetch_workstation(root)
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("offline network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("offline network"))
     assert workstation._font_files(root, offline=True)
     assert next((home / "cache").rglob("*.zip")).read_bytes() == data
 
@@ -441,7 +451,7 @@ def test_download_and_offline_cache_accept_exact_shared_limit(context, monkeypat
 def test_download_above_shared_limit_does_not_publish_cache(context, monkeypatch) -> None:
     root, home, data = context
     monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: Response(data))
+    mock_open(monkeypatch, lambda *a, **kw: Response(data))
     with pytest.raises(ValueError, match="Font archive exceeds"):
         workstation.prefetch_workstation(root)
     assert not (home / "cache").exists()
@@ -453,7 +463,7 @@ def test_cache_above_shared_limit_is_preserved_without_network(context, monkeypa
     archive.parent.mkdir(parents=True)
     archive.write_bytes(data)
     monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
-    monkeypatch.setattr(workstation, "urlopen", lambda *a, **kw: pytest.fail("network"))
+    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match="bounded"):
         workstation.prefetch_workstation(root)
     assert archive.read_bytes() == data and not receipt.exists()

@@ -6,15 +6,15 @@ import platform
 from pathlib import Path
 from typing import cast
 
-from setup_system.planning import load_capabilities
+from setup_system.capabilities import load_policy
 
 
 def profile_capabilities(root: Path | None = None) -> dict[str, object]:
     """Load the shared profile matrix without package, network or privilege operations."""
-    return cast(dict[str, object], load_capabilities(root)["hyprland"])
+    return cast(dict[str, object], load_policy(root).document()["hyprland"])
 
 
-HYPRLAND_VERSION = str(profile_capabilities()["version_pin"])
+HYPRLAND_VERSION = load_policy().hyprland.version_pin
 
 
 def package_arguments(
@@ -24,26 +24,25 @@ def package_arguments(
     root: Path | None = None,
 ) -> list[str]:
     """Select one compatible package set; the privileged system adapter owns execution."""
-    capabilities = load_capabilities(root)
-    profile = cast(dict[str, object], capabilities["hyprland"])
-    aliases = cast(dict[str, str], capabilities["architectures"])
+    capabilities = load_policy(root)
+    profile = capabilities.hyprland
     release = platform.freedesktop_os_release() if os_release is None else os_release
     machine = platform.machine() if architecture is None else architecture
-    machine = aliases.get(machine, machine)
+    machine = capabilities.normalize_architecture(machine)
     if (
-        release.get("ID") != profile["distribution"]
-        or release.get("VERSION_ID") != profile["version"]
-        or release.get("VERSION_CODENAME") != profile["codename"]
-        or machine not in cast(list[str], profile["architectures"])
+        release.get("ID") != profile.distribution
+        or release.get("VERSION_ID") != profile.version
+        or release.get("VERSION_CODENAME") != profile.codename
+        or machine not in profile.architectures
     ):
         raise ValueError(
-            f"Hyprland requires {profile['distribution']} {profile['version']} "
-            f"({profile['codename']}) on {', '.join(cast(list[str], profile['architectures']))} "
-            f"with signed official {profile['backports']}"
+            f"Hyprland requires {profile.distribution} {profile.version} "
+            f"({profile.codename}) on {', '.join(profile.architectures)} "
+            f"with signed official {profile.backports}"
         )
-    backports = cast(dict[str, str], profile["backport_packages"])
+    backports = profile.backport_packages
     return [
-        f"hyprland={profile['version_pin']}",
-        *cast(list[str], profile["base_packages"]),
+        f"hyprland={profile.version_pin}",
+        *profile.base_packages,
         *(f"{name}={version}" for name, version in backports.items()),
     ]

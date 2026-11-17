@@ -1,10 +1,12 @@
-# One capability source for shell preflight, stdlib planning and installed CLI.
+# One capability source for stdlib planning, Debian adapters and the installed CLI.
 [architectures]
 amd64 = "x86_64"
 aarch64 = "arm64"
 
 [debian]
 versions = ["12", "13"]
+codenames = { "12" = "bookworm", "13" = "trixie" }
+apt_architectures = { x86_64 = "amd64", arm64 = "arm64" }
 architectures = ["x86_64", "arm64"]
 status = "implemented"
 locallyVerified = false
@@ -21,7 +23,7 @@ upstream_version = "0.55.2"
 backports = "trixie-backports"
 init_system = "systemd"
 init_version = "257"
-# Finite write destinations shared by shell and stdlib preflight; trailing slash means directory.
+# Finite managed destinations checked before apply; trailing slash means directory.
 preflight_paths = [
     "config:hypr/",
     "config:hypr/setup-system/",
@@ -44,8 +46,6 @@ preflight_paths = [
     "cache:setup-system/",
     "cache:setup-system/uv/",
     "cache:setup-system/downloads/",
-    "cache:setup-system/downloads/JetBrainsMono-3.4.0-76f05ff3ace48a464a6ca57977998784ff7bdbb65a6d915d7e401cd3927c493c.zip",
-    "cache:setup-system/downloads/JetBrainsMono-3.4.0-76f05ff3ace48a464a6ca57977998784ff7bdbb65a6d915d7e401cd3927c493c.zip.json",
 ]
 commands = [
     "Hyprland", "hyprctl", "start-hyprland", "foot", "wofi", "thunar", "waybar",

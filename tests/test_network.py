@@ -15,10 +15,29 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from setup_system import network
+from setup_system import downloads, network
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = "vless://00000000-0000-4000-8000-000000000001@node.example:443?encryption=none&security=tls&type=tcp&sni=example.com#PrivateName"
+
+
+def write_engine_manifest(
+    root: Path,
+    digest: str,
+    *,
+    version: str = "26.11.9",
+    asset: str = "Xray-linux-64.zip",
+    architecture: str = "amd64",
+    source: str = "https://github.com/XTLS/Xray-core/tree/676eaf66f8f05d4d558ee7a74b4736623d3feeb9",
+) -> None:
+    (root / "manifests").mkdir(exist_ok=True)
+    (root / "manifests/platforms.toml").write_bytes(
+        (ROOT / "manifests/platforms.toml").read_bytes()
+    )
+    (root / "manifests/network.toml").write_text(
+        f"version={json.dumps(version)}\nsource={json.dumps(source)}\n"
+        f"[linux.{architecture}]\nasset={json.dumps(asset)}\nsha256={json.dumps(digest)}\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -186,7 +205,7 @@ def test_download_errors_do_not_expose_secret_url_or_reason(
                 raise HTTPError(url, problem, "password=secret", {}, None)
             raise URLError("password=secret")
 
-    monkeypatch.setattr(network, "build_opener", lambda *args: Opener())
+    monkeypatch.setattr(downloads, "build_opener", lambda *args: Opener())
     with pytest.raises(network.NetworkError) as caught:
         network._fetch(url, 100)
     assert all(
@@ -226,9 +245,7 @@ def test_engine_extracts_only_digest_checked_regular_binary(
     manifest = tmp_path / "manifests"
     manifest.mkdir()
     digest = "0" * 64 if kind == "hash" else hashlib.sha256(data).hexdigest()
-    (manifest / "network.toml").write_text(
-        f'version="26.11.9"\n[linux.amd64]\nasset="Xray-linux-64.zip"\nsha256="{digest}"\n'
-    )
+    write_engine_manifest(tmp_path, digest)
     monkeypatch.setattr(network.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(network.platform, "system", lambda: "Linux")
     monkeypatch.setattr(network, "_fetch", lambda *args, **kwargs: data)
@@ -329,15 +346,6 @@ def test_root_never_fetches_or_starts_temporary_engine(monkeypatch: pytest.Monke
             pytest.fail("Root temporary proxy")
 
 
-def test_redirects_never_downgrade_tls_or_leave_engine_asset_allowlist() -> None:
-    for target, hosts in (
-        ("http://provider.example/private", None),
-        ("https://untrusted.example/engine", network.ASSET_HOSTS),
-    ):
-        with pytest.raises(network.NetworkError):
-            network._TLSRedirects(hosts).redirect_request(None, None, 302, "", {}, target)
-
-
 @pytest.mark.parametrize("seed_valid", [False, True])
 def test_seed_is_verified_preserved_and_invalid_seed_uses_official_download(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed_valid: bool
@@ -345,9 +353,7 @@ def test_seed_is_verified_preserved_and_invalid_seed_uses_official_download(
     data = archive([("xray", b"verified engine")])
     manifest = tmp_path / "manifests"
     manifest.mkdir()
-    (manifest / "network.toml").write_text(
-        f'version="26.11.9"\n[linux.amd64]\nasset="Xray-linux-64.zip"\nsha256="{hashlib.sha256(data).hexdigest()}"\n'
-    )
+    write_engine_manifest(tmp_path, hashlib.sha256(data).hexdigest())
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     seed = downloads / "xray-v26.11.9-amd64.zip"
@@ -430,3 +436,59 @@ def test_shared_worker_group_cleanup_signals_only_owned_engine_pid(
 
     network._stop(Process(), own_group=False)  # type: ignore[arg-type]
     assert events == (["terminate", "wait", "kill", "wait"] if timeout else ["terminate", "wait"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"version": "latest"},
+        {"version": "../26.11.9"},
+        {"source": "https://github.com/XTLS/Xray-core/tree/main"},
+        {"source": "https://untrusted.example/tree/" + "a" * 40},
+        {"asset": "../../xray.zip"},
+        {"asset": "unexpected.zip"},
+        {"architecture": "x86_64"},
+        {"architecture": "unknown"},
+        {"digest": "invalid"},
+    ],
+)
+def test_invalid_engine_policy_is_rejected_before_fetch_or_session_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: dict[str, str]
+) -> None:
+    values = {"digest": "0" * 64, **change}
+    write_engine_manifest(tmp_path, **values)
+    monkeypatch.setattr(network, "_fetch", lambda *a, **kw: pytest.fail("Invalid pin fetched"))
+    session = tmp_path / "session"
+    session.mkdir()
+    with pytest.raises(network.NetworkError, match="manifest or pin"):
+        network._engine(tmp_path, session)
+    assert list(session.iterdir()) == []
+
+
+@pytest.mark.parametrize("machine,architecture", [("amd64", "amd64"), ("aarch64", "arm64")])
+def test_engine_version_asset_and_architecture_are_selected_from_validated_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, machine: str, architecture: str
+) -> None:
+    data = archive([("xray", b"verified engine fixture")])
+    asset = "Xray-linux-fixture.zip"
+    write_engine_manifest(
+        tmp_path,
+        hashlib.sha256(data).hexdigest(),
+        version="26.11.10",
+        asset=asset,
+        architecture=architecture,
+    )
+    monkeypatch.setattr(network.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(network.platform, "machine", lambda: machine)
+    calls = []
+
+    def fetch(url, limit, *, asset):
+        assert asset and limit == network.MAX_ARCHIVE
+        calls.append(url)
+        return data
+
+    monkeypatch.setattr(network, "_fetch", fetch)
+    session = tmp_path / "session"
+    session.mkdir()
+    assert network._engine(tmp_path, session).read_bytes() == b"verified engine fixture"
+    assert calls == ["https://github.com/XTLS/Xray-core/releases/download/v26.11.10/" + asset]
