@@ -349,7 +349,7 @@ class DesktopSystem:
             + b"\n"
         )
         bridge_source = (
-            (self.root / "assets/login/login-session.py")
+            (self.root / "assets/login/login_session.py")
             .read_text()
             .replace('"@LOGIN_REGISTRY@"', repr(str(paths.registry)))
             .encode()

@@ -7,6 +7,7 @@ import os
 import shlex
 import stat
 import subprocess
+import sys
 import tomllib
 from dataclasses import fields, replace
 from pathlib import Path
@@ -263,7 +264,7 @@ def test_time_sync_never_replaces_an_existing_or_unknown_provider(
 
 def load_bridge(registry: Path) -> dict[str, object]:
     source = (
-        (ROOT / "assets/login/login-session.py")
+        (ROOT / "assets/login/login_session.py")
         .read_text()
         .replace('"@LOGIN_REGISTRY@"', repr(str(registry)))
     )
@@ -414,6 +415,9 @@ def test_postpam_bridge_rejects_primary_group_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     namespace = load_bridge(tmp_path)
+    monkeypatch.setattr(
+        namespace["pwd"], "getpwuid", lambda uid: SimpleNamespace(pw_gid=os.getegid())
+    )
     monkeypatch.setattr(namespace["os"], "getgid", lambda: os.getegid() + 1)
     with pytest.raises(ValueError, match="primary group"):
         namespace["session"](tmp_path)
@@ -426,8 +430,11 @@ def test_login_bridge_interpreter_is_isolated_before_any_python_imports(tmp_path
     (hostile / "sitecustomize.py").write_text(
         f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('unsafe')\n"
     )
+    source = (ROOT / "assets/login/login_session.py").read_text()
+    shebang, body = source.split("\n", 1)
+    assert shebang == "#!/usr/bin/python3 -IB"
     bridge = tmp_path / "login-session"
-    bridge.write_bytes((ROOT / "assets/login/login-session.py").read_bytes())
+    bridge.write_text(f"#!{sys.executable} -IB\n{body}")
     bridge.chmod(0o755)
     result = subprocess.run(
         [str(bridge)],

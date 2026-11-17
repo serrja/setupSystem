@@ -178,7 +178,7 @@ class InstallationService:
             "src/setup_system/installation_state.py",
             "src/setup_system/system_inspection.py",
             "src/setup_system/desktop_system.py",
-            "assets/login/login-session.py",
+            "assets/login/login_session.py",
             "assets/login/greeter.css",
             "assets/hyprland/panel.py",
             "src/setup_system/adapters/debian/package_session.py",

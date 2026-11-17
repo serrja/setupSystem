@@ -66,7 +66,7 @@ typecheck:
 test:
 	env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR $(UV) run --locked pytest --cov --cov-report=term-missing --cov-report=json --cov-report=xml --junitxml=coverage/python/junit.xml
 compile:
-	$(UV) run --locked python -m compileall -q src assets/hyprland/panel.py assets/login/login-session.py
+	$(UV) run --locked python -m compileall -q src assets/hyprland/panel.py assets/login/login_session.py
 lock-check:
 	$(UV) lock --check
 entrypoint-check:
