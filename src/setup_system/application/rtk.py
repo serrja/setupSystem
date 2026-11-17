@@ -12,11 +12,22 @@ import subprocess
 import tarfile
 import tempfile
 import tomllib
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from setup_system.capabilities import load_policy
+from setup_system.downloads import (
+    GITHUB_RELEASE_HOSTS,
+    DownloadError,
+    DownloadFailure,
+    DownloadPolicy,
+    ProxyPolicy,
+    copy_https,
+)
 from setup_system.storage import atomic_write, new_backup, state_root
+
+MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
+MAX_CHECKSUM_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -67,21 +78,31 @@ def plan_rtk(root: Path) -> tuple[RtkStatus, str]:
     return status, f"install available: pinned {manifest['version']}"
 
 
-def _target_name(manifest: dict[str, str]) -> str:
+def _target_name(manifest: dict[str, str], *, root: Path | None = None) -> str:
     if platform.system() != "Linux":
         raise ValueError("RTK provider supports Linux only")
     architecture = platform.machine()
-    key = {"x86_64": "linux_x86_64", "aarch64": "linux_arm64"}.get(architecture)
-    if key is None:
+    canonical = load_policy(root).normalize_architecture(architecture)
+    key = "linux_" + canonical
+    if key not in manifest:
         raise ValueError(f"RTK has no pinned target for {architecture}")
     return manifest[key]
 
 
-def _download(url: str, destination: Path) -> None:
-    with urllib.request.urlopen(url, timeout=30) as response, destination.open("wb") as output:
-        if response.status != 200:
-            raise RuntimeError(f"RTK download returned HTTP {response.status}")
-        shutil.copyfileobj(response, output)
+def _download(url: str, destination: Path, *, max_bytes: int = MAX_ARCHIVE_BYTES) -> None:
+    policy = DownloadPolicy(
+        GITHUB_RELEASE_HOSTS,
+        max_bytes,
+        30,
+        proxy=ProxyPolicy.from_loopback_environment(os.environ),
+    )
+    try:
+        with destination.open("wb") as output:
+            copy_https(url, output, policy)
+    except DownloadError as exc:
+        if exc.kind == DownloadFailure.HTTP:
+            raise RuntimeError(f"RTK download returned HTTP {exc.status}") from None
+        raise RuntimeError("RTK download failed: " + str(exc)) from None
 
 
 def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
@@ -100,14 +121,14 @@ def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
         raise ValueError("RTK target must be a regular file inside the current home")
     if target.exists() and (not target.is_file() or target.stat().st_uid != os.getuid()):
         raise ValueError("RTK target is not an owned regular file")
-    archive_name = _target_name(manifest)
+    archive_name = _target_name(manifest, root=root)
     release = manifest["release"]
     with tempfile.TemporaryDirectory(prefix="setup-rtk-") as temporary:
         temporary_dir = Path(temporary)
         archive = temporary_dir / archive_name
         checksums = temporary_dir / "checksums.txt"
         _download(f"{release}/{archive_name}", archive)
-        _download(f"{release}/{manifest['checksums']}", checksums)
+        _download(f"{release}/{manifest['checksums']}", checksums, max_bytes=MAX_CHECKSUM_BYTES)
         expected = {
             columns[1].lstrip("*"): columns[0]
             for line in checksums.read_text().splitlines()

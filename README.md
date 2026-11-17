@@ -26,6 +26,12 @@ pinned Python and locked CLI **as the normal user**, verifies release checksums,
 and opens Textual. It contains no workstation planner or APT package installer.
 Initial access to GitHub, the runtime and subscription hosts is required.
 
+Use the keyboard throughout: Enter in the target-user field runs the read-only plan.
+Tab/Shift+Tab selects buttons or the plan log; Enter activates the focused button.
+Choose Install to review the complete plan, then explicitly confirm with Enter.
+The VPN dialog focuses its hidden input; Enter submits it and Esc cancels.
+After each operation, focus returns to Read-only plan.
+
 The source/runtime stay under the target user's data directory for repeat/recovery.
 A changed existing release is preserved for review. Never run uv sync or Python build
 hooks as root. The CLI can also be prepared directly from a verified checkout as the

@@ -18,7 +18,6 @@ import platform
 import re
 import signal
 import socket
-import ssl
 import stat
 import subprocess
 import tempfile
@@ -27,22 +26,28 @@ import time
 import tomllib
 import uuid
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from http.client import HTTPException
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, unquote, urlsplit
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
+
+from setup_system.capabilities import load_policy
+from setup_system.downloads import (
+    GITHUB_RELEASE_HOSTS,
+    DownloadError,
+    DownloadFailure,
+    DownloadPolicy,
+    read_https,
+    validate_https_url,
+)
 
 MAX_SUBSCRIPTION = 2 * 1024 * 1024
 MAX_ARCHIVE = 32 * 1024 * 1024
 MAX_BINARY = 64 * 1024 * 1024
-ASSET_HOSTS = frozenset(
-    {"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
-)
+ASSET_HOSTS = GITHUB_RELEASE_HOSTS
 
 
 class NetworkError(RuntimeError):
@@ -67,64 +72,34 @@ def _text(value: object, *, limit: int = 2048) -> str:
 
 def _https(url: str, hosts: frozenset[str] | None = None) -> str:
     try:
-        parts = urlsplit(_text(url, limit=16384))
-        host = parts.hostname
-        if any(character.isspace() for character in url):
-            raise ValueError
-        if (
-            parts.scheme != "https"
-            or not host
-            or parts.username
-            or parts.password
-            or parts.port == 0
-        ):
-            raise ValueError
-        if hosts is not None and host not in hosts:
-            raise ValueError
-    except (ValueError, NetworkError):
+        return validate_https_url(url, hosts)
+    except DownloadError:
         raise NetworkError(
             "A valid HTTPS URL without embedded account credentials is required"
         ) from None
-    return host
-
-
-class _TLSRedirects(HTTPRedirectHandler):
-    def __init__(self, hosts: frozenset[str] | None) -> None:
-        super().__init__()
-        self.hosts = hosts
-
-    def redirect_request(
-        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
-    ) -> Any:
-        _https(newurl, self.hosts)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _fetch(url: str, limit: int, *, asset: bool = False) -> bytes:
-    hosts = ASSET_HOSTS if asset else None
-    _https(url, hosts)
-    # Do not inherit an unrelated HTTP(S)_PROXY or a previous temporary session.
-    opener = build_opener(
-        ProxyHandler({}), _TLSRedirects(hosts), HTTPSHandler(context=ssl.create_default_context())
+    policy = DownloadPolicy(
+        ASSET_HOSTS if asset else None,
+        limit,
+        30,
+        expose_host=False,
+        total_timeout=600 if asset else 30,
     )
     try:
-        with opener.open(
-            Request(url, headers={"User-Agent": "setupSystem"}), timeout=30
-        ) as response:
-            _https(response.geturl(), hosts)
-            data = bytes(response.read(limit + 1))
-    except HTTPError as exc:
-        purpose = "Temporary engine download" if asset else "Subscription download"
-        raise NetworkError(
-            f"{purpose}: HTTP {exc.code}; check the initial network connection"
-        ) from None
-    except (URLError, OSError, ValueError, HTTPException):
+        return read_https(url, policy)
+    except DownloadError as exc:
+        if exc.kind == DownloadFailure.HTTP:
+            purpose = "Temporary engine download" if asset else "Subscription download"
+            raise NetworkError(
+                f"{purpose}: HTTP {exc.status}; check the initial network connection"
+            ) from None
+        if exc.kind == DownloadFailure.SIZE:
+            raise NetworkError("HTTPS response exceeds the download size limit") from None
         raise NetworkError(
             "HTTPS download failed; check the initial network connection and certificate trust"
         ) from None
-    if len(data) > limit:
-        raise NetworkError("HTTPS response exceeds the download size limit")
-    return data
 
 
 def _address(value: object) -> str:
@@ -472,22 +447,69 @@ def proxy_config(outbound: dict[str, Any], port: int) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class EngineAsset:
+    name: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class EnginePolicy:
+    version: str
+    source: str
+    assets: Mapping[str, EngineAsset]
+
+
+def _engine_policy(root: Path) -> EnginePolicy:
+    path = root / "manifests/network.toml"
+    try:
+        details = path.lstat()
+        if not stat.S_ISREG(details.st_mode) or not 0 < details.st_size <= 16384:
+            raise ValueError
+        manifest = tomllib.loads(path.read_text())
+        version, source = manifest.get("version"), manifest.get("source")
+        linux = manifest.get("linux")
+        if (
+            not isinstance(version, str)
+            or re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", version) is None
+            or not isinstance(source, str)
+            or re.fullmatch(r"https://github\.com/XTLS/Xray-core/tree/[0-9a-f]{40}", source) is None
+            or not isinstance(linux, dict)
+            or not linux
+        ):
+            raise ValueError
+        capabilities = load_policy(root)
+        assets: dict[str, EngineAsset] = {}
+        for architecture, entry in linux.items():
+            if capabilities.debian_architecture(architecture) != architecture:
+                raise ValueError
+            if not isinstance(entry, dict):
+                raise ValueError
+            name, digest = entry.get("asset"), entry.get("sha256")
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"Xray-linux-[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\.zip", name) is None
+                or ".." in name
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            ):
+                raise ValueError
+            assets[architecture] = EngineAsset(name, digest)
+    except (OSError, TypeError, ValueError, KeyError):
+        raise NetworkError("Invalid temporary engine manifest or pin") from None
+    return EnginePolicy(version, source, MappingProxyType(assets))
+
+
 def _engine(root: Path, directory: Path) -> Path:
-    manifest_path = root / "manifests/network.toml"
-    if manifest_path.is_symlink() or manifest_path.stat().st_size > 16384:
-        raise NetworkError("Unsafe temporary engine manifest")
-    manifest = tomllib.loads(manifest_path.read_text())
-    version = manifest["version"]
-    arch = {"x86_64": "amd64", "aarch64": "arm64", "amd64": "amd64", "arm64": "arm64"}.get(
-        platform.machine()
-    )
-    if version != "26.11.9" or platform.system() != "Linux" or arch is None:
-        raise NetworkError("Temporary network engine supports Linux amd64/arm64 only")
-    entry = manifest["linux"][arch]
-    expected = entry["sha256"]
-    asset = {"amd64": "Xray-linux-64.zip", "arm64": "Xray-linux-arm64-v8a.zip"}[arch]
-    if entry["asset"] != asset or not re.fullmatch(r"[a-f0-9]{64}", expected):
-        raise NetworkError("Invalid temporary engine pin")
+    policy = _engine_policy(root)
+    try:
+        arch = load_policy(root).debian_architecture(platform.machine())
+        if platform.system() != "Linux":
+            raise ValueError
+        entry = policy.assets[arch]
+    except (ValueError, KeyError):
+        raise NetworkError("Temporary network engine supports pinned Linux targets only") from None
+    version, asset, expected = policy.version, entry.name, entry.sha256
     seed = root / "downloads" / f"xray-v{version}-{arch}.zip"
     archive = b""
     if seed.is_file() and not seed.is_symlink() and seed.stat().st_size <= MAX_ARCHIVE:

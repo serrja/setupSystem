@@ -84,3 +84,19 @@ def test_invalid_user_updates_cannot_change_the_journal(
     with pytest.raises(ValueError):
         installation.mark_user_stage(paths, status, stage=stage, completed=completed)
     assert paths.journal.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "changes", [{"schema": 2}, {"stage": "unknown"}, {"status": None}, {"completed": [0]}]
+)
+def test_malformed_existing_journal_is_preserved_for_review(
+    tmp_path: Path, changes: dict[str, object]
+) -> None:
+    paths = journal(tmp_path)
+    document = json.loads(paths.journal.read_text())
+    document.update(changes)
+    paths.journal.write_text(json.dumps(document))
+    before = paths.journal.read_bytes()
+    with pytest.raises(ValueError, match="journal"):
+        installation.mark_user_stage(paths, "complete", completed=("user-downloads",))
+    assert paths.journal.read_bytes() == before

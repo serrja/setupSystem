@@ -119,7 +119,7 @@ def test_debian_terminal_apply_configures_current_user_zsh(
 ) -> None:
     """The explicit Debian dev profile must reach the portable shell apply."""
     cli = importlib.import_module("setup_system.cli.system")
-    cli_shell = importlib.import_module("setup_system.cli.shell")
+    profiles = importlib.import_module("setup_system.application.user_profiles")
     platform = Platform("debian", "13", "x86_64", True, False, "supported")
     calls: list[str] = []
     app = object()
@@ -127,32 +127,32 @@ def test_debian_terminal_apply_configures_current_user_zsh(
         "test", tmp_path, tmp_path, Path("/bin/bash"), Path("/usr/bin/zsh"), True
     )
 
-    monkeypatch.setattr(cli, "create_plan", lambda *_args: Plan(platform, (), ()))
-    monkeypatch.setattr(cli, "catalog", lambda _root: {"zsh": app})
+    monkeypatch.setattr(profiles, "create_plan", lambda *_args: Plan(platform, (), ()))
+    monkeypatch.setattr(profiles, "catalog", lambda _root: {"zsh": app})
     monkeypatch.setattr(
-        cli, "install_zsh", lambda selected: calls.append("install_zsh") or "installed"
+        profiles, "install_zsh", lambda selected: calls.append("install_zsh") or "installed"
     )
     monkeypatch.setattr(
-        cli,
+        profiles,
         "apply_configuration",
         lambda *_args, **_kwargs: (calls.append("configuration") or tmp_path, []),
     )
     monkeypatch.setattr(
-        cli_shell,
+        shell,
         "apply_shell",
         lambda _root: (calls.append("shell") or tmp_path, [], status),
     )
     monkeypatch.setattr(
-        cli_shell,
+        shell,
         "change_login_shell",
         lambda target: (calls.append("chsh") or True, str(target)),
     )
-    monkeypatch.setattr(cli, "install_neovim", lambda *_args: "unchanged")
-    monkeypatch.setattr(cli, "install_plugins", lambda *_args: [])
-    monkeypatch.setattr(cli, "install_archive_tool", lambda *_args: "unchanged")
-    monkeypatch.setattr(cli, "install_language_tools", lambda *_args: [])
-    monkeypatch.setattr(cli, "install_parsers", lambda *_args: "unchanged")
-    monkeypatch.setattr(cli, "install_system_tools", lambda *_args: ("unchanged", False))
+    monkeypatch.setattr(profiles, "install_neovim", lambda *_args: "unchanged")
+    monkeypatch.setattr(profiles, "install_plugins", lambda *_args: [])
+    monkeypatch.setattr(profiles, "install_archive_tool", lambda *_args: "unchanged")
+    monkeypatch.setattr(profiles, "install_language_tools", lambda *_args: [])
+    monkeypatch.setattr(profiles, "install_parsers", lambda *_args: "unchanged")
+    monkeypatch.setattr(profiles, "install_system_tools", lambda *_args: ("unchanged", False))
 
     cli.apply(yes=True, profile="terminalDev")
 

@@ -39,6 +39,10 @@ owner's clean Debian system, verified guest identity/codename/architecture and n
 passthrough of working HOME/disks. Run the public one-command entrypoint and repeat
 it there; record actual ownership, files, APT/source plan and recovery results.
 A container or mock executor does not prove this installation or graphical behavior.
+Keyboard regressions also run the real Textual terminal driver in an 80×25 PTY
+with Linux-console and xterm terminal types, raw Enter bytes and a fixture service.
+This checks terminal input and focus without applying system changes; it is not a
+physical Debian-console or graphical-session smoke.
 
 Check login/TTY return, renderer/GPU, audio, screen sharing, lock/resume and network
 preservation in a real session. If no approved disposable guest is available, state

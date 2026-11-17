@@ -327,3 +327,24 @@ def test_default_interactive_apply_asks_once_and_keeps_subscription_hidden(
     monkeypatch.setattr("builtins.input", consent)
     assert fixture.service.run(InstallRequest(Operation.APPLY, user="alice")) == 0
     assert len(prompts) == 1 and fixture.subscription not in prompts[0]
+
+
+def test_network_factory_failure_reports_the_stage_without_false_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = workflow(tmp_path, monkeypatch)
+
+    def unavailable(*_args: object, **_kwargs: object) -> installer.NetworkPort:
+        raise RuntimeError("Fixture temporary network adapter unavailable")
+
+    fixture.service.network = unavailable
+    assert fixture.service.run(InstallRequest(Operation.APPLY, user="alice", yes=True)) == 5
+    output = capsys.readouterr()
+    assert "FAILED installation stage temporary-network" in output.err
+    assert "Installation completed" not in output.out
+    assert fixture.subscription not in output.out + output.err
+    assert fixture.marks == [("failed", "temporary-network", ())]
+    assert fixture.network.close_calls == 0
+    assert fixture.events == ["journal-failed"]

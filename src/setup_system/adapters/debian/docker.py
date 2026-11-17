@@ -8,12 +8,13 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
-from urllib.request import urlopen
 
+from setup_system.capabilities import load_policy
+from setup_system.downloads import DownloadError, DownloadFailure, DownloadPolicy, read_https
 from setup_system.planning import detect_platform
 
 KEY_URL = "https://download.docker.com/linux/debian/gpg"
+MAX_KEY_BYTES = 64 * 1024
 KEY_FINGERPRINT = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 KEY_PATH = Path("/etc/apt/keyrings/docker.asc")
 SOURCE_PATH = Path("/etc/apt/sources.list.d/docker.sources")
@@ -76,12 +77,26 @@ def _candidate_version(package: str) -> str:
     return match.group(1)
 
 
+def _download_signing_key() -> bytes:
+    try:
+        return read_https(
+            KEY_URL, DownloadPolicy(frozenset({"download.docker.com"}), MAX_KEY_BYTES, 30)
+        )
+    except DownloadError as exc:
+        if exc.kind == DownloadFailure.URL:
+            raise RuntimeError("Unexpected Docker key redirect") from None
+        if exc.kind == DownloadFailure.SIZE:
+            raise RuntimeError("Docker signing key exceeds size limit") from None
+        raise RuntimeError("Docker signing key download failed: " + str(exc)) from None
+
+
 def install_docker() -> str:
     """Install only on exact Debian, without replacing existing Docker data or packages."""
     platform = detect_platform()
     if not platform.implemented or platform.distribution != "debian":
         raise ValueError(platform.reason)
-    codename = {"12": "bookworm", "13": "trixie"}[platform.version]
+    capabilities = load_policy()
+    codename = capabilities.debian_codename(platform.version)
     fields = dict(
         line.split("=", 1)
         for line in Path("/etc/os-release").read_text().splitlines()
@@ -90,7 +105,7 @@ def install_docker() -> str:
     if fields.get("VERSION_CODENAME", "").strip('"') != codename:
         raise RuntimeError("Debian version and codename disagree")
     architecture = _run_command(["dpkg", "--print-architecture"], timeout=10).strip()
-    if architecture != {"x86_64": "amd64", "arm64": "arm64"}[platform.architecture]:
+    if architecture != capabilities.debian_architecture(platform.architecture):
         raise RuntimeError("Debian architecture and dpkg architecture disagree")
     if _installed_package("docker-ce"):
         if any(_installed_package(package) for package in CONFLICTS):
@@ -124,13 +139,7 @@ def install_docker() -> str:
         if KEY_PATH.exists():
             _verify_key(KEY_PATH, stage)
         else:
-            with urlopen(KEY_URL, timeout=30) as response:
-                target = urlsplit(response.geturl())
-                if target.scheme != "https" or target.hostname != "download.docker.com":
-                    raise RuntimeError("Unexpected Docker key redirect")
-                content = response.read(64 * 1024 + 1)
-            if len(content) > 64 * 1024:
-                raise RuntimeError("Docker signing key exceeds size limit")
+            content = _download_signing_key()
             key.write_bytes(content)
             _verify_key(key, stage)
             _run_command(["sudo", "-n", "install", "-m", "0755", "-d", str(KEY_PATH.parent)])
