@@ -6,7 +6,7 @@ import os
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -15,10 +15,12 @@ from typing import Protocol
 
 from setup_system import installation as system
 from setup_system.application.interaction import ConsoleInteraction, Interaction
+from setup_system.desktop_system import DesktopPlan, DesktopSystem
 from setup_system.diagnostics import error_text
 from setup_system.installation_state import InstallStage
 from setup_system.network_session import NetworkReady, TemporaryNetwork
 from setup_system.runtime import RUNTIME_PYTHON, UV_VERSION, UserRuntime
+from setup_system.system_inspection import validate_home_access, validate_timezone
 
 
 class Operation(StrEnum):
@@ -36,6 +38,7 @@ class InstallRequest:
     yes: bool = False
     overrides: dict[str, Path] = field(default_factory=dict)
     subscription_file: Path | None = None
+    timezone: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,7 @@ class InstallPlan:
     target: system.TargetUser
     environment: dict[str, str]
     packages: tuple[str, ...]
+    desktop: DesktopPlan | None = None
 
 
 class RuntimePort(Protocol):
@@ -84,7 +88,20 @@ class PackageFactory(Protocol):
         paths: system.SystemPaths,
         run: Callable[..., subprocess.CompletedProcess[str]],
         emit: Callable[[str], None],
+        extra_packages: tuple[str, ...] = (),
     ) -> AbstractContextManager[PackagesPort]: ...
+
+
+class DesktopPort(Protocol):
+    def plan(
+        self,
+        target: system.TargetUser,
+        environment: Mapping[str, str],
+        *,
+        timezone: str | None = None,
+    ) -> DesktopPlan | None: ...
+    def revalidate(self, plan: DesktopPlan) -> DesktopPlan: ...
+    def apply(self, plan: DesktopPlan) -> None: ...
 
 
 class UnsupportedTargetError(ValueError):
@@ -95,6 +112,19 @@ class UnsupportedTargetError(ValueError):
 class ApplyProgress:
     stage: InstallStage = InstallStage.TEMPORARY_NETWORK
     user_prepared: bool = False
+    user_configured: bool = False
+    desktop_configured: bool = False
+
+    def completed(self) -> tuple[str, ...]:
+        return tuple(
+            stage
+            for stage, done in (
+                ("user-downloads", self.user_prepared),
+                ("user-configuration", self.user_configured),
+                ("system-desktop", self.desktop_configured),
+            )
+            if done
+        )
 
 
 class InstallationService:
@@ -109,6 +139,7 @@ class InstallationService:
         packages: PackageFactory | None = None,
         paths: system.SystemPaths | None = None,
         interaction: Interaction | None = None,
+        desktop: DesktopPort | None = None,
     ) -> None:
         self.interaction = ConsoleInteraction() if interaction is None else interaction
         self.root = root.resolve()
@@ -116,8 +147,12 @@ class InstallationService:
         self.network = network
         self.packages: PackageFactory = system.prepare_packages if packages is None else packages
         self.paths = system.SystemPaths() if paths is None else paths
+        self.desktop: DesktopPort = (
+            DesktopSystem(self.root, run=system.run_command) if desktop is None else desktop
+        )
 
     def plan(self, request: InstallRequest) -> InstallPlan:
+        timezone = validate_timezone(request.timezone)
         try:
             packages = tuple(system.current_packages(self.root))
         except (OSError, ValueError) as exc:
@@ -141,6 +176,11 @@ class InstallationService:
             "src/setup_system/downloads.py",
             "src/setup_system/font_policy.py",
             "src/setup_system/installation_state.py",
+            "src/setup_system/system_inspection.py",
+            "src/setup_system/desktop_system.py",
+            "assets/login/login_session.py",
+            "assets/login/greeter.css",
+            "assets/hyprland/panel.py",
             "src/setup_system/adapters/debian/package_session.py",
             "src/setup_system/application/installer.py",
             "src/setup_system/network_worker.py",
@@ -167,7 +207,14 @@ class InstallationService:
                 system.validate_service_manager(root=self.root, run=system.run_command)
             except ValueError as exc:
                 raise UnsupportedTargetError(str(exc)) from exc
-        return InstallPlan(target, environment, packages)
+        desktop = (
+            self.desktop.plan(target, environment, timezone=timezone)
+            if request.operation in {Operation.PLAN, Operation.APPLY}
+            else None
+        )
+        if desktop is not None:
+            packages = tuple(dict.fromkeys((*packages, *desktop.extra_packages)))
+        return InstallPlan(target, environment, packages, desktop)
 
     def show_plan(self, plan: InstallPlan) -> None:
         target = plan.target
@@ -199,8 +246,12 @@ class InstallationService:
             + plan.environment["XDG_CONFIG_HOME"]
         )
         self.interaction.write(
-            "Preserve existing network configuration, locale, timezone, login shell and session."
+            "Preserve network configuration, locale, login shell and session; "
+            "change timezone only when explicitly selected."
         )
+        if plan.desktop is not None:
+            for detail in plan.desktop.describe():
+                self.interaction.write(detail)
         self.interaction.write(
             "Plan performs no downloads or metadata refresh. "
             "Initial client/subscription access is required."
@@ -233,6 +284,7 @@ class InstallationService:
     ) -> int:
         from setup_system.worker_protocol import worker_arguments
 
+        validate_home_access(plan.target.home)
         environment = dict(plan.environment)
         if proxy is not None:
             environment.update(HTTP_PROXY=proxy, HTTPS_PROXY=proxy)
@@ -302,7 +354,7 @@ class InstallationService:
         except UnsupportedTargetError as exc:
             self.interaction.write(f"UNSUPPORTED: {exc}. No changes made.", error=True)
             return 4
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             self.interaction.write(f"Preflight failed: {error_text(exc)}", error=True)
             return 2
         if private:
@@ -316,6 +368,7 @@ class InstallationService:
 
     def _run_private(self, plan: InstallPlan, request: InstallRequest) -> int:
         try:
+            validate_home_access(plan.target.home)
             if request.operation == Operation.NETWORK_STAGE:
                 from setup_system.network_worker import serve_network
 
@@ -372,6 +425,7 @@ class InstallationService:
             return 2
         progress = ApplyProgress()
         try:
+            validate_home_access(plan.target.home)
             network = self.network(
                 self.root,
                 plan.target,
@@ -387,9 +441,7 @@ class InstallationService:
                 self._apply_packages(plan, network, ready, progress)
             finally:
                 network.close()
-            system.mark_user_stage(
-                self.paths, "complete", completed=("user-downloads", "user-configuration")
-            )
+            system.mark_user_stage(self.paths, "complete", completed=progress.completed())
         except (
             OSError,
             ValueError,
@@ -408,6 +460,7 @@ class InstallationService:
         progress: ApplyProgress,
     ) -> None:
         progress.stage = InstallStage.PACKAGE_DOWNLOADS
+        extra = plan.desktop.extra_packages if plan.desktop is not None else ()
         with self.packages(
             self.root,
             target=plan.target,
@@ -416,6 +469,7 @@ class InstallationService:
             paths=self.paths,
             run=system.run_command,
             emit=self.interaction.write,
+            extra_packages=extra,
         ) as packages:
             progress.stage = InstallStage.USER_DOWNLOADS
             self.interaction.write("Stage: locked user runtime and font downloads", flush=True)
@@ -439,6 +493,21 @@ class InstallationService:
             code = self._user_process(plan, Operation.USER_STAGE)
             if code:
                 raise RuntimeError(f"User configuration failed with exit {code}")
+            progress.user_configured = True
+            if plan.desktop is not None:
+                progress.stage = InstallStage.SYSTEM_DESKTOP
+                system.mark_user_stage(
+                    self.paths,
+                    "running",
+                    stage=progress.stage,
+                    completed=progress.completed(),
+                )
+                self.interaction.write(
+                    "Stage: graphical login, existing encryption, clock and GRUB", flush=True
+                )
+                desktop_plan = self.desktop.revalidate(plan.desktop)
+                self.desktop.apply(desktop_plan)
+                progress.desktop_configured = True
 
     def _failed(self, progress: ApplyProgress, exc: BaseException) -> int:
         paths = self.paths
@@ -455,7 +524,7 @@ class InstallationService:
                         InstallStage.HAPP_SERVICE,
                     }
                     else progress.stage,
-                    completed=("user-downloads",) if progress.user_prepared else (),
+                    completed=progress.completed(),
                 )
             except (OSError, ValueError) as journal_error:
                 self.interaction.write(
@@ -479,8 +548,18 @@ class InstallationService:
         self.interaction.write(
             "Installation completed; REAL LOGIN/GUI must be checked on the target machine."
         )
+        if plan.desktop is not None:
+            self.interaction.write(
+                "Next normal boot: authenticate on the graphical login screen as "
+                + plan.target.name
+                + "; Hyprland starts after authentication. No reboot performed."
+            )
+            self.interaction.write(
+                "GRUB menu delay is zero; existing encrypted-disk unlock prompts remain. "
+                "TTY recovery: Ctrl+Alt+F3."
+            )
         self.interaction.write(
-            "Next: log in locally on a TTY as "
+            "TTY fallback: log in locally as "
             + plan.target.name
             + " and run: "
             + shlex.quote(str(launcher))
@@ -489,9 +568,7 @@ class InstallationService:
             "Open Happ from the launcher and use its native subscription import; "
             "no secret link was saved."
         )
-        self.interaction.write(
-            "Return to TTY: Super+F9 then Logout; switch consoles with Ctrl+Alt+F3."
-        )
+        self.interaction.write("Log out: Super+F9 then Logout; switch to TTY with Ctrl+Alt+F3.")
         self.interaction.write(
             "Recovery preview: " + shlex.quote(str(recovery)) + " workstation restore BACKUP_ID"
         )

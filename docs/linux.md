@@ -21,8 +21,15 @@ failure reporting and recovery. Its ports isolate runtime preparation, temporary
 networking and package sessions. `installation.py` validates privileged paths,
 identities and side effects; `adapters/debian/package_session.py` owns pure APT
 source/command construction. The shared `installation_state.py` owns journal stages,
-statuses and serialization for both application and package progress. Package operations keep
-their signed-source, no-removal and offline-apply boundaries.
+statuses and serialization for both application and package progress. Package operations
+keep their signed-source, no-removal and offline-apply boundaries.
+
+`system_inspection.py` reads existing root/HOME encryption and clock state through
+bounded read-only queries. Unknown encryption does not mean unencrypted. It does not
+create encryption or request keys. `desktop_system.py` owns a finite typed system plan:
+graphical login, its selected-user bridge, existing GRUB settings and an optional
+validated timezone. The application records `system-desktop` only after this stage
+succeeds; a failure retains completed user stages and returns nonzero.
 
 `downloads.py` owns bounded HTTPS reads, permitted redirect hosts and explicit proxy
 policy. Runtime, application artifacts and fonts reuse that transport while retaining
@@ -39,12 +46,13 @@ operations. `cli/install.py` exposes explicit automation and recovery commands.
 Both use `InstallationService` and its typed `Interaction` port. The private stdlib
 worker handles checked root-to-user transitions. The small `install.sh` delivers
 pinned uv/Python and the locked CLI as the ordinary user, then opens Textual.
-Initial CA trust and access to the delivery hosts remain prerequisites.
+Initial CA trust and access to the delivery hosts remain prerequisites. Release delivery
+is the fresh-system path; manual `.venv` preparation is a development concern.
 
 ## Apply and recovery
 
 The selected profile additionally requires systemd 257 as client and accessible
-system manager; native preflight inspect it without starting services.
+system manager; native preflight inspects it without starting services.
 The user phase first prepares the runtime and invokes
 `setup-system workstation prefetch --profile hyprland` while the temporary
 loopback proxy is available. After client/config cleanup, APT runs in its offline
@@ -54,13 +62,33 @@ calls `setup-system workstation apply --profile hyprland --yes --offline` inside
 its own offline network namespace.
 `application/workstation.py` owns managed configuration, conflict checks, backups
 and restore, and refuses Hyprland apply as root. `assets/hyprland/` targets the
-pinned compositor version. Portable [fonts](fonts.md), terminalDev, projects,
-templates and application operations retain their useful functions.
+pinned compositor version, including the explicit compatible `hyprland-guiutils`
+backport. One session-owned panel bridge adapts Debian Waybar 0.12 workspace buttons
+to Hyprland's Lua dispatch API. Native modules display real hardware and local time:
+only present system batteries and supported backlights are selected, and the clock
+tooltip exposes the timezone. Optional session helpers fail independently and log
+under the selected user's state directory. Portable [fonts](fonts.md), terminalDev,
+projects, templates and application operations retain their useful functions.
 
-Normal TTY installation uses hidden HTTPS subscription input after plan consent.
+After user configuration, the root desktop stage configures Debian greetd, gtkgreet
+and Cage for the next normal boot. The existing ordinary account authenticates through
+PAM, then the selected user's launcher starts Hyprland. It does not start the greeter
+or compositor immediately, enable autologin, interrupt the current session or reboot.
+Existing PAM and disk-unlock integration are preserved; a locked or unverifiable
+encrypted HOME is a preflight error. GRUB is retained with a hidden menu and timeout
+zero, including recordfail. No boot entries or encryption settings are removed; no
+recovery-key waiting window is guaranteed. The local TTY launcher remains a fallback.
+
+A blank Textual timezone field or omitted `--timezone` preserves the current zone.
+An explicit IANA zone is validated before apply. Existing NTP providers are retained;
+the plan adds a default provider only when inspection conclusively finds none. Unknown
+provider state does not authorize replacement. Clock adjustments are not transactional.
+See [Hyprland login and controls](hyprland.md) and [recovery](recovery.md).
+
+Interactive installation uses hidden HTTPS subscription input after plan consent.
 Unattended `--yes` requires `--vpn-config-file` pointing to an existing private,
 bounded, single-link regular user file under verified HOME. Only the filename
-crosses the private seven-position source handoff; the file is preserved. Read-only
+crosses the private source handoff; the file is preserved. Read-only
 plan/help neither prompts for a subscription nor downloads anything. Initial client
 or verified seed availability and subscription reachability remain prerequisites.
 

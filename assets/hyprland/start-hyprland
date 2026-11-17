@@ -3,11 +3,33 @@
 set -eu
 [ "$(id -u)" -ne 0 ] || { printf '%s\n' 'Run Hyprland as the desktop user, never root.' >&2; exit 4; }
 [ -z "${SSH_CONNECTION-}${SSH_TTY-}${WAYLAND_DISPLAY-}${DISPLAY-}" ] || {
-    printf '%s\n' 'Start Hyprland from a local text console after leaving any graphical session.' >&2
+    printf '%s\n' 'Start Hyprland from a local authenticated session, outside an existing graphical session.' >&2
     exit 4
 }
-console=$(tty) || exit 4
-case "$console" in /dev/tty[0-9]*) ;; *) printf '%s\n' 'A local Linux virtual console is required.' >&2; exit 4 ;; esac
+case "${1-}" in
+    '')
+        console=$(tty) || exit 4
+        case "$console" in /dev/tty[0-9]*) ;; *) printf '%s\n' 'A local Linux virtual console is required.' >&2; exit 4 ;; esac
+        ;;
+    --display-manager)
+        [ "$#" -eq 1 ] && [ -n "${XDG_SESSION_ID-}" ] || exit 4
+        timeout 5s /bin/sh -s -- "$XDG_SESSION_ID" "$(id -u)" <<'CHECK_SESSION' || exit 4
+set -eu
+while :; do
+    details=$(timeout 1s loginctl --no-pager show-session "$1" --property=User --property=Remote --property=Class --property=Active --property=Seat --property=VTNr) || exit 4
+    printf '%s\n' "$details" | grep -Fx "User=$2" >/dev/null || exit 4
+    printf '%s\n' "$details" | grep -Fx 'Remote=no' >/dev/null || exit 4
+    printf '%s\n' "$details" | grep -Fx 'Class=user' >/dev/null || exit 4
+    printf '%s\n' "$details" | grep -E '^Seat=seat[[:alnum:]_-]+$' >/dev/null || exit 4
+    printf '%s\n' "$details" | grep -E '^VTNr=[1-9][0-9]*$' >/dev/null || exit 4
+    printf '%s\n' "$details" | grep -Fx 'Active=yes' >/dev/null && exit 0
+    printf '%s\n' "$details" | grep -Fx 'Active=no' >/dev/null || exit 4
+    sleep 0.2
+done
+CHECK_SESSION
+        ;;
+    *) printf '%s\n' 'Unknown session launcher argument.' >&2; exit 4 ;;
+esac
 : "${XDG_RUNTIME_DIR:?Log in locally so pam_systemd creates the user runtime directory}"
 [ "$(stat -c %u -- "$XDG_RUNTIME_DIR")" = "$(id -u)" ] || exit 4
 export XDG_CONFIG_HOME=@CONFIG_HOME@

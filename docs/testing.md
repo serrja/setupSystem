@@ -9,7 +9,11 @@ is `make ci-local`. [Development](development.md) owns preparation commands.
 Source tests use synthetic HOME/XDG directories, temporary Git repositories, fixtures
 and mock executors. They cover unsupported platform/user arguments before writes,
 read-only plan, command failures, ownership boundaries, conflict preservation,
-backup/recovery and reruns. They never select the developer host as an installation
+backup/recovery and reruns. Desktop fixtures additionally separate privileged
+greetd/GRUB/clock changes from user configuration, reject locked encrypted HOME,
+exercise native-session environment checks, preserve existing NTP providers and
+recover managed system files after partial failures. Panel tests use synthetic sysfs
+and Unix sockets for hardware selection and Lua workspace commands. They never select the developer host as an installation
 target, invoke an actual system apply, or mount a real HOME/device into a test guest.
 
 Real Copier copy/update tests use annotated Git fixtures offline, preserve owner
