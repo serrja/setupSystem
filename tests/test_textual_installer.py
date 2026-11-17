@@ -146,7 +146,7 @@ def test_keyboard_can_cancel_confirmation_without_applying(tmp_path: Path) -> No
         service = Service()
         app = application(tmp_path, service)
         async with app.run_test(size=(80, 25)) as pilot:
-            await pilot.press("tab", "tab", "enter")
+            await pilot.press("tab", "tab", "tab", "enter")
             await pilot.pause()
             assert isinstance(app.screen, Prompt)
             await pilot.press("tab")
@@ -257,3 +257,39 @@ def test_process_protocol_refuses_worker_and_unknown_operations_before_apply() -
         }
         with pytest.raises(ValueError):
             read_request(io.StringIO(json.dumps(payload)))
+
+
+def test_timezone_is_editable_and_enter_only_requests_a_plan(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        service = Service()
+        app = application(tmp_path, service)
+        async with app.run_test(size=(80, 25)) as pilot:
+            timezone = app.query_one("#timezone", Input)
+            timezone.value = "Europe/Paris"
+            timezone.focus()
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(service.requests) == 1
+            assert service.requests[0].timezone == "Europe/Paris"
+            assert service.requests[0].operation == Operation.PLAN and not service.applied
+
+    asyncio.run(exercise())
+
+
+def test_timezone_protocol_accepts_older_request_and_rejects_wrong_type(tmp_path: Path) -> None:
+    import io
+    import json
+
+    from setup_system.application.installation_host import encode_request, read_request
+
+    request = InstallRequest(Operation.PLAN, timezone="Europe/Paris")
+    payload = json.loads(encode_request(tmp_path, request))
+    _, decoded = read_request(io.StringIO(json.dumps(payload) + "\n"))
+    assert decoded.timezone == "Europe/Paris"
+    del payload["timezone"]
+    _, older = read_request(io.StringIO(json.dumps(payload) + "\n"))
+    assert older.timezone is None
+    payload["timezone"] = True
+    with pytest.raises(ValueError, match="request values"):
+        read_request(io.StringIO(json.dumps(payload) + "\n"))

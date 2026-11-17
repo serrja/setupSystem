@@ -1,47 +1,50 @@
 {
   "layer": "top",
   "position": "top",
-  "height": 30,
-  "spacing": 12,
-  "modules-left": [
-    "hyprland/workspaces"
-  ],
-  "modules-center": [
-    "clock"
-  ],
-  "modules-right": [
-    "hyprland/language",
-    "pulseaudio",
-    "network",
-    "backlight",
-    "battery",
-    "tray"
-  ],
+  "height": 38,
+  "margin-top": 8,
+  "margin-left": 10,
+  "margin-right": 10,
+  "spacing": 4,
+  "modules-left": ["custom/launcher"],
+  "modules-center": ["clock"],
+  "modules-right": ["hyprland/language", "pulseaudio", "network", "backlight", "battery", "tray", "custom/power"],
+  "custom/launcher": {
+    "format": "󰍜",
+    "tooltip-format": "Applications · Super+D",
+    "on-click": "wofi --show drun --conf \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/wofi.conf\" --style \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/style.css\""
+  },
   "clock": {
-    "format": "{:%a %d %b  %H:%M}"
+    "interval": 1,
+    "format": "{:%H:%M}",
+    "format-alt": "{:%a %d %b}",
+    "tooltip-format": "{:%A, %d %B %Y\n%H:%M:%S %Z (%z)}"
   },
-  "hyprland/language": {
-    "format": "{}",
-    "format-en": "EN",
-    "format-ru": "RU"
-  },
+  "hyprland/language": {"format": "{}", "format-en": "EN", "format-ru": "RU"},
   "pulseaudio": {
-    "format": "Vol {volume}%",
-    "format-muted": "Muted",
-    "on-click": "pavucontrol"
+    "format": "󰕾 {volume}%",
+    "format-muted": "󰖁 Muted",
+    "on-click": "pavucontrol",
+    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "scroll-step": 5
   },
   "network": {
-    "format-wifi": "Wi-Fi {signalStrength}%",
-    "format-ethernet": "Ethernet",
-    "format-disconnected": "Offline",
+    "format-wifi": "󰤨 {signalStrength}%",
+    "format-ethernet": "󰈀 Connected",
+    "format-disconnected": "󰤭 Offline",
+    "tooltip-format": "{ifname} · {ipaddr}",
     "on-click": "nm-connection-editor"
   },
   "backlight": {
-    "format": "Light {percent}%",
+    "format": "󰃠 {percent}%",
     "on-scroll-up": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/brightness.sh\" up",
     "on-scroll-down": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/brightness.sh\" down"
   },
-  "battery": {
-    "format": "Bat {capacity}%"
+  "battery": {},
+  "tray": {"icon-size": 18, "spacing": 8},
+  "custom/power": {
+    "format": "󰐥",
+    "tooltip-format": "Session and power",
+    "on-click": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/power.sh\""
   }
 }

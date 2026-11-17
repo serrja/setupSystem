@@ -94,6 +94,7 @@ def encode_request(root: Path, request: InstallRequest) -> str:
                 "operation": request.operation.value,
                 "user": request.user,
                 "yes": request.yes,
+                "timezone": request.timezone,
                 "overrides": {kind: str(path) for kind, path in request.overrides.items()},
                 "subscription_file": str(request.subscription_file)
                 if request.subscription_file
@@ -106,10 +107,12 @@ def encode_request(root: Path, request: InstallRequest) -> str:
 
 def read_request(reader: TextIO) -> tuple[Path, InstallRequest]:
     data = _payload(reader.readline(MAX_MESSAGE_CHARACTERS + 1))
-    if set(data) != {"root", "operation", "user", "yes", "overrides", "subscription_file"}:
+    fields = {"root", "operation", "user", "yes", "overrides", "subscription_file"}
+    if set(data) not in (fields, fields | {"timezone"}):
         raise ValueError("Invalid installation request fields")
     root, operation, user = data["root"], data["operation"], data["user"]
     yes, overrides, subscription = data["yes"], data["overrides"], data["subscription_file"]
+    timezone = data.get("timezone")
     if (
         not isinstance(root, str)
         or not Path(root).is_absolute()
@@ -117,6 +120,7 @@ def read_request(reader: TextIO) -> tuple[Path, InstallRequest]:
         or operation not in {Operation.PLAN.value, Operation.APPLY.value}
         or not isinstance(yes, bool)
         or not (user is None or isinstance(user, str))
+        or not (timezone is None or isinstance(timezone, str))
         or not (subscription is None or isinstance(subscription, str))
         or not isinstance(overrides, dict)
         or any(
@@ -129,6 +133,7 @@ def read_request(reader: TextIO) -> tuple[Path, InstallRequest]:
         Operation(str(operation)),
         user=user,
         yes=yes,
+        timezone=timezone,
         overrides={str(kind): Path(str(path)) for kind, path in overrides.items()},
         subscription_file=Path(subscription) if subscription else None,
     )

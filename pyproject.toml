@@ -68,7 +68,7 @@ ban-relative-imports = "parents"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/setup_system", "docker/check_entrypoint.py", "docker/verify_native.py", "docker/verify-installed.py"]
+files = ["src/setup_system", "docker/check_entrypoint.py", "docker/verify_native.py", "docker/verify-installed.py", "assets/hyprland/panel.py", "assets/login/login-session.py"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config"

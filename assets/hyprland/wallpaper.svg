@@ -1,8 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-  <!-- Original setupSystem wallpaper; no third-party assets. -->
-  <defs><linearGradient id="sky" x2="1" y2="1"><stop stop-color="#181825"/><stop offset="1" stop-color="#313244"/></linearGradient></defs>
-  <rect width="1920" height="1080" fill="url(#sky)"/>
-  <path d="M0 900 540 530 1120 1080H0Z" fill="#45475a"/>
-  <path d="m670 1080 710-650 540 570v80Z" fill="#585b70"/>
-  <path d="m920 850 460-420 190 200-160-65-75 80-100-45Z" fill="#89b4fa" opacity=".35"/>
+  <!-- Original setupSystem artwork, independent of monitor geometry. -->
+  <defs>
+    <linearGradient id="night" x2="1" y2="1"><stop stop-color="#11111b"/><stop offset=".55" stop-color="#1e1e2e"/><stop offset="1" stop-color="#313244"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#89b4fa" stop-opacity=".3"/><stop offset="1" stop-color="#89b4fa" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ridge" x2="1" y2=".4"><stop stop-color="#45475a"/><stop offset="1" stop-color="#585b70"/></linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#night)"/>
+  <ellipse cx="1400" cy="270" rx="650" ry="650" fill="url(#glow)"/>
+  <circle cx="1420" cy="250" r="68" fill="#cdd6f4" opacity=".8"/>
+  <path d="M0 870 400 590 800 880 1290 410 1920 900V1080H0Z" fill="url(#ridge)"/>
+  <path d="m850 860 440-450 355 278-230-90-92 116-83-54Z" fill="#89b4fa" opacity=".36"/>
+  <path d="M0 990 550 790 1010 1010 1500 750 1920 960V1080H0Z" fill="#181825" opacity=".9"/>
 </svg>

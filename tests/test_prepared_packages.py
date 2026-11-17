@@ -753,3 +753,31 @@ def test_happ_state_changes_during_downloads_block_offline_apply_and_helper_acti
     assert actions == [] and not paths.policy.exists() and not paths.backports.exists()
     state = json.loads(paths.journal.read_text())
     assert state["status"] == "failed" and state["stage"] == "packages"
+
+
+@pytest.mark.parametrize(
+    "packages",
+    [("curl",), ("--allow-remove-essential",), ("systemd-timesyncd", "systemd-timesyncd")],
+)
+def test_extra_system_packages_are_a_finite_validated_integration_choice(
+    package_fixture,
+    packages,
+) -> None:
+    root, target, happ, paths = package_fixture
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid extra packages reached an executor")
+
+    with pytest.raises(ValueError, match="Unexpected desktop integration package"):
+        with installation.prepare_packages(
+            root,
+            target=target,
+            happ=happ,
+            proxy=None,
+            run=forbidden,
+            paths=paths,
+            extra_packages=packages,
+        ):
+            pytest.fail("Invalid extra packages reached apply")
+    assert {path: path.read_bytes() for path in before} == before
