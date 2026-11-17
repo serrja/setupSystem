@@ -1,11 +1,13 @@
 """Safety gates for the installer's explicit platform boundary."""
 
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from setup_system.adapters.debian.docker import install_docker
 from setup_system.application.happ import classify_link
+from setup_system.capabilities import parse_policy
 from setup_system.planning import Platform, create_plan, detect_platform
 
 
@@ -70,7 +72,7 @@ def test_docker_provider_stops_before_external_actions_on_unsupported_host(
         lambda *args, **kwargs: pytest.fail("subprocess ran before platform gate"),
     )
     monkeypatch.setattr(
-        "setup_system.adapters.debian.docker.urlopen",
+        "setup_system.adapters.debian.docker.read_https",
         lambda *args, **kwargs: pytest.fail("network ran before platform gate"),
     )
     with pytest.raises(ValueError, match="UNSUPPORTED"):
@@ -98,9 +100,14 @@ def test_platform_support_is_loaded_from_manifest(
 ) -> None:
     from setup_system import planning
 
-    manifest = planning.load_capabilities()
+    manifest = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "manifests/platforms.toml").read_text()
+    )
     manifest["debian"]["versions"] = ["88"]
-    monkeypatch.setattr(planning, "load_capabilities", lambda: manifest)
+    manifest["debian"]["codenames"]["88"] = "fixture"
+    manifest["hyprland"].update(version="88", codename="fixture", backports="fixture-backports")
+    policy = parse_policy(manifest)
+    monkeypatch.setattr(planning, "load_policy", lambda: policy)
     release = tmp_path / "os-release"
     release.write_text("ID=debian\nVERSION_ID=88\n")
     assert planning.detect_platform(release, architecture="amd64", system_name="Linux").implemented

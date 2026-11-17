@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shutil
@@ -12,10 +11,19 @@ import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
-from urllib.parse import urlsplit
-from urllib.request import urlopen
 
+from setup_system.downloads import (
+    GITHUB_RELEASE_HOSTS,
+    DownloadError,
+    DownloadFailure,
+    DownloadPolicy,
+    ProxyPolicy,
+    copy_https,
+)
 from setup_system.planning import Platform
+
+MAX_NEOVIM_ARCHIVE_BYTES = 120 * 1024 * 1024
+MAX_TOOL_ARCHIVE_BYTES = 100 * 1024 * 1024
 
 
 def _manifest(project_root: Path) -> dict[str, object]:
@@ -78,6 +86,32 @@ def _archive_key(platform: Platform) -> str:
     raise ValueError(platform.reason)
 
 
+def _download_archive(
+    url: str,
+    destination: Path,
+    limit: int,
+    *,
+    redirect_error: str,
+    size_error: str,
+) -> str:
+    """Share bounded release transport while retaining each provider's diagnostics."""
+    policy = DownloadPolicy(
+        GITHUB_RELEASE_HOSTS,
+        limit,
+        30,
+        proxy=ProxyPolicy.from_loopback_environment(os.environ),
+    )
+    try:
+        with destination.open("wb") as output:
+            return copy_https(url, output, policy).sha256
+    except DownloadError as exc:
+        if exc.kind == DownloadFailure.URL:
+            raise RuntimeError(redirect_error) from None
+        if exc.kind == DownloadFailure.SIZE:
+            raise RuntimeError(size_error) from None
+        raise RuntimeError("Pinned terminal tool download failed: " + str(exc)) from None
+
+
 def install_neovim(project_root: Path, platform: Platform) -> str:
     """Install one official, digest-checked stable archive in user data."""
     if not platform.implemented:
@@ -108,23 +142,14 @@ def install_neovim(project_root: Path, platform: Platform) -> str:
         with tempfile.TemporaryDirectory(prefix=".neovim-", dir=target.parent) as temporary:
             stage = Path(temporary)
             archive = stage / "neovim.tar.gz"
-            sha = hashlib.sha256()
-            size = 0
-            with urlopen(url, timeout=30) as response, archive.open("wb") as output:
-                final_url = urlsplit(response.geturl())
-                if final_url.scheme != "https" or final_url.hostname not in {
-                    "github.com",
-                    "release-assets.githubusercontent.com",
-                    "objects.githubusercontent.com",
-                }:
-                    raise RuntimeError("Unexpected Neovim release redirect")
-                while chunk := response.read(1024 * 1024):
-                    size += len(chunk)
-                    if size > 120 * 1024 * 1024:
-                        raise RuntimeError("Neovim archive exceeds size limit")
-                    sha.update(chunk)
-                    output.write(chunk)
-            if sha.hexdigest() != digest:
+            archive_digest = _download_archive(
+                url,
+                archive,
+                MAX_NEOVIM_ARCHIVE_BYTES,
+                redirect_error="Unexpected Neovim release redirect",
+                size_error="Neovim archive exceeds size limit",
+            )
+            if archive_digest != digest:
                 raise RuntimeError("Neovim archive digest mismatch")
             expected_top = f"nvim-linux-{platform.architecture}"
             with tarfile.open(archive, "r:gz") as bundle:
@@ -222,23 +247,14 @@ def _verified_user_binary(project_root: Path, name: str) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{name}-", dir=target.parent) as temporary:
         archive = Path(temporary) / "archive.tar.gz"
-        sha = hashlib.sha256()
-        size = 0
-        with urlopen(str(entry["url"]), timeout=30) as response, archive.open("wb") as output:
-            final_url = urlsplit(response.geturl())
-            if final_url.scheme != "https" or final_url.hostname not in {
-                "github.com",
-                "release-assets.githubusercontent.com",
-                "objects.githubusercontent.com",
-            }:
-                raise RuntimeError("Unexpected binary release redirect")
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > 100 * 1024 * 1024:
-                    raise RuntimeError("Binary archive exceeds size limit")
-                sha.update(chunk)
-                output.write(chunk)
-        if sha.hexdigest() != digest:
+        archive_digest = _download_archive(
+            str(entry["url"]),
+            archive,
+            MAX_TOOL_ARCHIVE_BYTES,
+            redirect_error="Unexpected binary release redirect",
+            size_error="Binary archive exceeds size limit",
+        )
+        if archive_digest != digest:
             raise RuntimeError("Binary archive digest mismatch")
         with tarfile.open(archive, "r:gz") as bundle:
             matches = [
@@ -284,26 +300,14 @@ def install_archive_tool(project_root: Path, platform: Platform, name: str) -> s
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{name}-", dir=target.parent) as temporary:
         archive = Path(temporary) / "archive.zip"
-        sha = hashlib.sha256()
-        size = 0
-        with (
-            urlopen(str(entry[f"{key}_url"]), timeout=30) as response,
-            archive.open("wb") as output,
-        ):
-            final_url = urlsplit(response.geturl())
-            if final_url.scheme != "https" or final_url.hostname not in {
-                "github.com",
-                "release-assets.githubusercontent.com",
-                "objects.githubusercontent.com",
-            }:
-                raise RuntimeError("Unexpected archive tool redirect")
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > 100 * 1024 * 1024:
-                    raise RuntimeError("Archive tool exceeds size limit")
-                sha.update(chunk)
-                output.write(chunk)
-        if sha.hexdigest() != digest:
+        archive_digest = _download_archive(
+            str(entry[f"{key}_url"]),
+            archive,
+            MAX_TOOL_ARCHIVE_BYTES,
+            redirect_error="Unexpected archive tool redirect",
+            size_error="Archive tool exceeds size limit",
+        )
+        if archive_digest != digest:
             raise RuntimeError("Archive tool digest mismatch")
         with zipfile.ZipFile(archive) as bundle:
             matches = [

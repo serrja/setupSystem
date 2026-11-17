@@ -1,22 +1,23 @@
 # Debian installation
 
-Prepare the locked CLI as the normal user, then launch the Textual application:
+Use the inspected delivery script from an explicit verified GitHub release:
 
 ```bash
-uv sync --locked
-sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"
+sh install.sh --release vX.Y.Z
 ```
 
-Alternatively, use the small GitHub delivery script from an explicit verified release:
-`sh install.sh --release vX.Y.Z` (add `--user NAME` from a direct root login). It requires
-ready CA trust, APT, tar and core utilities; it downloads pinned uv/Python and prepares
-the locked CLI as the normal user before opening Textual. It does not install system
-packages. Use the source/script and checksum files from the same versioned release.
-Initial access to GitHub/runtime hosts is required; the VPN cannot download itself.
+Replace `vX.Y.Z` with that release tag; direct root login adds `--user NAME` for the
+existing ordinary account. The script requires Debian, ready CA trust, APT, tar and
+core utilities. It downloads pinned uv/Python and prepares the locked CLI as the
+normal user before opening Textual. It does not install system packages. Source,
+script and checksum files must belong to the same versioned release. Initial access
+to GitHub/runtime hosts is required; the VPN cannot download itself.
 
-For direct checkout preparation, Python 3.12+ and uv are prerequisites. Do not run
-Python build hooks as root. System installation always requires APT/dpkg, Debian's
-archive keyring, ready CA trust and a verified local source bundle.
+For development from a verified checkout, prepare `uv sync --locked` as the normal
+user and launch `sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"`.
+This development route requires Python 3.12+ and uv. Never run Python build hooks
+as root. System installation requires APT/dpkg, Debian's archive keyring and a
+verified local source bundle.
 
 The Hyprland profile supports Debian 13/trixie on amd64/arm64 with systemd/logind 257.
 Detection uses the target OS/version/codename and architecture. It rejects unsupported

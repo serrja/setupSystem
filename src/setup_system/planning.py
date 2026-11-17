@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 import platform as system_platform
-import tomllib
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+
+from setup_system.capabilities import CapabilityStatus, load_policy
 
 
 @dataclass(frozen=True)
@@ -40,30 +41,15 @@ class Plan:
     blocked: tuple[str, ...] = ()
 
 
-def load_capabilities(root: Path | None = None) -> dict[str, Any]:
-    """Read the one shipped matrix from a checkout or the installed wheel."""
-    if root is None:
-        source = Path(__file__).resolve().parents[2]
-        root = source if (source / "manifests/platforms.toml").is_file() else Path(__file__).parent
-    with (root / "manifests/platforms.toml").open("rb") as stream:
-        document = tomllib.load(stream)
-    for section in ("architectures", "debian", "hyprland", "unsupported"):
-        if not isinstance(document.get(section), dict):
-            raise ValueError(f"Missing platform capability section: {section}")
-    debian = document["debian"]
-    if any(
-        not isinstance(debian.get(field), list)
-        or not debian[field]
-        or not all(isinstance(value, str) and value for value in debian[field])
-        for field in ("versions", "architectures")
-    ):
-        raise ValueError("Invalid Debian capability matrix")
-    if not all(
-        isinstance(key, str) and isinstance(value, str)
-        for key, value in document["architectures"].items()
-    ):
-        raise ValueError("Invalid architecture aliases")
-    return document
+class UserProfile(StrEnum):
+    BASE = "base"
+    TERMINAL_DEV = "terminalDev"
+    HAPP = "happ"
+
+
+def load_capabilities(root: Path | None = None) -> dict[str, object]:
+    """Return the validated dictionary view for existing public consumers."""
+    return load_policy(root).document()
 
 
 def detect_platform(
@@ -71,11 +57,11 @@ def detect_platform(
     architecture: str | None = None,
     system_name: str | None = None,
 ) -> Platform:
-    capabilities = load_capabilities()
-    debian = capabilities["debian"]
+    capabilities = load_policy()
+    debian = capabilities.debian
     family = system_name or system_platform.system()
     arch = architecture or system_platform.machine()
-    arch = capabilities["architectures"].get(arch, arch)
+    arch = capabilities.normalize_architecture(arch)
     if family != "Linux":
         return Platform(family.lower(), "unknown", arch, False, False, "UNSUPPORTED platform")
     fields: dict[str, str] = {}
@@ -90,16 +76,16 @@ def detect_platform(
     version = fields.get("VERSION_ID", "unknown")
     supported = (
         distro == "debian"
-        and debian["status"] == "implemented"
-        and version in debian["versions"]
-        and arch in debian["architectures"]
+        and debian.status == CapabilityStatus.IMPLEMENTED
+        and version in debian.versions
+        and arch in debian.architectures
     )
     reason = (
         f"{distro.title()} {version} {arch} explicit platform adapter"
         if supported
-        else "UNSUPPORTED: " + capabilities["unsupported"]["reason"]
+        else "UNSUPPORTED: " + capabilities.unsupported_reason
     )
-    return Platform(distro, version, arch, supported, bool(debian["locallyVerified"]), reason)
+    return Platform(distro, version, arch, supported, debian.locally_verified, reason)
 
 
 def _digest(path: Path) -> str:
@@ -112,13 +98,15 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def create_plan(root: Path, profile: str = "base") -> Plan:
-    if profile not in {"base", "terminalDev", "happ"}:
-        raise ValueError("Unknown setup profile")
+def create_plan(root: Path, profile: str | UserProfile = UserProfile.BASE) -> Plan:
+    try:
+        profile = UserProfile(profile)
+    except ValueError:
+        raise ValueError("Unknown setup profile") from None
     platform = detect_platform()
     if not platform.implemented:
         return Plan(platform, (), ())
-    if profile == "terminalDev" and platform.architecture == "arm64":
+    if profile == UserProfile.TERMINAL_DEV and platform.architecture == "arm64":
         return Plan(
             platform,
             (),
@@ -196,7 +184,7 @@ def create_plan(root: Path, profile: str = "base") -> Plan:
             "codex completion zsh",
         ),
     )
-    if profile == "terminalDev":
+    if profile == UserProfile.TERMINAL_DEV:
         steps += (
             Step(
                 "zsh.default",
@@ -226,7 +214,7 @@ def create_plan(root: Path, profile: str = "base") -> Plan:
                 "copy managed assets",
             ),
         )
-    if profile == "happ":
+    if profile == UserProfile.HAPP:
         steps += (
             Step(
                 "happ.package",

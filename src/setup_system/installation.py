@@ -15,15 +15,26 @@ import stat
 import subprocess
 import sys
 import tempfile
-import tomllib
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlsplit
 
-from setup_system.adapters.debian.hyprland import package_arguments, profile_capabilities
-from setup_system.planning import load_capabilities
+from setup_system.adapters.debian.hyprland import package_arguments
+from setup_system.adapters.debian.package_session import (
+    APT_TIMEOUT,
+    PACKAGE_TIMEOUT,
+    SERVICE_QUERY_TIMEOUT,
+    SERVICE_START_TIMEOUT,
+    AptCommands,
+    AptSources,
+    HappPin,
+    system_environment,
+)
+from setup_system.capabilities import load_policy
+from setup_system.font_policy import load_font_archive
+from setup_system.installation_state import InstallJournal, InstallStage, InstallStatus
 
 
 @dataclass(frozen=True)
@@ -147,16 +158,13 @@ def validate_installation_paths(
     root: Path, target: TargetUser, environment: Mapping[str, str]
 ) -> None:
     """Reject unsafe known managed destinations before any package/runtime mutation."""
-    specifications = list(cast(list[str], profile_capabilities(root)["preflight_paths"]))
+    specifications = list(load_policy(root).hyprland.preflight_paths)
     for source in (root / "assets/hyprland").rglob("*"):
         if source.is_file() and source.name != "start-hyprland":
             specifications.append(
                 "config:hypr/setup-system/" + str(source.relative_to(root / "assets/hyprland"))
             )
-    font = tomllib.loads((root / "manifests/fonts.toml").read_text())["jetbrains_mono_nerd_font"]
-    font_root = "data:fonts/JetBrainsMonoNerdFont-" + font["version"] + "/"
-    specifications.append(font_root)
-    specifications.extend(font_root + item["name"] for item in font["files"])
+    specifications.extend(load_font_archive(root).preflight_paths())
     for specification in specifications:
         kind, relative = specification.split(":", 1)
         if kind not in {"config", "data", "state", "cache"} or Path(relative).is_absolute():
@@ -466,13 +474,13 @@ print(json.dumps({"ok": True}))
         result = run([sys.executable, "-I", "-B", "-c", program], **options)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError(
-            "Target user source access probe could not run with system Python"
+            "Target user source access probe could not run with the verified running interpreter"
         ) from exc
     try:
         response = json.loads(result.stdout)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "System Python source probe did not return a valid acknowledgement"
+            "Verified running interpreter source probe did not return a valid acknowledgement"
         ) from exc
     if result.returncode or response != {"ok": True}:
         detail = response.get("error") if isinstance(response, dict) else None
@@ -516,11 +524,11 @@ def validate_service_manager(
     run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
 ) -> None:
     """Require the matrix's reviewed manager API without changing units or PID 1."""
-    profile = profile_capabilities(root)
-    expected = profile.get("init_version")
-    if profile.get("init_system") != "systemd" or expected != "257":
+    profile = load_policy(root).hyprland
+    expected = profile.init_version
+    if profile.init_system != "systemd" or expected != "257":
         raise ValueError("Happ service controls are reviewed for systemd 257 only")
-    environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
+    environment = system_environment()
     try:
         client = run(
             ["/usr/bin/systemctl", "--version"],
@@ -584,7 +592,7 @@ def _check_existing_happ(
         "Happ package state requires manual review before installation; "
         "only an absent package or the exact configured pinned release is supported"
     )
-    environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
+    environment = system_environment()
     try:
         result = run(
             [
@@ -705,6 +713,168 @@ def _freeze_selection(arguments: list[str], output: str, happ_version: str) -> l
     return [*frozen, *(f"{name}={version}" for name, version in selected.items())]
 
 
+def _validate_package_paths(paths: SystemPaths, backport_source: bytes) -> None:
+    if paths.keyring.is_symlink() or not paths.keyring.is_file():
+        raise ValueError(f"Installed regular Debian archive keyring is required: {paths.keyring}")
+    _system_path(paths.backports)
+    if paths.backports.exists() and paths.backports.read_bytes() != backport_source:
+        raise ValueError("Existing backports file differs; review it without overwriting")
+    _check_service_policy(paths.policy)
+    _check_happ_unit_policy(paths)
+    _system_path(paths.journal)
+    if (
+        not paths.runtime.is_absolute()
+        or any(parent.is_symlink() for parent in (paths.runtime, *paths.runtime.parents))
+        or not paths.runtime.is_dir()
+    ):
+        raise ValueError("APT staging needs a regular trusted runtime directory")
+    details = paths.runtime.stat()
+    if details.st_uid != os.geteuid() or details.st_mode & 0o022:
+        raise ValueError("APT staging directory is not privately controlled")
+
+
+def _check_offline_namespace(run: Callable[..., subprocess.CompletedProcess[str]]) -> None:
+    command = ["/usr/bin/unshare", "--net", "--", "/usr/bin/true"]
+    try:
+        result = run(
+            command,
+            env=system_environment(package_manager=True),
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=15,
+        )
+        if result.returncode:
+            raise subprocess.CalledProcessError(
+                result.returncode, command, result.stdout, result.stderr
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(
+            "Offline package apply requires root network namespace support (unshare --net)"
+        ) from exc
+
+
+@dataclass
+class _PackageSession:
+    """Own one verified acquisition cache and its concrete privileged operations."""
+
+    commands: AptCommands
+    sources: AptSources
+    pin: HappPin
+    paths: SystemPaths
+    run: Callable[..., subprocess.CompletedProcess[str]]
+    emit: Callable[[str], None]
+    journal: InstallJournal = field(default_factory=InstallJournal)
+
+    def execute(
+        self, argv: list[str], timeout: int = APT_TIMEOUT, *, manager_offline: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        environment = system_environment(package_manager=True)
+        if manager_offline:
+            environment["SYSTEMD_OFFLINE"] = "1"
+        result = self.run(
+            argv, env=environment, text=True, capture_output=True, check=True, timeout=timeout
+        )
+        if result.returncode:
+            raise subprocess.CalledProcessError(
+                result.returncode, argv, result.stdout, result.stderr
+            )
+        return result
+
+    def checkpoint(
+        self,
+        stage: InstallStage,
+        completed: str | None = None,
+        *,
+        status: InstallStatus | None = None,
+    ) -> None:
+        self.journal.checkpoint(stage, completed, status=status)
+        _write_system(self.paths.journal, self.journal.serialize())
+
+    def stage_artifact(self, happ: Path, target: TargetUser) -> None:
+        stage = self.commands.stage
+        stage.chmod(0o700)
+        local = stage / "happ.deb"
+        _copy_happ(happ, target, local, self.pin.digest)
+        metadata = self.execute(
+            ["/usr/bin/dpkg-deb", "--field", str(local), "Package", "Version", "Architecture"]
+        )
+        self.pin.validate_metadata(metadata.stdout)
+        # Only verified public bytes become readable by APT's _apt acquisition sandbox.
+        local.chmod(0o644)
+        stage.chmod(0o755)
+
+    def download(self) -> None:
+        stage = self.commands.stage
+        for name in ("lists", "lists/partial", "archives", "archives/partial"):
+            directory = stage / name
+            directory.mkdir(mode=0o755)
+            directory.chmod(0o755)
+        # APT needs both its canonical archive alias and the original local input path offline.
+        os.link(
+            stage / "happ.deb", stage / "archives" / self.pin.cache_name(), follow_symlinks=False
+        )
+        source = stage / "debian.sources"
+        source.write_text(self.sources.staging())
+        source.chmod(0o644)
+        self.emit("Stage: metadata (authorized signed Debian refresh)")
+        self.execute(self.commands.update())
+        self.checkpoint(InstallStage.RESOLUTION, "metadata")
+        simulation = self.execute(self.commands.simulate())
+        validate_simulation(simulation.stdout)
+        self.commands = self.commands.freeze(
+            _freeze_selection(list(self.commands.selection), simulation.stdout, self.pin.version)
+        )
+        self.checkpoint(InstallStage.DOWNLOADS, "resolution")
+        self.emit("Stage: downloads (packages only; no installation or service changes)")
+        self.execute(self.commands.download(), timeout=PACKAGE_TIMEOUT)
+        self.checkpoint(InstallStage.USER_PREFETCH, "downloads", status=InstallStatus.PREPARED)
+
+    def install(self) -> None:
+        self.checkpoint(InstallStage.PACKAGES, status=InstallStatus.RUNNING)
+        _check_existing_happ(self.pin.version, run=self.run)
+        _check_happ_unit_policy(self.paths)
+        self.emit("Stage: packages (offline network namespace; existing service starts deferred)")
+        with _defer_services(self.paths.policy):
+            self.execute(self.commands.apply(), timeout=PACKAGE_TIMEOUT, manager_offline=True)
+        self.checkpoint(InstallStage.SOURCE, "packages")
+        _write_system(self.paths.backports, self.sources.managed_backports(), 0o644)
+        self.checkpoint(InstallStage.HAPP_SERVICE, "source", status=InstallStatus.PACKAGES_COMPLETE)
+
+    def activate_happ(self) -> None:
+        self.checkpoint(InstallStage.HAPP_SERVICE, status=InstallStatus.RUNNING)
+        _check_happ_unit_policy(self.paths)
+        command = ["/usr/bin/systemctl", "--system", "--no-pager", "--no-ask-password"]
+        try:
+            self.execute([*command, "daemon-reload"], timeout=SERVICE_QUERY_TIMEOUT)
+            current = self.run(
+                [*command, "--quiet", "is-active", "happd.service"],
+                env=system_environment(package_manager=True),
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=SERVICE_QUERY_TIMEOUT,
+            )
+            if current.returncode not in {0, 3, 4}:
+                raise RuntimeError("Cannot inspect happd.service activation state")
+            if current.returncode:
+                self.execute([*command, "start", "happd.service"], timeout=SERVICE_START_TIMEOUT)
+            self.execute(
+                [*command, "--quiet", "is-active", "happd.service"], timeout=SERVICE_QUERY_TIMEOUT
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(
+                "Vendor happd.service could not be activated; review its system journal"
+            ) from exc
+        self.checkpoint(
+            InstallStage.USER_RUNTIME, "happ-service", status=InstallStatus.SYSTEM_COMPLETE
+        )
+
+    def failed(self, error: BaseException) -> None:
+        self.journal.failed(error)
+        _write_system(self.paths.journal, self.journal.serialize())
+
+
 @contextlib.contextmanager
 def prepare_packages(
     root: Path,
@@ -721,283 +891,39 @@ def prepare_packages(
     """Download through an explicit proxy, then expose a fully offline package stage."""
     paths = SystemPaths() if paths is None else paths
     packages = package_arguments(root=root, os_release=release, architecture=architecture)
-    profile = profile_capabilities(root)
+    policy = load_policy(root)
+    apt_architecture = policy.debian_architecture(architecture or platform.machine())
     proxy = _loopback_proxy(proxy)
-    aliases = cast(dict[str, str], load_capabilities(root)["architectures"])
-    machine = architecture if architecture is not None else platform.machine()
-    machine = aliases.get(machine, machine)
-    apt_architecture = next(
-        (
-            item
-            for item in cast(list[str], profile["apt_architectures"])
-            if aliases.get(item, item) == machine
-        ),
-        None,
-    )
-    if apt_architecture is None:
-        raise ValueError("No exact Debian package architecture matches this target")
     if target.uid <= 0:
         raise ValueError("Happ installation needs a verified non-root target user")
     validate_user_path(happ, target)
-    if paths.keyring.is_symlink() or not paths.keyring.is_file():
-        raise ValueError(f"Installed regular Debian archive keyring is required: {paths.keyring}")
-    manifest_path = root / "manifests/happ.toml"
-    if (
-        manifest_path.is_symlink()
-        or not manifest_path.is_file()
-        or manifest_path.stat().st_size > 1024 * 1024
-    ):
-        raise ValueError("Happ manifest must be a bounded regular file")
-    manifest = tomllib.loads(manifest_path.read_text())
-    linux = manifest.get("linux")
-    asset = linux.get(apt_architecture) if isinstance(linux, dict) else None
-    if not isinstance(asset, dict):
-        raise ValueError("Missing pinned Happ package for the target architecture")
-    digest, happ_version = asset.get("sha256"), manifest.get("packageVersion")
-    if (
-        not isinstance(digest, str)
-        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-        or not isinstance(happ_version, str)
-        or re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,200}", happ_version) is None
-        or asset.get("packageArchitecture") != apt_architecture
-    ):
-        raise ValueError("Invalid pinned Happ digest, version or target architecture")
-    codename, backports = str(profile["codename"]), str(profile["backports"])
-    backport_source = (
-        "# Managed by setupSystem; official Debian backports only.\n"
-        "Types: deb\nURIs: http://deb.debian.org/debian\n"
-        f"Suites: {backports}\nComponents: main\nSigned-By: {paths.keyring}\n"
-    ).encode()
-    _system_path(paths.backports)
-    if paths.backports.exists() and paths.backports.read_bytes() != backport_source:
-        raise ValueError("Existing backports file differs; review it without overwriting")
-    _check_service_policy(paths.policy)
-    _check_happ_unit_policy(paths)
-    _system_path(paths.journal)
-    if (
-        not paths.runtime.is_absolute()
-        or any(parent.is_symlink() for parent in (paths.runtime, *paths.runtime.parents))
-        or not paths.runtime.is_dir()
-    ):
-        raise ValueError("APT staging needs a regular trusted runtime directory")
-    runtime_details = paths.runtime.stat()
-    if runtime_details.st_uid != os.geteuid() or runtime_details.st_mode & 0o022:
-        raise ValueError("APT staging directory is not privately controlled")
-    environment = {
-        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
-        "LANG": "C",
-        "LC_ALL": "C",
-        "DEBIAN_FRONTEND": "noninteractive",
-    }
-
-    def execute(
-        argv: list[str],
-        timeout: int = 180,
-        *,
-        manager_offline: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        command_environment = (
-            {**environment, "SYSTEMD_OFFLINE": "1"} if manager_offline else environment
-        )
-        result = run(
-            argv,
-            env=command_environment,
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=timeout,
-        )
-        if result.returncode:
-            raise subprocess.CalledProcessError(
-                result.returncode, argv, result.stdout, result.stderr
-            )
-        return result
-
+    pin = HappPin.load(root / "manifests/happ.toml", apt_architecture)
+    sources = AptSources(policy.hyprland.codename, policy.hyprland.backports, paths.keyring)
+    _validate_package_paths(paths, sources.managed_backports())
     validate_service_manager(root=root, run=run)
-    _check_existing_happ(happ_version, run=run)
-    try:
-        execute(["/usr/bin/unshare", "--net", "--", "/usr/bin/true"], timeout=15)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ValueError(
-            "Offline package apply requires root network namespace support (unshare --net)"
-        ) from exc
+    _check_existing_happ(pin.version, run=run)
+    _check_offline_namespace(run)
     with tempfile.TemporaryDirectory(prefix="setup-system-apt-", dir=paths.runtime) as temporary:
         stage = Path(temporary)
-        stage.chmod(0o700)
-        local_happ = stage / "happ.deb"
-        _copy_happ(happ, target, local_happ, digest)
-        metadata = execute(
-            ["/usr/bin/dpkg-deb", "--field", str(local_happ), "Package", "Version", "Architecture"]
+        session = _PackageSession(
+            AptCommands(
+                stage, proxy, ("python3", "ca-certificates", *packages, str(stage / "happ.deb"))
+            ),
+            sources,
+            pin,
+            paths,
+            run,
+            emit,
         )
-        fields: dict[str, str] = {}
-        for line in metadata.stdout.splitlines():
-            name, separator, value = line.partition(":")
-            if not separator or name in fields:
-                raise ValueError("Happ archive metadata differs from the pinned release")
-            fields[name] = value.strip()
-        if fields != {"Package": "happ", "Version": happ_version, "Architecture": apt_architecture}:
-            raise ValueError("Happ archive metadata differs from the pinned release")
-        # Verified package bytes and signed metadata are public. Keep root-only writes,
-        # but allow APT's native _apt sandbox to traverse its acquisition cache.
-        local_happ.chmod(0o644)
-        stage.chmod(0o755)
-        state: dict[str, Any] = {
-            "schema": 1,
-            "status": "running",
-            "stage": "metadata",
-            "completed": [],
-        }
-
-        def checkpoint(next_stage: str, completed: str | None = None) -> None:
-            if completed:
-                state["completed"].append(completed)
-            state["stage"] = next_stage
-            _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
-
-        checkpoint("metadata")
+        session.stage_artifact(happ, target)
+        session.checkpoint(InstallStage.METADATA)
         prepared: PreparedPackages | None = None
         try:
-            for name in ("lists", "lists/partial", "archives", "archives/partial"):
-                directory = stage / name
-                directory.mkdir(mode=0o755)
-                directory.chmod(0o755)
-            # APT does not cache local .deb inputs during --download-only. Offline
-            # installation needs its canonical archive name as well as the input path.
-            cached_happ = stage / "archives" / f"happ_{happ_version}_{apt_architecture}.deb"
-            os.link(local_happ, cached_happ, follow_symlinks=False)
-            sources = stage / "debian.sources"
-            sources.write_text(
-                "Types: deb\nURIs: http://deb.debian.org/debian\n"
-                f"Suites: {codename} {codename}-updates {backports}\n"
-                f"Components: main\nSigned-By: {paths.keyring}\n\n"
-                "Types: deb\nURIs: http://security.debian.org/debian-security\n"
-                f"Suites: {codename}-security\nComponents: main\nSigned-By: {paths.keyring}\n"
-            )
-            sources.chmod(0o644)
-            options = [
-                "-o",
-                f"Dir::Etc::sourcelist={sources}",
-                "-o",
-                "Dir::Etc::sourceparts=-",
-                "-o",
-                f"Dir::State::lists={stage / 'lists'}",
-                "-o",
-                f"Dir::Cache::archives={stage / 'archives'}",
-                "-o",
-                "Acquire::AllowInsecureRepositories=false",
-                "-o",
-                "APT::Get::AllowUnauthenticated=false",
-                "-o",
-                "APT::Update::Error-Mode=any",
-                "-o",
-                "Acquire::Retries=0",
-                "-o",
-                "Acquire::http::Timeout=30",
-                "-o",
-                "Acquire::https::Timeout=30",
-                "-o",
-                "DPkg::Lock::Timeout=30",
-            ]
-            online = [
-                *options,
-                "-o",
-                f"Acquire::http::Proxy={proxy or 'DIRECT'}",
-                "-o",
-                f"Acquire::https::Proxy={proxy or 'DIRECT'}",
-            ]
-            install = [
-                "--no-remove",
-                "--no-install-recommends",
-                "install",
-                "python3",
-                "ca-certificates",
-                *packages,
-                str(local_happ),
-            ]
-            emit("Stage: metadata (authorized signed Debian refresh)")
-            execute(["/usr/bin/apt-get", *online, "update"])
-            checkpoint("resolution", "metadata")
-            simulation = execute(["/usr/bin/apt-get", *online, "--simulate", *install])
-            validate_simulation(simulation.stdout)
-            selection = _freeze_selection(install[3:], simulation.stdout, str(happ_version))
-            install = [*install[:3], *selection]
-            checkpoint("downloads", "resolution")
-            emit("Stage: downloads (packages only; no installation or service changes)")
-            execute(
-                ["/usr/bin/apt-get", *online, "--download-only", "--yes", *install], timeout=1800
-            )
-            state["status"] = "prepared"
-            checkpoint("user-prefetch", "downloads")
-
-            def apply_offline() -> None:
-                state["status"] = "running"
-                checkpoint("packages")
-                _check_existing_happ(happ_version, run=run)
-                _check_happ_unit_policy(paths)
-                offline = [
-                    *options,
-                    "-o",
-                    "Acquire::http::Proxy=DIRECT",
-                    "-o",
-                    "Acquire::https::Proxy=DIRECT",
-                ]
-                emit(
-                    "Stage: packages (offline network namespace; existing service starts deferred)"
-                )
-                with _defer_services(paths.policy):
-                    execute(
-                        [
-                            "/usr/bin/unshare",
-                            "--net",
-                            "--",
-                            "/usr/bin/apt-get",
-                            *offline,
-                            "--yes",
-                            "--no-download",
-                            *install,
-                        ],
-                        timeout=1800,
-                        # systemd v257 skips online-only vendor commands; enablement stays local.
-                        manager_offline=True,
-                    )
-                checkpoint("source", "packages")
-                _write_system(paths.backports, backport_source, 0o644)
-                state["status"] = "packages-complete"
-                checkpoint("happ-service", "source")
-
-            def activate_happ() -> None:
-                state["status"] = "running"
-                checkpoint("happ-service")
-                _check_happ_unit_policy(paths)
-                command = ["/usr/bin/systemctl", "--system", "--no-pager", "--no-ask-password"]
-                try:
-                    execute([*command, "daemon-reload"], timeout=30)
-                    current = run(
-                        [*command, "--quiet", "is-active", "happd.service"],
-                        env=environment,
-                        text=True,
-                        capture_output=True,
-                        check=False,
-                        timeout=30,
-                    )
-                    if current.returncode not in {0, 3, 4}:
-                        raise RuntimeError("Cannot inspect happd.service activation state")
-                    if current.returncode:
-                        execute([*command, "start", "happd.service"], timeout=60)
-                    execute([*command, "--quiet", "is-active", "happd.service"], timeout=30)
-                except (OSError, subprocess.SubprocessError) as exc:
-                    raise RuntimeError(
-                        "Vendor happd.service could not be activated; review its system journal"
-                    ) from exc
-                state["status"] = "system-complete"
-                checkpoint("user-runtime", "happ-service")
-
-            prepared = PreparedPackages(apply_offline, activate_happ)
+            session.download()
+            prepared = PreparedPackages(session.install, session.activate_happ)
             yield prepared
         except BaseException as exc:
-            state["status"] = "failed"
-            state["error"] = type(exc).__name__
-            _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
+            session.failed(exc)
             raise
         finally:
             if prepared is not None:
@@ -1012,44 +938,12 @@ def mark_user_stage(
     completed: tuple[str, ...] = (),
 ) -> None:
     """Merge user progress into the latest package journal after its context has closed."""
-    stages = {
-        "metadata",
-        "resolution",
-        "downloads",
-        "user-prefetch",
-        "packages",
-        "source",
-        "happ-service",
-        "user-runtime",
-        "user",
-        "user-downloads",
-        "temporary-network",
-        "package-downloads",
-        "temporary-network-cleanup",
-    }
-    if status not in {"running", "complete", "failed"} or (
-        stage is not None and stage not in stages
-    ):
-        raise ValueError("Invalid user installation stage or status")
-    if any(item not in {"user-downloads", "user-configuration"} for item in completed):
-        raise ValueError("Invalid completed user installation stage")
     _system_path(paths.journal)
     if paths.journal.stat().st_size > 1024 * 1024:
         raise ValueError("Installation journal exceeds its size limit")
-    state = json.loads(paths.journal.read_text())
-    if not isinstance(state, dict):
-        raise ValueError("Installation journal must be an object")
-    previous = state.get("completed", [])
-    if not isinstance(previous, list) or any(not isinstance(item, str) for item in previous):
-        raise ValueError("Installation journal has invalid completed stages")
-    if stage is None:
-        stage = state.get("stage")
-        if not isinstance(stage, str) or stage not in stages:
-            raise ValueError("Installation journal has an unknown current stage")
-    state["completed"] = list(dict.fromkeys([*previous, *completed]))
-    state["stage"] = stage
-    state["status"] = status
-    _write_system(paths.journal, (json.dumps(state, indent=2) + "\n").encode())
+    journal = InstallJournal.parse(paths.journal.read_text())
+    journal.merge_user(status, stage, completed)
+    _write_system(paths.journal, journal.serialize())
 
 
 def current_packages(root: Path) -> list[str]:

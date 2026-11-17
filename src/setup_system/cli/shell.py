@@ -2,43 +2,19 @@
 
 from __future__ import annotations
 
-import subprocess
 from typing import Annotated
 
 import typer
 
 from setup_system.application.shell import (
-    apply_shell,
-    change_login_shell,
+    configure_login_shell,
     plan_shell,
     restore_shell,
 )
 from setup_system.cli._context import ROOT
+from setup_system.cli._interaction import TyperInteraction
 
 shell_app = typer.Typer(help="Portable Zsh setup for the current user.")
-
-
-def _apply_default_shell() -> None:
-    """Apply the portable Zsh profile and request this account's login shell."""
-    try:
-        backup, results, status = apply_shell(ROOT)
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
-        typer.echo(f"shell failed: {exc}", err=True)
-        raise typer.Exit(5) from exc
-    typer.echo(f"shell backup: {backup}")
-    for path, result in results:
-        typer.echo(f"{result}: {path}")
-    if status.zsh is None:
-        raise typer.Exit(4)
-    if status.login_shell != status.zsh:
-        try:
-            changed, detail = change_login_shell(status.zsh)
-        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            typer.echo(f"login shell blocked: {exc}", err=True)
-            raise typer.Exit(4) from exc
-        typer.echo(f"login shell: {detail}")
-        if not changed:
-            raise typer.Exit(4)
 
 
 @shell_app.command("plan")
@@ -65,7 +41,9 @@ def shell_apply(
         shell_plan()
         typer.echo("Use --yes after reviewing the plan.", err=True)
         raise typer.Exit(2)
-    _apply_default_shell()
+    code = configure_login_shell(ROOT, TyperInteraction())
+    if code:
+        raise typer.Exit(code)
 
 
 @shell_app.command("doctor")

@@ -15,9 +15,15 @@ import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+
+from setup_system.downloads import (
+    UV_RELEASE_HOSTS,
+    DownloadError,
+    DownloadFailure,
+    DownloadPolicy,
+    ProxyPolicy,
+    read_https,
+)
 
 
 def _runtime_policy() -> dict[str, str]:
@@ -52,27 +58,15 @@ def _runtime_receipt() -> bytes:
 
 
 def _read_limited(url: str, limit: int) -> bytes:
+    policy = DownloadPolicy(
+        UV_RELEASE_HOSTS, limit, 30, ProxyPolicy.from_loopback_environment(os.environ)
+    )
     try:
-        with urlopen(Request(url, headers={"User-Agent": "setupSystem"}), timeout=30) as response:
-            final = urlsplit(response.geturl())
-            if final.scheme != "https" or final.hostname not in {
-                "releases.astral.sh",
-                "github.com",
-                "objects.githubusercontent.com",
-                "release-assets.githubusercontent.com",
-            }:
-                raise RuntimeError("Unexpected uv release redirect")
-            data = bytes(response.read(limit + 1))
-    except HTTPError as exc:
-        host = urlsplit(exc.url).hostname or "unknown host"
-        raise RuntimeError(f"Pinned uv download: HTTP {exc.code} from {host}") from None
-    except URLError as exc:
-        host = urlsplit(url).hostname or "unknown host"
-        reason = type(exc.reason).__name__
-        raise RuntimeError(f"Pinned uv download: network failure from {host} ({reason})") from None
-    if len(data) > limit:
-        raise RuntimeError("uv release asset exceeds its size limit")
-    return data
+        return read_https(url, policy)
+    except DownloadError as exc:
+        if exc.kind == DownloadFailure.SIZE:
+            raise RuntimeError("uv release asset exceeds its size limit") from None
+        raise RuntimeError(f"Pinned uv download: {exc}") from None
 
 
 def managed_uv(platform_key: tuple[str, str]) -> Path:

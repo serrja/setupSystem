@@ -69,11 +69,13 @@ from setup_system.application.installer import InstallRequest,Operation
 from setup_system.tui.installer import InstallationApp
 async def exercise():
  app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN))
- async with app.run_test(size=(100,40)) as pilot:
-  await pilot.click('#plan')
+ async with app.run_test(size=(80,25)) as pilot:
+  assert app.focused.id=='user'
+  await pilot.press('enter')
   await app.workers.wait_for_complete()
   await pilot.pause()
   assert app.last_code==4 and not app.busy,app.output_lines
+  assert app.focused.id=='plan'
 asyncio.run(exercise())
 """
 with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
