@@ -154,3 +154,20 @@ def test_privileged_module_entry_does_not_write_user_bytecode(tmp_path: Path) ->
     result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(tmp_path)], check=False)
     assert result.returncode == 0
     assert not list(package.rglob("*.pyc"))
+
+
+@pytest.mark.parametrize("operation", ["plan", "apply"])
+def test_explicit_timezone_reaches_the_shared_install_request(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from setup_system.application import installer
+
+    requests: list[installer.InstallRequest] = []
+    monkeypatch.setattr(
+        installer.InstallationService, "run", lambda self, request: requests.append(request) or 0
+    )
+    result = CliRunner().invoke(
+        app, ["install", operation, "--timezone", "Europe/Paris", "--user", "alice"]
+    )
+    assert result.exit_code == 0, result.output
+    assert requests[0].timezone == "Europe/Paris" and requests[0].user == "alice"

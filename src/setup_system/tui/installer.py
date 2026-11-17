@@ -184,7 +184,9 @@ class InstallationApp(App[int]):
         with Vertical(id="fields"):
             yield Label("Target user (leave empty to use the verified sudo caller)")
             yield Input(value=self.request.user or "", id="user")
-            yield Label("Enter in user field: read-only plan. Tab/Shift+Tab: select an action.")
+            yield Label("Timezone (Region/City; empty preserves the current setting)")
+            yield Input(value=self.request.timezone or "", id="timezone")
+            yield Label("Enter in a field: read-only plan. Tab/Shift+Tab: select an action.")
             yield Label(f"Verified local source: {self.root}", markup=False)
         with Horizontal(id="actions"):
             yield Button("Read-only plan", id="plan", variant="primary")
@@ -196,6 +198,10 @@ class InstallationApp(App[int]):
 
     @on(Input.Submitted, "#user")
     def submit_user(self) -> None:
+        self.plan()
+
+    @on(Input.Submitted, "#timezone")
+    def submit_timezone(self) -> None:
         self.plan()
 
     @on(Button.Pressed, "#plan")
@@ -219,6 +225,7 @@ class InstallationApp(App[int]):
         self.busy = True
         self.output_lines.clear()
         self.query_one("#user", Input).disabled = True
+        self.query_one("#timezone", Input).disabled = True
         for button in self.query(Button):
             button.disabled = True
         self.query_one("#status", Label).update("Running " + operation.value)
@@ -226,6 +233,7 @@ class InstallationApp(App[int]):
             self.request,
             operation=operation,
             user=self.query_one("#user", Input).value.strip() or None,
+            timezone=self.query_one("#timezone", Input).value.strip() or None,
             yes=False,
         )
         self.execute(request)
@@ -249,6 +257,7 @@ class InstallationApp(App[int]):
         self.last_code = message.code
         self.busy = False
         self.query_one("#user", Input).disabled = False
+        self.query_one("#timezone", Input).disabled = False
         for button in self.query(Button):
             button.disabled = False
         self.query_one("#plan", Button).focus()

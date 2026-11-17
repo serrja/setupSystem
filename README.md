@@ -26,7 +26,9 @@ pinned Python and locked CLI **as the normal user**, verifies release checksums,
 and opens Textual. It contains no workstation planner or APT package installer.
 Initial access to GitHub, the runtime and subscription hosts is required.
 
-Use the keyboard throughout: Enter in the target-user field runs the read-only plan.
+Use the keyboard throughout: Enter in the target-user or optional timezone field runs
+the read-only plan. Leave timezone blank to preserve the system setting; use an IANA
+name such as `Europe/Berlin` to change it.
 Tab/Shift+Tab selects buttons or the plan log; Enter activates the focused button.
 Choose Install to review the complete plan, then explicitly confirm with Enter.
 The VPN dialog focuses its hidden input; Enter submits it and Esc cancels.
@@ -49,7 +51,7 @@ separate responsibilities.
 
 The Hyprland profile requires **Debian 13 / trixie, amd64 or arm64**, working APT/dpkg,
 Debian's archive keyring, CA trust, systemd/logind 257, an accessible system manager,
-network access and a normal desktop account. General portable Debian 12 capabilities
+network access, an existing GRUB installation and a normal desktop account. General portable Debian 12 capabilities
 do not imply Hyprland support. No ISO, partitioning, desktop removal or reboot is involved.
 
 ## Installation and automation
@@ -58,7 +60,8 @@ Textual and Typer share one installation service: platform/account/path checks, 
 verified downloads, temporary-network cleanup, offline package apply and offline user
 configuration. Root installs system packages; the verified sudo caller owns runtime,
 configuration, fonts and backups. Direct root login requires an explicit user. Existing
-network connections, locale, timezone, shell and sessions are preserved.
+network connections, locale, shell and sessions are preserved. Timezone is retained
+unless explicitly selected; the clock stage preserves existing NTP providers.
 
 ```bash
 setup-system install plan --source /absolute/source/path
@@ -84,7 +87,9 @@ an HTTPS URL alone does not establish format compatibility. Encrypted Happ paylo
 
 The [profile manifest](manifests/platforms.toml) owns compatible package revisions and
 architectures. The profile includes Waybar, Wofi, Foot, Thunar, Mako, wallpaper,
-fonts/theme, PipeWire/WirePlumber, portals, authentication, clipboard/screenshots and lock/idle.
+fonts/theme, PipeWire/WirePlumber, portals, authentication, clipboard/screenshots,
+lock/idle and explicit `hyprland-guiutils`. The panel discovers system batteries and
+backlights, displays local time and supports the pinned compositor’s Lua workspace IPC.
 Package version inspection uses Debian metadata; it does not execute Hyprland outside a session.
 
 ## Repeat, recover and log in
@@ -94,8 +99,15 @@ idempotent; unknown edits require review. Diagnostics and receipts report actual
 stages, with a nonzero result for failure. APT changes are not transactionally rolled back.
 See [recovery](docs/recovery.md) for backup/restore and interrupted package operations.
 
-After success, log in locally on a TTY as the target user and run the exact printed
-session command. The default is:
+After success, the **next normal boot** shows a graphical greetd/gtkgreet login.
+Authenticate with the target account to start Hyprland. Existing disk/HOME encryption
+and native PAM authentication remain in place; no encryption conversion or autologin
+is configured. GRUB stays installed with a **0-second hidden menu**, including after
+a recorded boot failure; an existing disk-unlock prompt is separate. See
+[login, clock and boot](docs/desktop_login.md) for exact scope and recovery.
+
+The installer does not interrupt the current session or reboot. For a local TTY
+fallback, log in as the target user and use the printed command. The default is:
 
 ```bash
 "$HOME/.local/share/setup-system/bin/start-hyprland"
@@ -113,7 +125,8 @@ separately selected disposable Debian guest. Containers do not establish GUI suc
 
 ## Tools and development
 
-- [Debian](docs/debian.md) · [Linux architecture](docs/linux.md) · [Development](docs/development.md)
+- [Debian](docs/debian.md) · [Login and boot](docs/desktop_login.md) · [Development](docs/development.md)
+- [Linux architecture](docs/linux.md)
 - [Terminal](docs/terminal_guide.md) · [Neovim](docs/neovim_guide.md) · [Fonts](docs/fonts.md)
 - [Projects](docs/workspace_guide.md) · [Templates](docs/templates.md) · [Git](docs/git_profiles.md)
 - [Happ](docs/happ_guide.md) · [RTK](docs/rtk.md) · [Releases](docs/release_guide.md)

@@ -2,14 +2,17 @@
 
 ## Installation stages
 
-Run `sudo -- "$PWD/.venv/bin/python" -I -B -m setup_system --source "$PWD"` again after fixing the reported failure. The installer
+Run the same verified `sh install.sh --release vX.Y.Z` delivery command again after
+fixing the reported failure; direct root login also requires `--user NAME`. The installer
 rechecks the platform, account, package resolution and current files rather than
 trusting a stale success flag. The root-owned `/var/lib/setup-system/install.json`
-records the actual failed stage and completed system stages. Python/uv and CA trust
-are prerequisites; the CLI does not repair them before launch.
+records the actual failed stage and completed system stages. The delivery script
+prepares pinned user Python/uv; Debian/APT, CA trust and initial network access remain
+prerequisites. An existing encrypted HOME must already be unlocked before user files
+can be prepared. Do not delete HOME or recursively change its ownership.
 
-APT refresh, package installation, persistent backports source and user runtime/files
-are separate stages. A failed user stage leaves the installed packages in place and
+APT refresh, package installation, persistent backports source, user runtime/files
+and final `system-desktop` integration are separate stages. A failed user stage leaves the installed packages in place and
 returns a nonzero exit code. There is no transactional APT rollback. Offline,
 signature, unavailable revision or lock failures need their underlying cause fixed
 before the same command can continue. Never bypass authentication or agree to package
@@ -58,13 +61,16 @@ A live vault SQLite database requires the application's own backup mechanism.
 
 ## Session checks
 
-Installation does not start Hyprland, log out the user or reboot. Use the exact local
-TTY launcher printed by setup; return through Super+F9 → Logout or switch consoles
-with Ctrl+Alt+F3. See [Hyprland](hyprland.md) for fallback rendering/scaling and the
+Installation does not start Hyprland, log out the user or reboot. Graphical login is
+enabled for the next normal boot; authenticate normally to start the managed session.
+If graphical login fails, switch with Ctrl+Alt+F3, log in locally and use the exact
+TTY launcher printed by setup. Super+F9 → Logout returns to graphical login.
+See [login and boot recovery](desktop_login.md#recovery) before changing managed
+greetd or GRUB files. See [Hyprland](hyprland.md) for fallback rendering/scaling and the
 manual login/audio/portal/lock/resume checklist. A successful package or fixture test
 is not a successful graphical-session check.
 
 [Workspace recovery](workspace_guide.md), [terminal configuration](terminal_guide.md)
-and [application tools](../README.md#other-tools-and-development) retain their own
+and [application tools](../README.md#tools-and-development) retain their own
 scope. The Hyprland installer does not install Docker, move project checkouts, copy
 credentials, configure Codex or change the login shell.

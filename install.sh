@@ -44,6 +44,28 @@ fetch() {
     fi
 }
 
+check_home_unlock() {
+    filesystem=$(findmnt --noheadings --output FSTYPE --target "$target_home") || fail 'Cannot verify target HOME filesystem'
+    # An unmounted eCryptfs placeholder must not receive cleartext runtime files.
+    if [ -e "$target_home/.ecryptfs" ] || [ -L "$target_home/.ecryptfs" ]; then
+        [ "$filesystem" = ecryptfs ] || fail 'Encrypted HOME is not mounted; unlock it through the existing local user login first'
+    fi
+    if [ "$filesystem" != ecryptfs ] && command -v lsattr >/dev/null; then
+        attributes=$(as_user timeout 10 lsattr -d -- "$target_home" 2>/dev/null) || attributes=
+        flags=$(printf '%s\n' "$attributes" | awk 'NR == 1 {print $1}')
+        case "$flags" in *E*)
+            command -v fscrypt >/dev/null || fail 'Existing fscrypt HOME requires fscrypt status to verify unlock before runtime preparation'
+            status=$(as_user timeout 10 env LC_ALL=C fscrypt status "$target_home") || fail 'Cannot verify existing fscrypt HOME unlock state'
+            printf '%s\n' "$status" | awk '/^Unlocked:[ \t]*(Yes|No)[ \t]*$/ {count++; unlocked=($2 == "Yes")} END {exit !(count == 1 && unlocked)}' || \
+                fail 'Encrypted HOME is locked or its unlock state is unknown; use the existing local user login first'
+            ;;
+        esac
+    fi
+    # Check target-user access without creating a probe file or exposing directory entries.
+    as_user timeout 10 find "$target_home" -maxdepth 1 -mindepth 1 -quit >/dev/null 2>&1 || \
+        fail 'Target HOME is locked or unreadable; unlock it through the existing local user login first'
+}
+
 policy_value() {
     value=$(awk -F '"' -v key="$1" '$1 ~ "^" key " = $" { print $2 }' "$policy")
     [ -n "$value" ] && [ "$(printf '%s\n' "$value" | wc -l)" -eq 1 ] || fail 'Invalid runtime policy'
@@ -95,12 +117,13 @@ bootstrap_main() {
             [ -d "$path" ] && [ "$(stat -c %u "$path")" = "$(id -u "$target")" ] || fail 'Unsafe managed runtime directory'
         fi
     done
-    for tool in tar sha256sum awk mktemp runuser timeout; do
+    for tool in tar sha256sum awk mktemp runuser timeout find findmnt; do
         command -v "$tool" >/dev/null || fail "Missing bootstrap prerequisite: $tool"
     done
     command -v curl >/dev/null || [ -x /usr/lib/apt/apt-helper ] || fail 'No supported HTTPS downloader'
     [ -t 1 ] && ( : </dev/tty ) 2>/dev/null || fail 'An interactive terminal is required'
     case "$(uname -m)" in x86_64) architecture=amd64 ;; aarch64|arm64) architecture=arm64 ;; *) fail 'Unsupported architecture' ;; esac
+    check_home_unlock
     # The private user-owned workspace is never a privileged extraction destination.
     workspace=$(as_user mktemp -d /tmp/setup-system-delivery.XXXXXXXX)
     trap 'as_user rm -rf -- "$workspace"' EXIT

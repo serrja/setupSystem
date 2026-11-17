@@ -19,12 +19,14 @@ def _request(
     yes: bool,
     paths: tuple[Path | None, ...],
     subscription_file: Path | None = None,
+    timezone: str | None = None,
 ) -> InstallRequest:
     return InstallRequest(
         operation,
         user=user,
         yes=yes,
         subscription_file=subscription_file,
+        timezone=timezone,
         overrides={
             kind: path
             for kind, path in zip(("config", "data", "state", "cache"), paths, strict=True)
@@ -47,6 +49,9 @@ def install_plan(
             help="Private HTTPS subscription input file inside verified HOME; never a URL."
         ),
     ] = None,
+    timezone: Annotated[
+        str | None, typer.Option(help="IANA timezone; omit to preserve current.")
+    ] = None,
 ) -> None:
     """Inspect without preparing prerequisites, refreshing metadata or changing files."""
     request = _request(
@@ -55,6 +60,7 @@ def install_plan(
         False,
         (xdg_config_home, xdg_data_home, xdg_state_home, xdg_cache_home),
         vpn_config_file,
+        timezone,
     )
     raise typer.Exit(InstallationService(source).run(request))
 
@@ -74,6 +80,9 @@ def install_apply(
             help="Private HTTPS subscription input file inside verified HOME; never a URL."
         ),
     ] = None,
+    timezone: Annotated[
+        str | None, typer.Option(help="IANA timezone; omit to preserve current.")
+    ] = None,
 ) -> None:
     """Apply the checked installation plan through the shared application service."""
     request = _request(
@@ -82,5 +91,6 @@ def install_apply(
         yes,
         (xdg_config_home, xdg_data_home, xdg_state_home, xdg_cache_home),
         vpn_config_file,
+        timezone,
     )
     raise typer.Exit(InstallationService(source).run(request))

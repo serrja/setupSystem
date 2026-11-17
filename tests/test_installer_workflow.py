@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import NoDesktop
 
 from setup_system import installation
 from setup_system.application import installer, interaction
@@ -47,6 +48,7 @@ def workflow(
     subscription = (
         "https://subscription.invalid/" + hashlib.sha256(str(tmp_path).encode()).hexdigest()
     )
+    monkeypatch.setattr(installer, "validate_home_access", lambda home: None)
     monkeypatch.setattr(installation, "resolve_target", lambda user: target)
     monkeypatch.setattr(installation, "current_packages", lambda root: ["hyprland=fixture"])
     monkeypatch.setattr(installation, "validate_source_access", lambda *a, **kw: None)
@@ -197,7 +199,7 @@ def workflow(
         completed: tuple[str, ...] = (),
     ) -> None:
         assert path_options == paths and status in {"complete", "failed", "running"}
-        assert set(completed) <= {"user-downloads", "user-configuration"}
+        assert set(completed) <= {"user-downloads", "user-configuration", "system-desktop"}
         marks.append((status, stage, completed))
         state["status"] = status
         if stage is not None:
@@ -208,7 +210,12 @@ def workflow(
     monkeypatch.setattr(installation, "run_command", execute)
     monkeypatch.setattr(installation, "mark_user_stage", mark)
     service = InstallationService(
-        ROOT, runtime=Runtime(), network=network_factory, packages=packages_factory, paths=paths
+        ROOT,
+        runtime=Runtime(),
+        network=network_factory,
+        packages=packages_factory,
+        paths=paths,
+        desktop=NoDesktop(),
     )
     return Workflow(service, target, events, marks, state, network, subscription)
 
@@ -348,3 +355,155 @@ def test_network_factory_failure_reports_the_stage_without_false_success(
     assert fixture.marks == [("failed", "temporary-network", ())]
     assert fixture.network.close_calls == 0
     assert fixture.events == ["journal-failed"]
+
+
+@pytest.mark.parametrize("failure", [None, "apply", "stale"])
+def test_graphical_login_stage_follows_user_configuration_and_records_actual_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str | None,
+) -> None:
+    from setup_system.desktop_system import DesktopAccount, DesktopPlan
+    from setup_system.system_inspection import (
+        ClockSnapshot,
+        EncryptionInfo,
+        EncryptionSnapshot,
+        EncryptionState,
+        SystemSnapshot,
+    )
+
+    fixture = workflow(tmp_path, monkeypatch)
+    environment = installation.user_environment(fixture.target, {})
+    unknown = EncryptionInfo(EncryptionState.UNKNOWN, (), "Fixture encryption observation")
+    plan = DesktopPlan(
+        DesktopAccount("alice", fixture.target.uid, fixture.target.gid, fixture.target.home),
+        environment,
+        (),
+        SystemSnapshot(EncryptionSnapshot(unknown, unknown), ClockSnapshot("UTC")),
+        "Europe/Paris",
+        ("systemd-timesyncd",),
+        True,
+        "multi-user.target",
+        "fixture",
+        None,
+    )
+
+    class Desktop:
+        def plan(self, target, environment, *, timezone=None):
+            assert target == fixture.target and timezone == "Europe/Paris"
+            fixture.events.append("desktop-plan")
+            return plan
+
+        def revalidate(self, selected):
+            assert selected is plan and "user-config" in fixture.events
+            assert fixture.network.closed
+            fixture.events.append("desktop-revalidate")
+            if failure == "stale":
+                raise ValueError("Fixture changed GRUB input requires new consent")
+            return selected
+
+        def apply(self, selected):
+            assert selected is plan and fixture.network.closed
+            fixture.events.append("desktop-apply")
+            if failure == "apply":
+                raise RuntimeError("Fixture graphical login stage failure")
+
+    fixture.service.desktop = Desktop()
+    packages = fixture.service.packages
+
+    def acquire(root, **options):
+        assert options["extra_packages"] == ("systemd-timesyncd",)
+        fixture.events.append("extra-package-plan")
+        return packages(root, **options)
+
+    fixture.service.packages = acquire
+    code = fixture.service.run(
+        InstallRequest(Operation.APPLY, user="alice", yes=True, timezone="Europe/Paris")
+    )
+    output = capsys.readouterr()
+    assert code == (5 if failure else 0)
+    assert fixture.events.index("user-config") < fixture.events.index("desktop-revalidate")
+    assert fixture.events.index("network-close") < fixture.events.index("install")
+    if failure:
+        assert fixture.marks[-1] == (
+            "failed",
+            "system-desktop",
+            ("user-downloads", "user-configuration"),
+        )
+        assert "system-desktop" not in fixture.state["completed"]
+        assert "Installation completed" not in output.out
+        assert "FAILED installation stage system-desktop" in output.err
+    else:
+        assert fixture.marks[-1] == (
+            "complete",
+            "user",
+            ("user-downloads", "user-configuration", "system-desktop"),
+        )
+        assert "Next normal boot" in output.out
+    assert fixture.subscription not in output.out + output.err
+    assert not list(fixture.target.home.iterdir())
+
+
+def test_desktop_inspection_timeout_returns_preflight_error_before_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fixture = workflow(tmp_path, monkeypatch)
+
+    class FailedDesktop(NoDesktop):
+        def plan(self, *args: object, **kwargs: object) -> None:
+            raise subprocess.TimeoutExpired(["systemctl", "get-default"], 10)
+
+    fixture.service.desktop = FailedDesktop()
+    assert fixture.service.run(InstallRequest(Operation.APPLY, yes=True)) == 2
+    assert fixture.events == []
+    assert "Preflight failed:" in capsys.readouterr().err
+
+
+def test_home_relocked_after_consent_stops_before_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fixture = workflow(tmp_path, monkeypatch)
+
+    def locked(home: Path) -> None:
+        assert home == fixture.target.home
+        raise ValueError("Encrypted HOME is locked")
+
+    monkeypatch.setattr(installer, "validate_home_access", locked)
+    assert fixture.service.run(InstallRequest(Operation.APPLY, yes=True)) == 5
+    assert fixture.events == ["journal-failed"]
+    assert fixture.marks[-1] == ("failed", "temporary-network", ())
+    assert "Encrypted HOME is locked" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("operation", [Operation.PREPARE_USER, Operation.USER_STAGE])
+def test_each_user_process_rechecks_home_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: Operation
+) -> None:
+    fixture = workflow(tmp_path, monkeypatch)
+    plan = fixture.service.plan(InstallRequest(Operation.PLAN))
+
+    def locked(home: Path) -> None:
+        raise ValueError("Encrypted HOME is locked")
+
+    monkeypatch.setattr(installer, "validate_home_access", locked)
+    with pytest.raises(ValueError, match="Encrypted HOME is locked"):
+        fixture.service._user_process(plan, operation)
+    assert fixture.events == []
+
+
+@pytest.mark.parametrize(
+    "operation", [Operation.NETWORK_STAGE, Operation.PREPARE_USER, Operation.USER_STAGE]
+)
+def test_private_worker_rechecks_actual_user_home_before_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: Operation
+) -> None:
+    fixture = workflow(tmp_path, monkeypatch)
+    plan = fixture.service.plan(InstallRequest(Operation.PLAN))
+
+    def locked(home: Path) -> None:
+        raise ValueError("Encrypted HOME is locked")
+
+    monkeypatch.setattr(installer, "validate_home_access", locked)
+    assert fixture.service._run_private(plan, InstallRequest(operation)) == 5
+    assert fixture.events == []

@@ -887,10 +887,22 @@ def prepare_packages(
     release: dict[str, str] | None = None,
     architecture: str | None = None,
     emit: Callable[[str], None] = print,
+    extra_packages: tuple[str, ...] = (),
 ) -> Iterator[PreparedPackages]:
     """Download through an explicit proxy, then expose a fully offline package stage."""
     paths = SystemPaths() if paths is None else paths
-    packages = package_arguments(root=root, os_release=release, architecture=architecture)
+    if len(extra_packages) != len(set(extra_packages)) or any(
+        package != "systemd-timesyncd" for package in extra_packages
+    ):
+        raise ValueError("Unexpected desktop integration package")
+    packages = list(
+        dict.fromkeys(
+            (
+                *package_arguments(root=root, os_release=release, architecture=architecture),
+                *extra_packages,
+            )
+        )
+    )
     policy = load_policy(root)
     apt_architecture = policy.debian_architecture(architecture or platform.machine())
     proxy = _loopback_proxy(proxy)

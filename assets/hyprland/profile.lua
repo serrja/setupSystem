@@ -17,13 +17,17 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" 
 hl.config({
   general = {
     gaps_in = 4,
-    gaps_out = 8,
+    gaps_out = 10,
     border_size = 2,
     layout = "dwindle",
     col = { active_border = "rgb(89b4fa)", inactive_border = "rgb(45475a)" },
   },
-  decoration = { rounding = 6, blur = { enabled = false }, shadow = { enabled = false } },
-  animations = { enabled = false },
+  decoration = {
+    rounding = 12,
+    blur = { enabled = true, size = 3, passes = 1 },
+    shadow = { enabled = true, range = 4, render_power = 3, color = "rgba(11111b99)" },
+  },
+  animations = { enabled = true },
   input = { kb_layout = "us,ru", kb_options = "grp:win_space_toggle", follow_mouse = 1 },
   misc = { disable_hyprland_logo = true, force_default_wallpaper = 0 },
 })
@@ -33,6 +37,16 @@ end)
 bind("Return", exec("foot -c " .. quote(cfg .. "/foot.ini")), "Terminal")
 bind(
   "F1",
+  exec(
+    "wofi --show drun --conf "
+      .. quote(cfg .. "/wofi.conf")
+      .. " --style "
+      .. quote(cfg .. "/style.css")
+  ),
+  "Applications"
+)
+bind(
+  "D",
   exec(
     "wofi --show drun --conf "
       .. quote(cfg .. "/wofi.conf")
