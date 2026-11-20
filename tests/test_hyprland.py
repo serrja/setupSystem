@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,6 +14,9 @@ import pytest
 
 from setup_system.adapters.debian.hyprland import package_arguments
 from setup_system.application import workstation
+from setup_system.diagnostics import PartialApplyError
+from setup_system.infrastructure.theme import render
+from setup_system.storage import restore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,15 +66,13 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(workstation, "_hyprland_version", lambda: "Hyprland 0.55.2")
     monkeypatch.setattr(workstation, "_run", lambda argv: "")
     monkeypatch.setattr(
-        workstation.platform,
+        platform,
         "freedesktop_os_release",
         lambda: {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
     )
-    monkeypatch.setattr(workstation.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(workstation, "_required_commands", lambda root: None)
-    monkeypatch.setattr(workstation, "_font_files", lambda root: {})
-    monkeypatch.setattr(workstation, "_font_observations", lambda root: {})
-    monkeypatch.setattr(workstation.shutil, "which", lambda name: None)
+    monkeypatch.setattr(workstation, "font_files", lambda root, **kw: {})
     return path
 
 
@@ -86,35 +88,34 @@ def test_read_only_plan_does_not_require_installed_compositor(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(workstation, "_hyprland_version", lambda: None)
-    result = workstation.plan(ROOT, "hyprland")
-    assert not result.blockers
-    assert result.packages
+    result = workstation.desktop_drift(ROOT)
+    assert any(p.name == "start-hyprland" for p in result)
     assert snapshot(home) == {}
 
 
 def test_apply_uses_chosen_xdg_and_repeat_has_no_new_backup(home: Path) -> None:
-    backup = workstation.apply(ROOT, "hyprland")
+    backup = workstation.apply_desktop(ROOT)
     before = snapshot(home)
     assert (Path(os.environ["XDG_CONFIG_HOME"]) / "hypr/hyprland.lua").is_file()
     start = Path(os.environ["XDG_DATA_HOME"]) / "setup-system/bin/start-hyprland"
     assert start.is_file() and start.stat().st_mode & 0o111
     assert "/usr/bin/start-hyprland" in start.read_text()
     subprocess.run(["sh", "-n", str(start)], check=True, timeout=5)
-    assert workstation.apply(ROOT, "hyprland") == backup
+    assert workstation.apply_desktop(ROOT) == backup
     assert snapshot(home) == before
     for path in home.rglob("*"):
         assert path.stat().st_uid == os.getuid()
 
 
 def test_edited_file_is_preserved_and_restore_refuses_later_edits(home: Path) -> None:
-    backup = workstation.apply(ROOT, "hyprland")
+    backup = workstation.apply_desktop(ROOT)
     config = Path(os.environ["XDG_CONFIG_HOME"]) / "hypr/setup-system/profile.lua"
     config.write_text("-- owner edit\n")
     before = snapshot(home)
     with pytest.raises(ValueError, match="Locally edited"):
-        workstation.apply(ROOT, "hyprland")
+        workstation.apply_desktop(ROOT)
     with pytest.raises(ValueError, match="Rollback conflicts"):
-        workstation.restore_profile(backup.name, apply_changes=True)
+        restore(backup.name, apply=True)
     assert snapshot(home) == before
 
 
@@ -124,7 +125,7 @@ def test_unknown_entrypoint_is_not_overwritten(home: Path) -> None:
     entry.write_text("-- existing owner configuration\n")
     before = snapshot(home)
     with pytest.raises(ValueError, match="Existing Hyprland"):
-        workstation.apply(ROOT, "hyprland")
+        workstation.apply_desktop(ROOT)
     assert snapshot(home) == before
 
 
@@ -133,17 +134,17 @@ def test_symlink_target_rejected_before_backup(home: Path) -> None:
     config.mkdir()
     (config / "hypr").symlink_to(home / "elsewhere", target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
-        workstation.apply(ROOT, "hyprland")
+        workstation.apply_desktop(ROOT)
     assert not Path(os.environ["XDG_STATE_HOME"]).exists()
 
 
 def test_backup_restore_removes_created_files_and_preserves_owner_override(home: Path) -> None:
-    backup = workstation.apply(ROOT, "hyprland")
+    backup = workstation.apply_desktop(ROOT)
     extra = Path(os.environ["XDG_CONFIG_HOME"]) / "hypr/local.lua"
     extra.write_text("-- owner override\n")
-    preview = workstation.restore_profile(backup.name)
+    preview = restore(backup.name)
     assert preview and extra.read_text() == "-- owner override\n"
-    workstation.restore_profile(backup.name, apply_changes=True)
+    restore(backup.name, apply=True)
     assert extra.read_text() == "-- owner override\n"
     assert not (Path(os.environ["XDG_CONFIG_HOME"]) / "hypr/hyprland.lua").exists()
 
@@ -158,7 +159,7 @@ def test_profile_has_installed_roles_and_no_hardcoded_home() -> None:
     for command in ("mako", "hypridle", "swaybg", "hyprpolkitagent"):
         assert command in session
     assert "/home/" not in profile
-    json.loads((ROOT / "assets/hyprland/waybar.json").read_text())
+    json.loads(render((ROOT / "assets/hyprland/waybar.json").read_text()))
 
 
 @pytest.mark.parametrize("version", [None, "Hyprland 0.54.0", "Hyprland 0.55.20"])
@@ -167,29 +168,31 @@ def test_missing_or_incompatible_compositor_blocks_before_writes(
 ) -> None:
     monkeypatch.setattr(workstation, "_hyprland_version", lambda: version)
     with pytest.raises(ValueError, match="must be installed"):
-        workstation.apply(ROOT, "hyprland")
+        workstation.apply_desktop(ROOT)
     assert snapshot(home) == {}
 
 
 def test_interrupted_user_apply_can_resume(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    real_write = workstation.atomic_write
-    calls = 0
+    from setup_system.infrastructure import user_files
 
-    def interrupted(path: Path, content: bytes, mode: int = 0o600, **kwargs: bool) -> str:
-        nonlocal calls
-        calls += 1
-        if calls == 5:
-            raise OSError("simulated user-stage storage failure")
-        return real_write(path, content, mode, **kwargs)
+    original = user_files._run_role
 
-    monkeypatch.setattr(workstation, "atomic_write", interrupted)
-    with pytest.raises(OSError, match="simulated"):
-        workstation.apply(ROOT, "hyprland")
+    def interrupted(rows, desired, record_write):
+        row = rows[0]
+        path = home / row.relative
+        path.write_bytes(desired[path])
+        path.chmod(row.after.mode)
+        record_write(path)
+        raise OSError("simulated user-stage storage failure")
+
+    monkeypatch.setattr(user_files, "_run_role", interrupted)
+    with pytest.raises(PartialApplyError, match="simulated"):
+        workstation.apply_desktop(ROOT)
     assert snapshot(home)
-    monkeypatch.setattr(workstation, "atomic_write", real_write)
-    backup = workstation.apply(ROOT, "hyprland")
+    monkeypatch.setattr(user_files, "_run_role", original)
+    backup = workstation.apply_desktop(ROOT)
     before = snapshot(home)
-    assert workstation.apply(ROOT, "hyprland") == backup
+    assert workstation.apply_desktop(ROOT) == backup
     assert snapshot(home) == before
 
 
@@ -201,16 +204,16 @@ def test_incomplete_system_stage_blocks_user_writes(
 
     monkeypatch.setattr(workstation, "_required_commands", missing)
     with pytest.raises(ValueError, match="incomplete"):
-        workstation.apply(ROOT, "hyprland")
+        workstation.apply_desktop(ROOT)
     assert snapshot(home) == {}
 
 
 def test_login_wrapper_permissions_recover_without_overwriting_contents(home: Path) -> None:
-    workstation.apply(ROOT, "hyprland")
+    workstation.apply_desktop(ROOT)
     start = Path(os.environ["XDG_DATA_HOME"]) / "setup-system/bin/start-hyprland"
     content = start.read_bytes()
     start.chmod(0o600)
-    workstation.apply(ROOT, "hyprland")
+    workstation.apply_desktop(ROOT)
     assert start.read_bytes() == content
     assert start.stat().st_mode & 0o100
 
@@ -415,22 +418,24 @@ def test_source_assets_ignore_bytecode_and_keep_panel_provenance(
     (assets / "panel.pyc").write_bytes(b"\xff\x00legacy bytecode")
     (assets / "scratch.txt").write_text("This local file is not a profile asset.\n")
     before = snapshot(home)
-    result = workstation.plan(profile_source, "hyprland")
-    assert not result.blockers
+    result = workstation.desktop_drift(profile_source)
     assert snapshot(home) == before
     assert not any(
-        "__pycache__" in path or path.endswith((".pyc", "scratch.txt")) for path in result.files
+        "__pycache__" in path.parts or path.name.endswith((".pyc", "scratch.txt"))
+        for path in result
     )
-    backup = workstation.apply(profile_source, "hyprland")
+    backup = workstation.apply_desktop(profile_source)
     managed = Path(os.environ["XDG_CONFIG_HOME"]) / "hypr/setup-system"
     panel = managed / "panel.py"
     assert panel.read_bytes() == (assets / "panel.py").read_bytes()
     assert not (managed / "__pycache__").exists()
     assert not (managed / "panel.pyc").exists()
     assert not (managed / "scratch.txt").exists()
-    operation = json.loads((backup / "workstation.json").read_text())
-    entry = next(row for row in operation["files"] if row["path"] == str(panel))
-    assert entry["after"] == hashlib.sha256(panel.read_bytes()).hexdigest()
+    operation = json.loads((backup / "operation.json").read_text())
+    entry = next(
+        row for row in operation["files"] if row["relative"] == str(panel.relative_to(home))
+    )
+    assert entry["after"]["sha256"] == hashlib.sha256(panel.read_bytes()).hexdigest()
     assert generated.read_bytes() == b"\xff\x00generated bytecode"
 
 
@@ -448,8 +453,17 @@ def test_source_assets_reject_incomplete_or_malformed_intended_panel(
         panel.symlink_to(ROOT / "assets/hyprland/panel.py")
     elif damage == "malformed":
         panel.write_bytes(b"\xffnot UTF-8 source")
-    result = workstation.plan(profile_source, "hyprland")
-    assert result.blockers
     with pytest.raises(ValueError):
-        workstation.apply(profile_source, "hyprland")
+        workstation.desktop_drift(profile_source)
+    with pytest.raises(ValueError):
+        workstation.apply_desktop(profile_source)
+    assert snapshot(home) == {}
+
+
+def test_workspace_theme_does_not_write_session_entrypoints(home: Path) -> None:
+    targets = workstation.theme_files(ROOT)
+    assert any(path.name == "profile.lua" for path in targets)
+    assert not any(
+        path.name in {"start-hyprland", "hyprland.lua", "session.sh"} for path in targets
+    )
     assert snapshot(home) == {}

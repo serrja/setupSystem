@@ -43,7 +43,7 @@ def test_atomic_write_rejects_escape_and_symlink(sandbox: Path, tmp_path: Path) 
     assert list(outside.iterdir()) == []
 
 
-def test_backup_dry_run_conflict_restore_and_previous_copy(sandbox: Path) -> None:
+def test_backup_preview_conflict_then_restore_missing_original(sandbox: Path) -> None:
     path = sandbox / "config/user.txt"
     storage.atomic_write(path, b"original", 0o640)
     backup = storage.new_backup([path, path, sandbox / "absent"])
@@ -53,15 +53,10 @@ def test_backup_dry_run_conflict_restore_and_previous_copy(sandbox: Path) -> Non
     assert (backup / "manifest.json").stat().st_mode & 0o777 == 0o600
     assert storage.restore(backup.name) == [(str(path), "unchanged")]
     path.write_bytes(b"changed-user-data")
-    assert storage.restore(backup.name, apply=True) == [(str(path), "conflict")]
+    assert storage.restore(backup.name) == [(str(path), "conflict")]
+    with pytest.raises(ValueError, match="later edit"):
+        storage.restore(backup.name, apply=True)
     assert path.read_bytes() == b"changed-user-data"
-    assert storage.restore(backup.name, apply=True, replace_current=True) == [
-        (str(path), "restored")
-    ]
-    assert path.read_bytes() == b"original" and path.stat().st_mode & 0o777 == 0o640
-    other = [item for item in backup.parent.iterdir() if item != backup]
-    assert len(other) == 1
-    assert (other[0] / "files/config/user.txt").read_bytes() == b"changed-user-data"
     path.unlink()
     assert storage.restore(backup.name) == [(str(path), "would-create")]
     assert not path.exists()
@@ -93,7 +88,7 @@ def test_restore_rejects_tampered_input_before_writing(sandbox: Path, problem: s
         path.mkdir()
     file.write_text(json.dumps(manifest))
     with pytest.raises(ValueError):
-        storage.restore(backup.name, apply=True, replace_current=True)
+        storage.restore(backup.name, apply=True)
     assert path.is_dir() if problem == "target-directory" else path.read_bytes() == b"protected"
 
 

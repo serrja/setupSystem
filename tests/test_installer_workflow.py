@@ -23,7 +23,7 @@ def test_happ_is_not_required_for_base_or_theme_plan(monkeypatch: pytest.MonkeyP
         ).actions
     )
     plan = service.plan(InstallRequest(Operation.PLAN, section=Section.WORKSPACE))
-    assert [action.id for action in plan.actions] == ["theme"]
+    assert not plan.actions
     assert not plan.blockers
 
 
@@ -39,8 +39,22 @@ def test_happ_is_selected_only_by_explicit_workspace_intention() -> None:
 def test_cancelled_confirmation_never_executes(monkeypatch: pytest.MonkeyPatch) -> None:
     from test_workstation_service import Interaction
 
+    monkeypatch.setattr("platform.machine", lambda: "amd64")
+    monkeypatch.setattr(
+        "platform.freedesktop_os_release",
+        lambda: {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
+    )
     interaction = Interaction()
     interaction.confirmed = False
     service = InstallationService(ROOT, interaction=interaction)
     monkeypatch.setattr(service, "_apply", lambda *args: pytest.fail("Cancelled plan was applied"))
-    assert service.run(InstallRequest(Operation.APPLY, section=Section.WORKSPACE)) == 2
+    assert (
+        service.run(
+            InstallRequest(
+                Operation.APPLY,
+                section=Section.WORKSPACE,
+                settings=UserSettings(apps=("codex",)),
+            )
+        )
+        == 2
+    )

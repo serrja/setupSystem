@@ -452,7 +452,7 @@ def test_workspace_tool_lists_reviewed_versions_and_creates_recommendation(
         ToolRequest("create_template", name="python", destination=destination),
         confirmed=True,
     )
-    assert json.loads(result)["version"] == "0.2.0"
+    assert f"python 0.2.0 · {source.metadata.versions[-1].commit}" in result
     assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
     with pytest.raises(ValueError, match="destination"):
         execute(tmp_path, ToolRequest("create_template", name="python"), confirmed=True)
@@ -469,7 +469,7 @@ def test_workspace_tool_preserves_explicit_answers_and_requires_confirmation(
         "create_template",
         name="python",
         destination=destination,
-        data='{"projectName":"interactiveProject"}',
+        answers={"projectName": "interactiveProject"},
     )
     with pytest.raises(ValueError, match="confirmation"):
         execute(tmp_path, request)

@@ -27,7 +27,7 @@ def observations(
         f"Connected DRM outputs: {connected}; actual HiDPI/scale needs a graphical target.",
         f"Encryption: root={facts.encryption.root.state}, HOME={facts.encryption.home.state}; "
         "native unlock preserved.",
-        f"Clock: timezone={facts.clock.timezone or 'unknown'}; existing locale and NTP preserved.",
+        f"Clock: timezone={facts.clock.timezone or 'unknown'}; NTP={facts.clock.ntp_enabled}.",
         "Boot: "
         + ("EFI observed; " if (sys_root / "firmware/efi").exists() else "EFI not observed; ")
         + ("GRUB observed" if (boot / "grub/grub.cfg").is_file() else "GRUB not observable")

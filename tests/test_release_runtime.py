@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.runtime import UserRuntime
+from setup_system.runtime import RUNTIME_PYTHON, UV_VERSION, UserRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,7 +58,7 @@ def lock_check(project: Path, cache: Path) -> subprocess.CompletedProcess[str]:
     uv = shutil.which("uv")
     assert uv is not None, "The documented pinned uv test tool must be available"
     version = subprocess.run([uv, "--version"], capture_output=True, text=True, timeout=10)
-    assert version.returncode == 0 and version.stdout.split()[:2] == ["uv", "0.12.15"]
+    assert version.returncode == 0 and version.stdout.split()[:2] == ["uv", UV_VERSION]
     return subprocess.run(
         [
             uv,
@@ -271,7 +271,7 @@ def test_prepared_runtime_handoff_is_read_only_and_rejects_unsafe_state(
     command.write_text("#!/bin/sh\nexit 0\n")
     command.chmod(0o700)
     receipt = runtime.parent / "runtime.json"
-    receipt.write_bytes(b'{"owner":"setupSystem","runtimePython":"3.14.7"}\n')
+    receipt.write_text('{"owner":"setupSystem","runtimePython":"' + RUNTIME_PYTHON + '"}\n')
     target = installation.TargetUser("runtime_fixture", os.getuid(), os.getgid(), home, "/bin/bash")
     monkeypatch.setattr(installation, "resolve_target", lambda _: target)
     monkeypatch.setenv("XDG_DATA_HOME", str(home / "data"))

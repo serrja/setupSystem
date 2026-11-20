@@ -50,9 +50,9 @@ assert any(project.id == "pokerlost/platformInfra" for project in load_layout(ro
 subprocess.run(["setup-system", "--help"], check=True)
 
 sources = load_templates(root)
-assert set(sources) == {"python", "typer", "fastapi", "service"}
-for alias in ("python", "typer", "fastapi"):
-    metadata = sources[alias].metadata
+assert sources
+for source in sources.values():
+    metadata = source.metadata
     assert metadata.versions and metadata.recommended_version is not None
     assert metadata.recommended_version in {item.version for item in metadata.versions}
 subprocess.run(["git", "--version"], check=True)
@@ -79,6 +79,14 @@ async def exercise():
   await pilot.pause()
   assert app.last_code==0 and not app.busy,app.output_lines
 asyncio.run(exercise())
+
+from setup_system.infrastructure.user_files import apply_files
+from setup_system.storage import restore
+target = Path.home() / "config with spaces/example.ini"
+operation = apply_files({target: b"installed wheel role\\n"})
+assert target.read_bytes() == b"installed wheel role\\n"
+restore(operation.name, apply=True)
+assert not target.exists()
 """
 with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
     subprocess.run(

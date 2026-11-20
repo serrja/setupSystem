@@ -5,28 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-import re
+import stat
+import subprocess
 import tomllib
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from setup_system import installation as system
 from setup_system.adapters.debian.package_session import HappPin
 from setup_system.desktop_system import DesktopSystem
-from setup_system.infrastructure.trusted_bootstrap import caller, fetch, protected
+from setup_system.diagnostics import PartialApplyError, error_text
+from setup_system.infrastructure.trusted_bootstrap import REGIONAL, caller, fetch, protected
 
-WORKSPACE_PACKAGES = frozenset(
-    {
-        "firefox-esr",
-        "webext-ublock-origin-firefox",
-        "git",
-        "gh",
-        "zsh",
-        "neovim",
-        "ripgrep",
-        "fzf",
-    }
-)
+
+def _system_revision(expected: object) -> None:
+    path = Path("/etc/setup-system/system.toml")
+    protected(path, directory=False)
+    observed = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+    if expected != observed:
+        raise ValueError("System settings changed after plan confirmation")
 
 
 def _validate(settings: object, fields: frozenset[str]) -> dict[str, object]:
@@ -34,7 +30,7 @@ def _validate(settings: object, fields: frozenset[str]) -> dict[str, object]:
         raise ValueError("Unexpected system settings")
     if any(not isinstance(key, str) for key in settings):
         raise ValueError("Invalid system setting keys")
-    return settings
+    return dict(settings)
 
 
 def execute(root: Path, username: str, action: str, settings: object) -> int:
@@ -44,7 +40,41 @@ def execute(root: Path, username: str, action: str, settings: object) -> int:
     protected(root)
     target = system.resolve_target(username)
     environment = system.user_environment(target, {})
-    if action == "base":
+    if action in REGIONAL:
+        from setup_system.infrastructure import regional
+
+        options = _validate(
+            settings, frozenset({"value", "before", "packages", "expected_system_sha256"})
+        )
+        _system_revision(options.get("expected_system_sha256"))
+        desired = regional.validate(action, options.get("value"))
+        before = regional.actual(action)
+        if regional.equivalent(action, before, desired):
+            return 0
+        if before != options.get("before"):
+            raise ValueError("Regional settings changed after plan confirmation")
+        needed = regional.prerequisites(action)
+        if options.get("packages", []) != list(needed):
+            raise ValueError("Regional package prerequisites changed; inspect a new plan")
+        if needed:
+            _packages(root, needed)
+            generated = regional.actual(action)
+            if before is None and action == "keyboard" and generated == "us":
+                before = generated
+        regional.apply(action, desired, before)
+        return 0
+    if action == "plymouth":
+        from setup_system.infrastructure.graphical_unlock import apply_unlock
+
+        options = _validate(settings, frozenset({"identity", "packages", "expected_system_sha256"}))
+        _system_revision(options.get("expected_system_sha256"))
+        apply_unlock(
+            options.get("identity"),
+            packages=options.get("packages", []),
+            install=lambda needed: _packages(root, needed),
+        )
+        return 0
+    if action in {"base", "login", "system_settings"}:
         options = _validate(
             settings,
             frozenset(
@@ -53,6 +83,7 @@ def execute(root: Path, username: str, action: str, settings: object) -> int:
                     "hyprland",
                     "graphical_login",
                     "timezone",
+                    "locale",
                     "keyboard",
                     "plymouth",
                     "xdg",
@@ -61,72 +92,63 @@ def execute(root: Path, username: str, action: str, settings: object) -> int:
             ),
         )
         expected = options.pop("expected_system_sha256", None)
-        destination = Path("/etc/setup-system/system.toml")
-        protected(destination, directory=False)
-        observed = (
-            hashlib.sha256(destination.read_bytes()).hexdigest() if destination.exists() else None
-        )
-        if expected != observed:
-            raise ValueError("System settings changed after plan confirmation")
+        _system_revision(expected)
+        from setup_system.infrastructure.trusted_bootstrap import validate_settings
+
+        validate_settings(action, options, target.home)
         xdg = options.pop("xdg", {})
         if not isinstance(xdg, dict):
             raise ValueError("Invalid XDG overrides")
         environment = system.user_environment(
             target, {key: Path(value) for key, value in xdg.items()}
         )
-        if options.get("schema_version") != 1 or options.get("hyprland") is not True:
-            raise ValueError("An explicit supported Hyprland plan is required")
-        if (
-            type(options.get("graphical_login")) is not bool
-            or type(options.get("plymouth")) is not bool
-        ):
-            raise ValueError("Invalid feature settings")
-        if options.get("plymouth"):
-            raise ValueError(
-                "Plymouth requires validated initramfs recovery on a disposable target"
-            )
-        if options.get("keyboard") not in {"us", "us,ru"}:
-            raise ValueError("Unsupported keyboard layout")
-        zone = options.get("timezone")
-        if zone is not None:
-            if not isinstance(zone, str) or not re.fullmatch(r"[A-Za-z0-9_+./-]{1,100}", zone):
-                raise ValueError("Invalid timezone")
-            ZoneInfo(zone)
-        desktop = DesktopSystem(root, run=system.run_command)
-        plan = (
-            desktop.plan(target, environment, timezone=zone) if options["graphical_login"] else None
-        )
-        with system.prepare_packages(
-            root,
-            target=target,
-            extra_packages=plan.extra_packages if plan else (),
-            graphical_login=options["graphical_login"] is True,
-        ) as prepared_packages:
-            prepared_packages.install()
-        if plan is not None:
+        if action == "system_settings":
+            _save_system(options, expected=expected)
+            return 0
+        if options["hyprland"] is not True:
+            raise ValueError("An explicit Hyprland selection is required")
+        if action == "login":
+            if options.get("graphical_login") is not True:
+                raise ValueError("Graphical login must be selected")
+            desktop = DesktopSystem(root, run=system.run_command)
+            plan = desktop.plan(target, environment, manage_clock=False)
             desktop.apply(desktop.revalidate(plan))
-        if plan is None and zone is not None:
-            system.run_command(
-                ["/usr/bin/timedatectl", "set-timezone", zone], check=True, timeout=30
-            )
-            observed_zone = system.run_command(
-                ["/usr/bin/timedatectl", "show", "--property=Timezone", "--value"],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            ).stdout.strip()
-            if observed_zone != zone:
-                raise RuntimeError("Timezone readback failed")
-        _save_system(options, expected=expected)
+            return 0
+        with system.prepare_packages(
+            root, target=target, graphical_login=options["graphical_login"] is True
+        ) as prepared:
+            prepared.install()
     elif action == "workspace_packages":
-        options = _validate(settings, frozenset({"packages", "happ"}))
+        from setup_system.domain.catalog import components
+
+        options = _validate(
+            settings, frozenset({"packages", "happ", "external_debs", "expected_happ_version"})
+        )
+        catalog = components(root=root)
+        allowed = {package for component in catalog for package in component.packages}
+        external = options.get("external_debs", [])
+        external_ids = {c.id for c in catalog if c.handler == "catalog_deb" and not c.blocker}
+        if not isinstance(external, list) or not all(
+            isinstance(i, str) and i in external_ids for i in external
+        ):
+            raise ValueError("External Debian package is not allowlisted")
         packages = options.get("packages")
         if not isinstance(packages, list) or not all(
-            isinstance(p, str) and p in WORKSPACE_PACKAGES for p in packages
+            isinstance(p, str) and p in allowed for p in packages
         ):
             raise ValueError("Workspace package is not allowlisted")
-        _packages(root, tuple(packages), happ=options.get("happ") is True)
+        version = options.get("expected_happ_version")
+        if version is not None and not isinstance(version, str):
+            raise ValueError("Invalid Happ package version")
+        if "firefox-esr" in packages:
+            _firefox_policy(inspect_only=True)
+        _packages(
+            root,
+            tuple(packages),
+            happ=options.get("happ") is True,
+            external=tuple(external),
+            expected_happ_version=version,
+        )
         if "firefox-esr" in packages:
             _firefox_policy()
     elif action == "cleanup":
@@ -145,8 +167,6 @@ def _save_system(settings: dict[str, object], *, expected: object = None) -> Non
     observed = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
     if observed != expected:
         raise ValueError("System settings changed during apply; preserve the newer intent")
-    if not path.parent.exists():
-        path.parent.mkdir(mode=0o755, parents=True)
     # Values are from the finite validated schema above; no TOML template is accepted.
     lines = []
     for key, value in settings.items():
@@ -164,16 +184,26 @@ def _save_system(settings: dict[str, object], *, expected: object = None) -> Non
         )
         protected(backup, directory=False)
         system._write_system(backup, original, 0o600)
-    system._write_system(path, content, 0o644)
+    system._write_system(path, content, 0o644, parent_mode=0o755)
+    if path.read_bytes() != content:
+        raise PartialApplyError("System settings readback failed")
 
 
-def _packages(root: Path, packages: tuple[str, ...], *, happ: bool = False) -> None:
+def _packages(
+    root: Path,
+    packages: tuple[str, ...],
+    *,
+    happ: bool = False,
+    external: tuple[str, ...] = (),
+    expected_happ_version: str | None = None,
+) -> None:
     import tempfile
 
     from setup_system.adapters.debian.package_session import AptCommands, AptSources
     from setup_system.capabilities import load_policy
 
     policy = load_policy(root)
+    debian_packages = packages
     paths = system.SystemPaths()
     sources = AptSources(policy.hyprland.codename, policy.hyprland.backports, paths.keyring)
     system._validate_package_paths(paths, sources.managed_backports())
@@ -201,6 +231,13 @@ def _packages(root: Path, packages: tuple[str, ...], *, happ: bool = False) -> N
             )
             pin.validate_metadata(metadata.stdout)
             packages = (*packages, str(local))
+        local_debs: tuple[Path, ...] = ()
+        if external:
+            from setup_system.infrastructure.catalog_deb import stage_deb
+
+            arch = policy.debian_architecture(platform.machine())
+            local_debs = tuple(stage_deb(root, name, arch, stage) for name in external)
+            packages = (*packages, *(str(path) for path in local_debs))
         session = system._PackageSession(
             AptCommands(stage, None, packages),
             sources,
@@ -208,15 +245,43 @@ def _packages(root: Path, packages: tuple[str, ...], *, happ: bool = False) -> N
             paths,
             system.run_command,
             print,
+            persist_backports=False,
+            local_debs=local_debs,
+            expected_happ_version=expected_happ_version,
         )
-        session.download()
-        session.install()
-        if happ:
-            session.activate_happ()
+        try:
+            session.download()
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            session.failed(exc)
+            raise
+        try:
+            session.install()
+            from setup_system.adapters.debian.packages import installed_version
+
+            if any(installed_version(name) is None for name in debian_packages):
+                raise RuntimeError("Debian package database readback failed")
+            if happ:
+                if pin is None or installed_version("happ") != pin.version:
+                    raise RuntimeError("Happ package version readback failed")
+                session.activate_happ()
+            if external:
+                from setup_system.infrastructure.catalog_deb import verify_installed
+
+                for name in external:
+                    verify_installed(root, name, arch)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            session.failed(exc)
+            raise PartialApplyError(error_text(exc)) from exc
 
 
-def _firefox_policy() -> None:
-    path = Path("/etc/firefox/policies/policies.json")
+def _firefox_policy(
+    path: Path = Path("/etc/firefox/policies/policies.json"),
+    *,
+    inspect_only: bool = False,
+    backups: Path = Path("/var/lib/setup-system/settings-backups"),
+) -> None:
+    extension_id = "uBlock0@raymondhill.net"
+    install_url = f"https://addons.mozilla.org/firefox/downloads/latest/{extension_id}/latest.xpi"
     desired = {
         "policies": {
             "EnableTrackingProtection": {
@@ -230,9 +295,9 @@ def _firefox_policy() -> None:
                 "dom.security.https_only_mode": {"Value": True, "Status": "default"},
             },
             "ExtensionSettings": {
-                "uBlock0@raymondhill.net": {
+                extension_id: {
                     "installation_mode": "normal_installed",
-                    "install_url": "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi",
+                    "install_url": install_url,
                 },
             },
         }
@@ -240,8 +305,33 @@ def _firefox_policy() -> None:
     protected(path, directory=False)
     raw = path.read_bytes() if path.exists() else None
     content = (json.dumps(desired, indent=2) + "\n").encode()
-    if raw is not None and raw != content:
+    legacy = content.replace(
+        b"/" + extension_id.encode() + b"/latest.xpi", b"/ublock-origin/latest.xpi"
+    )
+    if raw is not None and raw not in {legacy, content}:
         raise ValueError("Existing enterprise Firefox policies require manual review")
-    system._write_system(path, content, 0o644)
+    migrate = []
+    for directory, child in ((path.parent.parent, path.parent), (path.parent, path)):
+        if directory.exists() and not directory.stat().st_mode & stat.S_IXOTH:
+            if (
+                raw not in {legacy, content}
+                or stat.S_IMODE(directory.stat().st_mode) != 0o700
+                or set(directory.iterdir()) != {child}
+            ):
+                raise ValueError(
+                    "Private Firefox policy directory has unknown contents; review permissions"
+                )
+            migrate.append(directory)
+    if inspect_only:
+        return
+    if raw == legacy or migrate:
+        assert raw is not None
+        backup = backups / (hashlib.sha256(raw).hexdigest() + ".json")
+        protected(backup, directory=False)
+        system._write_system(backup, raw)
+    system._write_system(path, content, 0o644, parent_mode=0o755)
+    for directory in reversed(migrate):
+        # Only the verified policy and its exclusive, root-controlled ancestors qualify.
+        directory.chmod(0o711)
     if json.loads(path.read_text()) != desired:
         raise RuntimeError("Firefox policy readback failed")

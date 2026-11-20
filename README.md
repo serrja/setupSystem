@@ -19,10 +19,10 @@ For first delivery, obtain `install.sh` from a published, verified release and u
 actual tag:
 
 ```sh
-sh install.sh --release vX.Y.Z
+sh install.sh --release <verified-tag>
 ```
 
-`vX.Y.Z` is a placeholder, not a claimed release. The bootstrap verifies release/runtime
+Replace `<verified-tag>` with the tag of the release you verified. The bootstrap verifies release/runtime
 inputs, prepares the locked runtime as your normal user and opens the same Textual UI.
 It contains no Hyprland or APT installation logic. An unpublished checkout does not
 provide release provenance for privileged Apply. No manual Python/uv setup is required
@@ -33,7 +33,7 @@ for release delivery.
 The shared default is **Catppuccin Mocha Green**, with a floating top Waybar, Foot,
 Wofi, Mako, Hyprlock, greetd and an offline Neovim color fallback. Panel compactness,
 opacity, rounding and effects are adjustable without reinstalling packages. Existing
-Lua workspace IPC, hardware detection and preferred monitor/automatic scaling remain.
+Lua workspace IPC and hardware detection remain available. Configure connected displays offers only modes reported by Hyprland and restores the saved layout after a timed preview.
 
 Applications and cleanup are optional. Happ is independent of base installation;
 account setup belongs to each application. Unsupported or unverifiable downloads show

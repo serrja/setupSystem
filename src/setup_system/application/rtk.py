@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import platform
 import re
@@ -24,7 +23,8 @@ from setup_system.downloads import (
     ProxyPolicy,
     copy_https,
 )
-from setup_system.storage import atomic_write, new_backup, state_root
+from setup_system.infrastructure.file_receipts import observe
+from setup_system.infrastructure.user_files import apply_files
 
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 1024 * 1024
@@ -121,6 +121,9 @@ def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
         raise ValueError("RTK target must be a regular file inside the current home")
     if target.exists() and (not target.is_file() or target.stat().st_uid != os.getuid()):
         raise ValueError("RTK target is not an owned regular file")
+    before = observe(target)
+    if before and status.path != target:
+        raise ValueError("An unmanaged RTK target requires review")
     archive_name = _target_name(manifest, root=root)
     release = manifest["release"]
     with tempfile.TemporaryDirectory(prefix="setup-rtk-") as temporary:
@@ -156,43 +159,9 @@ def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
         verified = inspect_rtk(binary)
         if not verified.product_matches or verified.version != manifest["version"]:
             raise ValueError("Downloaded RTK executable failed product/version verification")
-        backup = new_backup([target])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(target, binary.read_bytes(), 0o755, preserve_existing_mode=False)
-        record = {
-            "backup_id": backup.name,
-            "path": str(target),
-            "installed_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-            "version": manifest["version"],
-            "archive_sha256": expected.lower(),
-            "source": f"{release}/{archive_name}",
-        }
-        record_path = state_root() / "rtk-installs" / f"{backup.name}.json"
-        atomic_write(record_path, (json.dumps(record, indent=2) + "\n").encode())
+        backup = apply_files(
+            {target: binary.read_bytes()},
+            modes={target: 0o755},
+            expected={target: before.sha256 if before else None},
+        )
         return "changed: verified official RTK archive installed", backup
-
-
-def restore_rtk(backup_id: str) -> str:
-    """Restore the prior binary only when the managed one is still unchanged."""
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
-        raise ValueError("Invalid RTK backup ID")
-    record = json.loads((state_root() / "rtk-installs" / f"{backup_id}.json").read_text())
-    target = Path(record["path"])
-    if not target.is_relative_to(Path.home().resolve()) or target.is_symlink():
-        raise ValueError("Unsafe RTK restore target")
-    if hashlib.sha256(target.read_bytes()).hexdigest() != record["installed_sha256"]:
-        raise ValueError("RTK changed after apply; review before restoring")
-    manifest = json.loads((state_root() / "backups" / backup_id / "manifest.json").read_text())
-    items = [item for item in manifest["items"] if item["source"] == str(target)]
-    if len(items) != len(manifest["items"]):
-        raise ValueError("RTK backup contains unexpected files")
-    if items:
-        item = items[0]
-        saved = state_root() / "backups" / backup_id / item["backup"]
-        content = saved.read_bytes()
-        if hashlib.sha256(content).hexdigest() != item["sha256"]:
-            raise ValueError("RTK backup checksum mismatch")
-        atomic_write(target, content, int(item["mode"]), preserve_existing_mode=False)
-    else:
-        target.unlink()
-    return "restored"

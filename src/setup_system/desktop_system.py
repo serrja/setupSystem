@@ -10,12 +10,13 @@ import shlex
 import stat
 import subprocess
 import tempfile
-import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from string import Template
 from typing import Protocol
 
+from setup_system.infrastructure.palette import palette
 from setup_system.system_inspection import (
     EncryptionState,
     SystemSnapshot,
@@ -92,6 +93,7 @@ class DesktopPlan:
     deferred_checks: bool = False
     grub_managed: bool = False
     grub_inputs: str = ""
+    manage_clock: bool = True
 
     def describe(self) -> tuple[str, ...]:
         encryption = self.snapshot.encryption
@@ -271,15 +273,14 @@ class DesktopSystem:
         return result
 
     def _greeter_style(self) -> bytes:
-        palette_path = self.root / "src/setup_system/resources/themes/catppuccin_mocha_green.toml"
-        # Minimal synthetic fixtures can use already rendered CSS.
         content = (self.root / "assets/login/greeter.css").read_text()
-        if "{{" in content:
-            colors = tomllib.loads(palette_path.read_text())
-            for key, value in colors.items():
-                content = content.replace("{{ " + key + " }}", value)
-            if "{{" in content:
-                raise ValueError("Unknown greeter palette token")
+        if "$" in content:
+            try:
+                content = Template(content).substitute(
+                    palette(self.root / "src/setup_system/resources")
+                )
+            except KeyError as exc:
+                raise ValueError("Unknown greeter palette field") from exc
         return content.encode()
 
     def plan(
@@ -289,6 +290,7 @@ class DesktopSystem:
         *,
         timezone: str | None = None,
         snapshot: SystemSnapshot | None = None,
+        manage_clock: bool = True,
     ) -> DesktopPlan:
         if (
             target.uid <= 0
@@ -323,13 +325,16 @@ class DesktopSystem:
         clock = snapshot.clock
         extra = (
             ("systemd-timesyncd",)
-            if clock.providers_known
+            if manage_clock
+            and clock.providers_known
             and not clock.providers
             and clock.can_ntp is False
             and clock.ntp_enabled is False
             else ()
         )
-        enable_ntp = clock.ntp_enabled is False and (bool(extra) or clock.can_ntp is True)
+        enable_ntp = (
+            manage_clock and clock.ntp_enabled is False and (bool(extra) or clock.can_ntp is True)
+        )
         paths = self.paths
         deferred = False
         try:
@@ -439,13 +444,18 @@ class DesktopSystem:
             deferred,
             grub_managed,
             grub_inputs,
+            manage_clock,
         )
 
     def revalidate(self, plan: DesktopPlan) -> DesktopPlan:
         """Accept regenerated GRUB output after packages, preserving consented inputs."""
         _require_root()
         fresh = self.plan(
-            plan.target, plan.environment, timezone=plan.timezone, snapshot=plan.snapshot
+            plan.target,
+            plan.environment,
+            timezone=plan.timezone,
+            snapshot=plan.snapshot,
+            manage_clock=plan.manage_clock,
         )
 
         def intended(value: DesktopPlan) -> tuple[tuple[Path, bytes, int], ...]:

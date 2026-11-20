@@ -135,7 +135,9 @@ def test_untrusted_or_missing_canonical_keyring_stops_before_apt_and_journal(
 def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from setup_system.domain.settings import Section
+    from setup_system.domain.settings import Section, UserSettings
+
+    monkeypatch.setattr("setup_system.application.workstation_plan.platform_blocker", lambda: ())
 
     service = InstallationService(ROOT)
     monkeypatch.setattr(
@@ -145,7 +147,17 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
             ValueError("canonical Debian archive keyring is missing")
         ),
     )
-    assert service.run(InstallRequest(Operation.APPLY, section=Section.WORKSPACE, yes=True)) == 5
+    assert (
+        service.run(
+            InstallRequest(
+                Operation.APPLY,
+                section=Section.WORKSPACE,
+                settings=UserSettings(apps=("codex",)),
+                yes=True,
+            )
+        )
+        == 5
+    )
     error = capsys.readouterr().err
     assert "keyring is missing" in error
     assert not list(tmp_path.iterdir())
@@ -158,7 +170,9 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     capsys: pytest.CaptureFixture[str],
     kind: str,
 ) -> None:
-    from setup_system.domain.settings import Section
+    from setup_system.domain.settings import Section, UserSettings
+
+    monkeypatch.setattr("setup_system.application.workstation_plan.platform_blocker", lambda: ())
 
     marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()
     diagnostic = "archive signature validation failed https://" + marker + ":" + marker
@@ -169,7 +183,17 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
         raise ValueError(diagnostic)
 
     monkeypatch.setattr(service, "_apply", fail)
-    assert service.run(InstallRequest(Operation.APPLY, section=Section.WORKSPACE, yes=True)) == 5
+    assert (
+        service.run(
+            InstallRequest(
+                Operation.APPLY,
+                section=Section.WORKSPACE,
+                settings=UserSettings(apps=("codex",)),
+                yes=True,
+            )
+        )
+        == 5
+    )
     error = capsys.readouterr().err
     assert "archive signature validation failed" in error and marker not in error
     assert not list(tmp_path.iterdir())

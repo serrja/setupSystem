@@ -1,19 +1,12 @@
 # Terminal and shell
 
-The managed Hyprland terminal is Foot with the shared Catppuccin Mocha Green/font policy.
-Workspace selects developer packages; Workspace → Tools → shell configures an already
-installed Zsh under the current account with backups and startup validation.
+Hyprland starts Foot with the shared desktop palette and font policy. Workspace
+Tools configures an installed Zsh for the current account. It checks startup in
+an isolated home, preserves text outside its managed blocks and uses the existing
+history file when available. Selecting the profile retains the current login shell.
 
-Opening Textual or a shell never starts an installer or network download. Existing
-terminals, Bash/POSIX scripts, history and login shell are preserved by base installation.
-A login-shell change remains a separate native account operation, not an automatic
-side effect of selecting Hyprland.
+The `cproj` helper opens the Textual workspace tools. Project selection resolves
+an exact Git root. [Workspace](workspace_guide.md) · [Neovim](neovim_guide.md)
 
-The `cproj` helper opens Textual workspace tools. Project paths use the catalog's exact
-Git roots, preserving dirty files and published repository identities. Neovim, fzf and
-Git integration are described in [Neovim](neovim_guide.md), [workspace](workspace_guide.md)
-and [Git profiles](git_profiles.md).
-
-For broken Zsh startup, use `zsh -f` or the previous shell. Tools → shell_restore restores
-the selected unchanged managed files by Backup ID. Do not source installation code from
-startup files or replace Bash with `exec zsh`.
+If startup fails, use `zsh -f` or the previous shell. Select the operation in
+Recovery, preview its affected files and confirm the restore. [Recovery](recovery.md)

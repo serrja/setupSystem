@@ -1,13 +1,10 @@
 # RTK
 
-RTK is an optional output-filtering tool. In Textual Workspace → Tools, select rtk and
-review before confirming installation. The adapter verifies its pinned upstream checksum
-and executable, preserves an existing conflicting binary and uses a private backup.
-rtk_restore restores the selected Backup ID only if ownership evidence still matches.
+Workspace Tools installs or updates the optional RTK output filter from its
+reviewed release. Apply checks the archive checksum and tests the staged
+executable's version and command identity before publishing the binary.
 
-`rtk --version` and `rtk gain --help` inspect the installed tool. Local RTK history and
-settings remain at their existing user paths. No automatic editor AI plugin, Codex hook
-or shell-startup network process is enabled by opening setupSystem.
-
-For complete diagnostics invoke the original tool, for example `/usr/bin/git diff --check`.
-Shortened output does not prove successful review, secret scanning, migrations or CI.
+Run `rtk --version` and `rtk gain --help` to inspect the installed tool. Use the
+underlying command, such as `git diff --check`, when you need its full output.
+Recovery can restore the previous binary while its recorded hash and permissions
+still match. [Recovery](recovery.md)
