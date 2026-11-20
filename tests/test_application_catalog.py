@@ -139,3 +139,80 @@ def test_happ_upgrade_requires_confirmed_version_and_disconnected_service(
     else:
         with pytest.raises(ValueError):
             _check_existing_happ("3.0", expected_happ_version="1.0", run=command)
+
+
+def test_codex_delivers_verified_policy_in_effective_override(tmp_path, monkeypatch):
+    import io
+    import tarfile
+
+    from setup_system.infrastructure import app_configs
+
+    home = tmp_path / "home"
+    config = home / ".codex"
+    config.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(config))
+    for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
+        monkeypatch.setenv("XDG_" + kind + "_HOME", str(home / kind.lower()))
+    preferences = 'model = "owner-choice"\nsandbox_mode = "read-only"\napproval_policy = "never"\n'
+    (config / "config.toml").write_text(preferences)
+    (config / "AGENTS.md").write_text("Lower priority owner instructions.\n")
+    active = config / "AGENTS.override.md"
+    active.write_text(
+        "Keep my heading.\n\n# >>> setupSystem >>>\nObsolete policy pointer.\n"
+        "# <<< setupSystem <<<\n\nKeep my final paragraph.\n"
+    )
+    root = Path(__file__).resolve().parents[1]
+    project = tmp_path / "source"
+    manifests = project / "manifests"
+    manifests.mkdir(parents=True)
+    (manifests / "platforms.toml").write_bytes((root / "manifests/platforms.toml").read_bytes())
+    metadata = (root / "manifests/projects.toml").read_text()
+    rules = next(
+        item["policy"]
+        for item in tomllib.loads(metadata)["project"]
+        if item["id"] == "serrja/baseRules"
+    )
+    contract = b"# Fixture contract\n\nUse the audited project root.\n"
+    notice = b"Synthetic license notice.\n"
+    (manifests / "projects.toml").write_text(
+        metadata.replace(rules["sha256"], hashlib.sha256(contract).hexdigest())
+    )
+    resources = tmp_path / "resources"
+    (resources / "catalogs").mkdir(parents=True)
+    monkeypatch.setattr(app_configs, "RESOURCE_ROOT", resources)
+    payload = b"#!/bin/sh\necho 'codex-cli 0.0.1'\n"
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        member = tarfile.TarInfo("codex")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+    archive_data = buffer.getvalue()
+    archive_url = "https://github.com/openai/codex/releases/download/fixture/codex.tar.gz"
+    release = 'version = "0.0.1"\n'
+    for arch in ("amd64", "arm64"):
+        release += (
+            f'[{arch}]\nurl = "{archive_url}"\nmember = "codex"\n'
+            f'sha256 = "{hashlib.sha256(archive_data).hexdigest()}"\n'
+        )
+    (resources / "catalogs/codex.toml").write_text(release)
+    upstream = "https://raw.githubusercontent.com/serrja/baseRules/" + rules["commit"]
+    assets = {
+        upstream + "/" + rules["document"]: contract,
+        upstream + "/LICENSE": notice,
+        archive_url: archive_data,
+    }
+    monkeypatch.setattr(app_configs, "read_https", lambda url, _: assets[url])
+    app_configs.configure_codex(project)
+    result = active.read_text()
+    assert result.count(contract.decode().strip()) == 1
+    assert rules["commit"] in result
+    assert "Obsolete policy pointer." not in result
+    assert "Keep my heading." in result and "Keep my final paragraph." in result
+    assert (config / "AGENTS.md").read_text() == "Lower priority owner instructions.\n"
+    assert (config / "config.toml").read_text() == preferences
+    policy = home / "config/setup-system/policy"
+    assert (policy / "engineering.md").read_bytes() == contract
+    assert (policy / "LICENSE").read_bytes() == notice
+    app_configs.configure_codex(project)
+    assert active.read_text() == result

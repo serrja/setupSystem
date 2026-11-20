@@ -82,13 +82,20 @@ def configure_codex(root: Path) -> None:
     rules = next(item for item in catalog.project if item.id == "serrja/baseRules").policy
     if rules is None:
         raise ValueError("Missing baseRules provenance")
-    url = f"https://raw.githubusercontent.com/serrja/baseRules/{rules.commit}/{rules.document}"
-    policy = read_https(url, DownloadPolicy(frozenset({"raw.githubusercontent.com"}), 65536, 30))
+    upstream = f"https://raw.githubusercontent.com/serrja/baseRules/{rules.commit}"
+    url = f"{upstream}/{rules.document}"
+    transport = DownloadPolicy(frozenset({"raw.githubusercontent.com"}), 65536, 30)
+    policy = read_https(url, transport)
     if hashlib.sha256(policy).hexdigest() != rules.sha256:
         raise ValueError("Pinned baseRules policy checksum mismatch")
+    license_path = policy_path.with_name("LICENSE")
+    license_notice = read_https(f"{upstream}/LICENSE", transport)
     body = (
-        f"Read the reviewed engineering contract at `{policy_path}` and the local "
-        "repository instructions. Resolve the exact Git root and preserve unrelated files."
+        f"{policy.decode().rstrip()}\n\n"
+        f"The local copy at `{policy_path}` comes from the [pinned source]({url}). "
+        f"[Upstream license]({upstream}/LICENSE)\n\n"
+        "Read the local repository instructions. Resolve the exact Git root and preserve "
+        "unrelated files."
     )
     updated_instructions = managed_block(prior.decode(), body).encode()
     pin = document[architecture]
@@ -111,7 +118,13 @@ def configure_codex(root: Path) -> None:
             raise ValueError("Missing Codex binary")
         content = stream.read()
     apply_files(
-        {target: content, config: merged, instructions: updated_instructions, policy_path: policy},
+        {
+            target: content,
+            config: merged,
+            instructions: updated_instructions,
+            policy_path: policy,
+            license_path: license_notice,
+        },
         modes={target: 0o755, config: 0o600},
         expected={config: before, instructions: instruction_hash},
     )
