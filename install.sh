@@ -78,6 +78,7 @@ require_platform() {
     [ "$(uname -s)" = Linux ] || fail 'This bootstrap requires Linux'
     [ "$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = debian ] || fail 'This workstation requires debian 13'
     [ "$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = 13 ] || fail 'This workstation requires debian 13'
+    [ "$(awk -F= '$1 == "VERSION_CODENAME" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = trixie ] || fail 'This workstation requires debian 13'
     case "$(uname -m)" in
         amd64|x86_64) architecture=amd64 ;;
         aarch64|arm64) architecture=arm64 ;;

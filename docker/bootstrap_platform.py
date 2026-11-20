@@ -20,7 +20,11 @@ def render() -> str:
         "require_platform() {",
         "    [ \"$(uname -s)\" = Linux ] || fail 'This bootstrap requires Linux'",
     ]
-    for field, value in (("ID", profile.distribution), ("VERSION_ID", profile.version)):
+    for field, value in (
+        ("ID", profile.distribution),
+        ("VERSION_ID", profile.version),
+        ("VERSION_CODENAME", profile.codename),
+    ):
         query = f'''$1 == "{field}" {{gsub(/"/, "", $2); print $2}}'''
         rows.append(
             f"""    [ "$(awk -F= '{query}' /etc/os-release)" = {value} ]"""

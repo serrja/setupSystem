@@ -118,7 +118,9 @@ stat() {{ case "$2" in %a) printf 700 ;; *) printf 12345 ;; esac; }}
 uname() {{ [ "$1" = -s ] && printf Linux || printf {machine}; }}
 awk() {{
  if [ "${{3-}}" = /etc/os-release ]; then
-  case "$2" in *VERSION_ID*) printf 13 ;; *) printf debian ;; esac
+  case "$2" in
+   *VERSION_ID*) printf 13 ;; *VERSION_CODENAME*) printf trixie ;; *) printf debian ;;
+  esac
  else command awk "$@"; fi
 }}
 as_user() {{ env HOME={shlex.quote(str(home))} "$@"; }}
@@ -265,3 +267,15 @@ printf 'HOME ACCESS VERIFIED\\n'
     assert ("HOME ACCESS VERIFIED" in result.stdout) is success
     assert sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*")) == before
     assert not (home / ".local").exists() and not (home / ".cache").exists()
+
+
+def test_bootstrap_rejects_a_mismatched_debian_codename_before_delivery(tmp_path):
+    import shlex
+
+    release = tmp_path / "os-release"
+    release.write_text("ID=debian\nVERSION_ID=13\nVERSION_CODENAME=other\n")
+    script = (ROOT / "install.sh").read_text().rsplit('bootstrap_main "$@"', 1)[0]
+    script = script.replace("/etc/os-release", shlex.quote(str(release)))
+    script += '\nuname() { [ "$1" = -s ] && printf Linux || printf x86_64; }\nrequire_platform\n'
+    result = subprocess.run(["sh", "-c", script], cwd=tmp_path, capture_output=True)
+    assert result.returncode == 2 and list(tmp_path.iterdir()) == [release]
