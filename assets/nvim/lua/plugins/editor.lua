@@ -88,7 +88,7 @@ return {
           local ok = pcall(vim.treesitter.start, event.buf)
           if not ok then
             vim.notify_once(
-              "Tree-sitter parser missing; run terminalDev doctor",
+              "Open setup-system and apply the corresponding editor language profile",
               vim.log.levels.WARN
             )
           end

@@ -6,6 +6,10 @@ import re
 import subprocess
 
 
+class PartialApplyError(RuntimeError):
+    """A stage changed managed state before reporting its error."""
+
+
 def error_text(error: BaseException | str) -> str:
     """Keep actionable failure details without credentials, terminal controls or raw argv."""
     if isinstance(error, subprocess.CalledProcessError):

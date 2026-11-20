@@ -73,6 +73,19 @@ policy_value() {
     [ -n "$value" ] && [ "$(printf '%s\n' "$value" | wc -l)" -eq 1 ] || fail 'Invalid runtime policy'
     printf '%s\n' "$value"
 }
+# Generated from manifests/platforms.toml.
+require_platform() {
+    [ "$(uname -s)" = Linux ] || fail 'This bootstrap requires Linux'
+    [ "$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = debian ] || fail 'This workstation requires debian 13'
+    [ "$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = 13 ] || fail 'This workstation requires debian 13'
+    case "$(uname -m)" in
+        amd64|x86_64) architecture=amd64 ;;
+        aarch64|arm64) architecture=arm64 ;;
+        *) fail 'Unsupported architecture' ;;
+    esac
+}
+# End of generated platform gate.
+
 bootstrap_main() {
     release='' target=''
     while [ "$#" -gt 0 ]; do
@@ -87,7 +100,7 @@ bootstrap_main() {
         shift
     done
     printf '%s\n' "$release" | /bin/grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+)?$' || fail 'Use an explicit versioned release'
-    [ "$(uname -s)" = Linux ] && [ "$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = debian ] || fail 'This bootstrap requires Debian'
+    require_platform
     if [ -n "${SUDO_USER-}" ]; then
         [ "$(id -u)" -eq 0 ] || fail 'Sudo identity is only valid for a root bootstrap caller'
         [ -z "$target" ] || [ "$target" = "$SUDO_USER" ] || fail 'Explicit user differs from sudo caller'
@@ -128,8 +141,6 @@ bootstrap_main() {
     if [ ! -t 1 ] || ! ( : </dev/tty ) 2>/dev/null; then
         fail 'An interactive terminal is required'
     fi
-    case "$(uname -m)" in x86_64) architecture=amd64 ;; aarch64|arm64) architecture=arm64 ;; *) fail 'Unsupported architecture' ;; esac
-    [ "$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = 13 ] || fail 'This workstation requires Debian 13'
     check_home_unlock
     # The private user-owned workspace is never a privileged extraction destination.
     workspace=$(as_user mktemp -d /tmp/setup-system-delivery.XXXXXXXX)

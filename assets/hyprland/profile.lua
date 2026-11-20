@@ -14,21 +14,22 @@ hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })
-hl.config({
+[% for monitor in monitors %]@{ monitor.rule() }@
+[% endfor %]hl.config({
   general = {
     gaps_in = 6,
     gaps_out = 12,
     border_size = 2,
     layout = "dwindle",
-    col = { active_border = "rgb({{ green_hex }})", inactive_border = "rgb({{ surface1_hex }})" },
+    col = { active_border = "rgb(@{ green_hex }@)", inactive_border = "rgb(@{ surface1_hex }@)" },
   },
   decoration = {
-    rounding = 12,
-    blur = { enabled = false, size = 3, passes = 1 },
-    shadow = { enabled = true, range = 4, render_power = 3, color = "rgba({{ crust_hex }}99)" },
+    rounding = @{ rounding }@,
+    blur = { enabled = @{ effects }@, size = 3, passes = 1 },
+    shadow = { enabled = true, range = 4, render_power = 3, color = "rgba(@{ crust_hex }@99)" },
   },
-  animations = { enabled = false },
-  input = { kb_layout = "us,ru", kb_options = "grp:win_space_toggle", follow_mouse = 1 },
+  animations = { enabled = @{ effects }@ },
+  input = { kb_layout = "@{ keyboard }@", kb_options = "grp:win_space_toggle", follow_mouse = 1 },
   misc = { disable_hyprland_logo = true, force_default_wallpaper = 0 },
 })
 hl.on("hyprland.start", function()

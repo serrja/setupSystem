@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 
 import pytest
 
 from setup_system.application import rtk, shell
-from setup_system.planning import Plan, Platform
+from setup_system.storage import restore
 
 
 def _shell_fixture(home: Path, root: Path) -> shell.ShellStatus:
@@ -27,7 +26,7 @@ def test_shell_plan_is_read_only_and_restore_protects_later_edits(
     home.mkdir()
     root = tmp_path / "source"
     status = _shell_fixture(home, root)
-    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(shell, "inspect_shell", lambda: status)
     monkeypatch.setattr(shell, "validate_shell", lambda *_args: None)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
@@ -47,12 +46,12 @@ def test_shell_plan_is_read_only_and_restore_protects_later_edits(
 
     managed = (home / ".zshrc").read_text()
     (home / ".zshrc").write_text(managed + "# later edit\n")
-    with pytest.raises(ValueError, match="User changed file"):
-        shell.restore_shell(backup.name)
+    with pytest.raises(ValueError, match="later edit"):
+        restore(backup.name, apply=True)
     assert (home / ".zshrc").read_text().endswith("# later edit\n")
 
     (home / ".zshrc").write_text(managed)
-    restored = shell.restore_shell(backup.name)
+    restored = restore(backup.name, apply=True)
     assert len(restored) == len(applied)
     assert (home / ".zshrc").read_text() == "# user setting\n"
     assert not (home / ".zprofile").exists()
@@ -114,45 +113,37 @@ def test_rtk_blocks_same_named_other_product(
         rtk.install_rtk(root)
 
 
-def test_debian_terminal_apply_configures_current_user_zsh(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_git_profile_uses_native_writer_and_shared_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The explicit Debian dev profile must reach the portable shell apply."""
-    profiles = importlib.import_module("setup_system.application.user_profiles")
-    platform = Platform("debian", "13", "x86_64", True, False, "supported")
-    calls: list[str] = []
-    app = object()
-    status = shell.ShellStatus(
-        "test", tmp_path, tmp_path, Path("/bin/bash"), Path("/usr/bin/zsh"), True
-    )
+    import subprocess
 
-    monkeypatch.setattr(profiles, "create_plan", lambda *_args: Plan(platform, (), ()))
-    monkeypatch.setattr(profiles, "catalog", lambda _root: {"zsh": app})
-    monkeypatch.setattr(
-        profiles, "install_zsh", lambda selected: calls.append("install_zsh") or "installed"
-    )
-    monkeypatch.setattr(
-        profiles,
-        "apply_configuration",
-        lambda *_args, **_kwargs: (calls.append("configuration") or tmp_path, []),
-    )
-    monkeypatch.setattr(
-        shell,
-        "apply_shell",
-        lambda _root: (calls.append("shell") or tmp_path, [], status),
-    )
-    monkeypatch.setattr(
-        shell,
-        "change_login_shell",
-        lambda target: (calls.append("chsh") or True, str(target)),
-    )
-    monkeypatch.setattr(profiles, "install_neovim", lambda *_args: "unchanged")
-    monkeypatch.setattr(profiles, "install_plugins", lambda *_args: [])
-    monkeypatch.setattr(profiles, "install_archive_tool", lambda *_args: "unchanged")
-    monkeypatch.setattr(profiles, "install_language_tools", lambda *_args: [])
-    monkeypatch.setattr(profiles, "install_parsers", lambda *_args: "unchanged")
-    monkeypatch.setattr(profiles, "install_system_tools", lambda *_args: ("unchanged", False))
+    from setup_system.application import git_profiles
 
-    assert profiles.UserProfileService(tmp_path).run("terminalDev", yes=True) == 0
-
-    assert calls == ["install_zsh", "configuration", "shell", "chsh"]
+    home = tmp_path / "user home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
+    source, project = home / "source", home / "project"
+    for path in (source, project):
+        subprocess.run(["git", "init", "-q", str(path)], check=True)
+    for key, value in (("user.name", "Fixture"), ("user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(source), "config", "--local", key, value], check=True)
+    template, _ = git_profiles.configure_profile("fixture", source, [], yes=True)
+    assert template is not None
+    config = project / ".git/config"
+    original = config.read_bytes()
+    applied, _ = git_profiles.use_profile("fixture", project, yes=True)
+    assert applied is not None
+    observed = subprocess.check_output(
+        ["git", "-C", str(project), "config", "user.email"], text=True
+    )
+    assert observed.strip() == "fixture@example.invalid"
+    assert git_profiles.use_profile("fixture", project, yes=True)[0] is None
+    restore(applied.name, apply=True)
+    assert config.read_bytes() == original
+    restore(template.name, apply=True)
+    assert not git_profiles.profile_path("fixture").exists()

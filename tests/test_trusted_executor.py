@@ -6,6 +6,7 @@ import json
 import os
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,7 +36,10 @@ def test_unsafe_sudo_uid_rejected_before_network(monkeypatch: pytest.MonkeyPatch
 def test_executor_uses_system_python_and_data_on_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
     calls = []
-    monkeypatch.setattr("subprocess.run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)) or SimpleNamespace(stdout=""),
+    )
     PrivilegedExecutor("v1.2.3", "a" * 40).run("base", {"hyprland": True})
     argv, options = calls[0]
     assert argv[:8] == ["/usr/bin/sudo", "-n", "--", "/usr/bin/python3", "-I", "-B", "-S", "-c"]
@@ -118,8 +122,6 @@ def test_native_provenance_mismatch_stops_before_extraction(
 def test_operation_lock_excludes_another_executor_and_releases_on_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from types import SimpleNamespace
-
     original = os.fstat
 
     def metadata(descriptor):
@@ -136,3 +138,64 @@ def test_operation_lock_excludes_another_executor_and_releases_on_failure(
             raise ValueError("synthetic")
     with bootstrap.operation_lock(tmp_path):
         pass
+
+
+def test_initial_loader_resolves_only_a_published_tag_commit():
+    from setup_system.infrastructure.release_loader import PROGRAM
+
+    loader = {"__name__": "loader_fixture"}
+    exec(compile(PROGRAM, "<release loader>", "exec"), loader)
+    sha = "f" * 40
+    tag = "v1.2.3"
+
+    def fetch(url, limit):
+        if "/releases/tags/" in url:
+            return json.dumps(
+                {"tag_name": tag, "draft": False, "published_at": "2026-11-01"}
+            ).encode()
+        if "/git/ref/" in url:
+            return json.dumps(
+                {"ref": "refs/tags/" + tag, "object": {"type": "tag", "sha": "a" * 40}}
+            ).encode()
+        assert url.endswith("a" * 40)
+        return json.dumps({"object": {"type": "commit", "sha": sha}}).encode()
+
+    assert loader["resolve"]({"release": tag, "source_sha": sha}, fetch).endswith("/" + sha + "/")
+    with pytest.raises(ValueError, match="disagree"):
+        loader["resolve"]({"release": tag, "source_sha": "b" * 40}, fetch)
+
+
+def test_verified_extraction_reuses_only_the_identical_root_owned_tree(tmp_path, monkeypatch):
+    name = "setup_system-1.2.3"
+    raw = archive(name + "/README.md")
+    digest = hashlib.sha256(raw).hexdigest()
+    sha = "f" * 40
+
+    def fetch(url, limit):
+        if url.endswith("python-build-receipt.json"):
+            return json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "sourceSha": sha,
+                    "files": [{"name": name + ".tar.gz", "sha256": digest}],
+                }
+            ).encode()
+        if url.endswith("checksums.sha256"):
+            return (digest + "  " + name + ".tar.gz\n").encode()
+        return raw
+
+    monkeypatch.setattr(bootstrap, "fetch", fetch)
+    monkeypatch.setattr(bootstrap, "protected", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        bootstrap,
+        "Path",
+        lambda value: (
+            tmp_path / "releases" if value == "/var/lib/setup-system/releases" else Path(value)
+        ),
+    )
+    original = bootstrap.acquire("v1.2.3", sha)
+    assert bootstrap.acquire("v1.2.3", sha) == original
+    (original / "unknown").touch()
+    with pytest.raises(ValueError, match="conflicts"):
+        bootstrap.acquire("v1.2.3", sha)
+    assert list(original.parent.iterdir()) == [original]

@@ -1,20 +1,26 @@
 # Catppuccin Mocha Green
 
-`src/setup_system/resources/themes/catppuccin_mocha_green.toml` is the palette owner.
-Managed templates share base `#1e1e2e`, mantle `#181825`, crust `#11111b`, surface0
-`#313244`, text `#cdd6f4`, subtext0 `#a6adc8`, green `#a6e3a1`, teal `#94e2d5`,
-red `#f38ba8` and yellow `#f9e2af`.
+The palette lives in `src/setup_system/resources/themes/catppuccin_mocha_green.toml`.
+Desktop templates render the selected opacity, corner radius, optional effects and font
+policy into native Hyprland, Waybar, Foot, Wofi, Mako and Hyprlock settings. The same
+colors are used for the wallpaper, greetd and Neovim.
 
-The default uses 6px inner/12px outer gaps, 12px rounding, a 2px green active border,
-soft shadows and disabled effects. Hyprland selects preferred monitor modes and automatic
-scale. The floating top Waybar is 36px (30px compact), launcher/workspaces left,
-clock center, language/network/audio/tray right. Existing Lua IPC remains the workspace
-adapter; hardware detection suppresses absent battery/backlight modules.
+The default has 6px inner and 12px outer gaps, 12px corners and a 2px green active
+border. The floating top bar is 36px tall, or 30px in compact mode. It shows workspaces
+and the launcher on the left, time in the center, and language, network, audio and tray
+on the right. The panel discovers batteries and backlights through sysfs. Its workspace
+buttons translate Waybar custom-module clicks into the pinned Hyprland Lua dispatch
+syntax. Debian 13 ships Waybar 0.12.0, whose native workspace button still sends
+`dispatch workspace <id>`. The pinned Hyprland Lua parser expects a dispatcher
+expression. Recheck the native button on a disposable graphical session when either
+package changes. [Waybar workspace button](https://github.com/Alexays/Waybar/blob/8490a1d9b9a5c8770dd63e9faca0a5e01acedcae/src/modules/hyprland/workspace.cpp#L60-L70)
+and [Hyprland dispatch implementation](https://github.com/hyprwm/Hyprland/blob/v0.55.2/src/debug/HyprCtl.cpp#L1102-L1118).
 
-Workspace contains a theme preview, compactness, opacity, rounding and effects. Applying
-these changes writes managed configuration without reinstalling system packages. Existing
-personal edits require review; unrelated GTK applications receive no injected CSS.
+Use the display form in a running Hyprland session to select an output, an advertised
+mode, scale and position. Preview applies temporary compositor rules. After twelve seconds
+its helper reloads the saved compositor configuration, including when the application
+closes during the preview. Accept the previewed settings for the next confirmed plan.
+Other outputs continue to use their preferred mode and automatic scale.
 
-Foot, Wofi, Mako, wallpaper, greetd and Hyprlock use the same palette. GTK uses supported
-dark preferences. Neovim has a native offline palette and pinned existing plugins.
-The actual monitor/HiDPI, panel and compositor result needs target-machine GUI validation.
+Color and typography changes apply to the named managed applications. Inspect the
+rendered result on the intended GPU, outputs and scale before relying on a new desktop.

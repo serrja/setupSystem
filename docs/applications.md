@@ -1,29 +1,16 @@
 # Applications
 
-Every application is an explicit Workspace selection. Catalog presence does not establish
-installation. Native package metadata, binary version or readback establishes actual state.
+In Working environment, select the components to include in the next plan. The released `manifests/applications.toml` supplies display names, package requirements, adapters and supported artifact architectures.
 
-| Application | Delivery and limits |
+| Selection | Delivery and verification |
 | --- | --- |
-| Neovim | Existing pinned upstream archive/plugins; normal user only, offline native theme fallback |
-| Codex CLI | Official pinned release archive and SHA-256 for amd64/arm64; preserve configured model and auth store |
-| Firefox ESR | Debian package, Strict tracking protection, HTTPS-Only, official AMO uBlock Origin; preserve profiles |
-| Happ | Optional pinned upstream `.deb`, verified digest/metadata and native helper; native account/import UI |
-| ChatGPT Desktop | Official Debian 13 Linux preview exists; download returned HTTP 403 during verification, so unavailable until a reviewed version/checksum pin exists |
-| Git / gh / shell tools | Selected Debian packages and native account tools |
-| Other applications / language profiles | Only available when their delivery adapter and platform provenance are verified |
+| Firefox ESR | Signed Debian package, tracking protection set to Strict, HTTPS-Only and uBlock Origin from Mozilla Add-ons. Existing profiles, passwords and bookmarks stay under Firefox's control. |
+| Codex CLI | Official archive pinned per architecture. Setup verifies the executable version, preserves existing model, reasoning, approval and permission choices, and merges instructions into the active user AGENTS file. |
+| ChatGPT Desktop and Obsidian | Reviewed upstream Debian archives with exact SHA-256, package identity and architecture. Availability appears beside the selection when the release lacks an artifact for the machine. |
+| Happ | Verified vendor Debian package and native service. Open Happ to complete account or subscription setup. |
+| Git and shell tools, Telegram, Docker and LibreOffice | Selected Debian packages acquired from signed Debian sources. Docker group membership requires a separate owner decision. |
+| Neovim and language profiles | Choose editor and language tools independently. See the [editor guide](neovim_guide.md). |
 
-Codex defaults use workspace-write and on-request supported by the pinned version.
-No global bypass, auth.json backup or additional AI editor plugin is installed. Model
-selection remains in the user's existing configuration. High reasoning is selected only
-when public cached model capability metadata confirms support; no model is invented. Existing permission profiles
-require explicit review instead of automatic conversion.
+In Tools → Projects, select a discovered checkout to launch Codex in its exact Git root. Setup adds a reference to the checked local engineering contract in the effective global instructions file. Repository instructions and directory overrides follow Codex discovery. The native client owns authentication. [Codex instructions](https://developers.openai.com/codex/guides/agents-md/) · [Pinned Codex configuration schema](https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/core/config.schema.json)
 
-Firefox preserves existing enterprise policies if they conflict. Its package and policy
-file readback do not establish a running browser's `about:policies` or extension state;
-validate those in a disposable graphical session. Safe updates, malicious-site protection
-and TLS remain enabled. No mandatory DoH or Happ dependency is introduced.
-
-Official references: [Codex CLI](https://learn.chatgpt.com/docs/codex/cli.md),
-[ChatGPT Linux](https://learn.chatgpt.com/docs/linux/linux-app.md),
-[Happ source](https://github.com/Happ-proxy/happ-desktop/releases/tag/4.5.4).
+On the selected target, inspect Firefox's `about:policies` and extension list after first launch. For ChatGPT, complete the native sign-in after package verification. [Mozilla policy documentation](https://mozilla.github.io/policy-templates/) · [ChatGPT Desktop](chatgpt_guide.md)

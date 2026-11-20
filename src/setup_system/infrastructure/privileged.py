@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
 
-from setup_system.infrastructure import trusted_bootstrap
+from setup_system.infrastructure import release_loader, trusted_bootstrap
 
 
 class PrivilegedExecutor:
@@ -17,9 +16,8 @@ class PrivilegedExecutor:
     def run(self, action: str, settings: dict[str, object]) -> None:
         if os.geteuid() == 0:
             raise ValueError("The UI must remain unprivileged")
-        if action not in {"base", "workspace_packages", "cleanup"}:
+        if action not in trusted_bootstrap.SYSTEM_ACTIONS:
             raise ValueError("Unexpected privileged action")
-        program = Path(trusted_bootstrap.__file__).read_text()
         payload = json.dumps(
             {
                 "release": self.release,
@@ -30,16 +28,34 @@ class PrivilegedExecutor:
         )
         try:
             # The root adapter owns command deadlines. Never kill dpkg from the UI.
-            subprocess.run(
-                ["/usr/bin/sudo", "-n", "--", "/usr/bin/python3", "-I", "-B", "-S", "-c", program],
+            result = subprocess.run(
+                [
+                    "/usr/bin/sudo",
+                    "-n",
+                    "--",
+                    "/usr/bin/python3",
+                    "-I",
+                    "-B",
+                    "-S",
+                    "-c",
+                    release_loader.PROGRAM,
+                ],
                 input=payload,
                 capture_output=True,
                 text=True,
                 check=True,
                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"},
             )
+            from setup_system.infrastructure.catalog_deb import record_reported_attempts
+
+            record_reported_attempts(result.stdout)
         except subprocess.CalledProcessError as exc:
-            from setup_system.diagnostics import error_text
+            from setup_system.infrastructure.catalog_deb import record_reported_attempts
+
+            record_reported_attempts(exc.stdout or "")
+            from setup_system.diagnostics import PartialApplyError, error_text
 
             reason = error_text(exc.stderr or "Privilege authorization or system stage failed")
+            if exc.returncode == 6:
+                raise PartialApplyError(reason) from None
             raise RuntimeError(reason) from None

@@ -45,6 +45,10 @@ def test_partial_runner_failure_records_only_completed_files_and_can_retry(
     def partial(**kwargs):
         item = kwargs["extravars"]["user_files_managed_files"][0]
         Path(item["destination"]).write_bytes(Path(item["source"]).read_bytes())
+        Path(item["destination"]).chmod(int(item["mode"], 8))
+        kwargs["event_handler"](
+            {"event": "runner_item_on_ok", "event_data": {"res": {"dest": item["destination"]}}}
+        )
         return SimpleNamespace(rc=1)
 
     original = ansible_runner.run
@@ -52,7 +56,7 @@ def test_partial_runner_failure_records_only_completed_files_and_can_retry(
     with pytest.raises(RuntimeError, match="partially"):
         apply_files({first: b"first", second: b"second"})
     receipt = json.loads((home / "state/setup-system/workstation.json").read_text())
-    assert str(first) in receipt and str(second) not in receipt
+    assert str(first) in receipt["files"] and str(second) not in receipt["files"]
     monkeypatch.setattr(ansible_runner, "run", original)
     apply_files({first: b"first", second: b"second"})
     assert first.read_bytes() == b"first" and second.read_bytes() == b"second"
@@ -66,3 +70,220 @@ def test_user_role_never_follows_symlink_target(home: Path) -> None:
     with pytest.raises(ValueError, match="symlink"):
         apply_files({target / "managed": b"forbidden"})
     assert not list(outside.iterdir())
+
+
+def test_workspace_restore_reverts_changed_files_and_removes_created_paths(home: Path) -> None:
+    from setup_system.application.tools import ToolRequest, execute
+
+    existing = home / "config/tool/first"
+    created = home / "config/nested/new"
+    apply_files({existing: b"first"})
+    changed = apply_files({existing: b"second", created: b"new"})
+    request = ToolRequest(action="restore", backup_id=changed.name)
+    execute(Path(__file__).resolve().parents[1], request, confirmed=True)
+    assert existing.read_bytes() == b"first"
+    assert not created.exists()
+    assert not created.parent.exists()
+    execute(Path(__file__).resolve().parents[1], request, confirmed=True)
+    assert existing.read_bytes() == b"first"
+
+
+def test_interrupted_runner_keeps_recovery_and_only_verified_writes(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ansible_runner
+
+    from setup_system.infrastructure.file_receipts import list_operations
+    from setup_system.storage import restore
+
+    selected = home / "config/tool/selected"
+    pending = home / "missing/tool/pending"
+
+    def interrupt(**kwargs):
+        row = kwargs["extravars"]["user_files_managed_files"][0]
+        selected.write_bytes(Path(row["source"]).read_bytes())
+        selected.chmod(int(row["mode"], 8))
+        kwargs["event_handler"](
+            {"event": "runner_item_on_ok", "event_data": {"res": {"dest": str(selected)}}}
+        )
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ansible_runner, "run", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        apply_files({selected: b"done", pending: b"pending"})
+    ((operation, status),) = list_operations()
+    assert status == "partial" and not pending.exists()
+    pending.write_bytes(b"later file")
+    with pytest.raises(ValueError, match="later edit"):
+        restore(operation, apply=True)
+    assert selected.read_bytes() == b"done" and pending.read_bytes() == b"later file"
+    pending.unlink()
+    restore(operation, apply=True)
+    assert not selected.exists() and not pending.parent.exists()
+
+
+def test_runner_success_without_expected_output_fails_readback(
+    monkeypatch: pytest.MonkeyPatch, home: Path
+) -> None:
+    import ansible_runner
+
+    from setup_system.infrastructure.file_receipts import list_operations
+
+    monkeypatch.setattr(ansible_runner, "run", lambda **kwargs: SimpleNamespace(rc=0))
+    with pytest.raises(RuntimeError, match="failed readback"):
+        apply_files({home / "file": b"expected"})
+    assert list_operations()[0][1] == "failed"
+
+
+def test_legacy_journal_migration_backs_up_originals_and_preserves_modes(home: Path) -> None:
+    from setup_system.infrastructure.file_receipts import digest
+    from setup_system.storage import new_backup, restore, state_root
+
+    original = home / "tool/owned"
+    original.parent.mkdir()
+    original.write_bytes(b"before")
+    original.chmod(0o640)
+    index = state_root() / "workstation.json"
+    index.parent.mkdir(parents=True)
+    index.write_text(json.dumps({str(original): digest(b"before")}))
+    legacy = new_backup([original, index])
+    created = home / "tool/new"
+    original.write_bytes(b"applied")
+    created.write_bytes(b"created")
+    created.chmod(0o644)
+    original.chmod(0o644)
+    applied = {str(original): digest(b"applied"), str(created): digest(b"created")}
+    index.write_text(json.dumps(applied))
+    op = legacy / "operation.json"
+    op.write_text(json.dumps({"status": "complete", "after": applied, "completed": applied}))
+    previous_op = op.read_bytes()
+    previous_index = index.read_bytes()
+    preview = restore(legacy.name)
+    assert preview == [(str(original), "would-restore"), (str(created), "would-remove")]
+    assert op.read_bytes() == previous_op and index.read_bytes() == previous_index
+    restore(legacy.name, apply=True)
+    assert op.with_name("operation.v0.json").read_bytes() == previous_op
+    assert index.with_name("workstation.v0.json").read_bytes() == previous_index
+    assert json.loads(op.read_text())["schema_version"] == 1
+    assert original.read_bytes() == b"before" and original.stat().st_mode & 0o777 == 0o640
+    assert not created.exists()
+    assert json.loads(index.read_text())["files"] == {str(original): digest(b"before")}
+
+
+def test_unknown_receipt_schema_is_a_read_only_conflict(home: Path) -> None:
+    from setup_system.storage import new_backup, restore
+
+    target = home / "original"
+    target.write_bytes(b"before")
+    backup = new_backup([target])
+    target.write_bytes(b"after")
+    journal = backup / "operation.json"
+    journal.write_text('{"schema_version":21}')
+    before = {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError):
+        restore(backup.name, apply=True)
+    assert before == {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
+
+
+def test_restore_refuses_later_mode_change_without_touching_a_sibling(home: Path) -> None:
+    from setup_system.storage import restore
+
+    one, two = home / "one", home / "two"
+    op = apply_files({one: b"first", two: b"second"})
+    two.chmod(0o600)
+    with pytest.raises(ValueError, match="later edit"):
+        restore(op.name, apply=True)
+    assert one.read_bytes() == b"first" and two.stat().st_mode & 0o777 == 0o600
+
+
+def test_concurrent_restore_edit_is_returned_without_overwriting(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from setup_system.storage import restore
+
+    target = home / "tool"
+    op = apply_files({target: b"managed"})
+    original = os.rename
+
+    def concurrent_edit(source, destination):
+        if source == target:
+            target.write_bytes(b"owner edited during restore")
+        return original(source, destination)
+
+    monkeypatch.setattr(os, "rename", concurrent_edit)
+    with pytest.raises(ValueError, match="later edit"):
+        restore(op.name, apply=True)
+    assert target.read_bytes() == b"owner edited during restore"
+
+
+def test_interrupted_restore_resumes_from_private_staging(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.infrastructure import file_receipts
+    from setup_system.storage import restore
+
+    target = home / "tool"
+    apply_files({target: b"first"})
+    op = apply_files({target: b"second"})
+    original = file_receipts._publish_original
+
+    def interrupt(*_args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(file_receipts, "_publish_original", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        restore(op.name, apply=True)
+    monkeypatch.setattr(file_receipts, "_publish_original", original)
+    assert restore(op.name) == [(str(target), "would-restore")]
+    restore(op.name, apply=True)
+    assert target.read_bytes() == b"first"
+    assert not list(home.glob(".setup-system-restore-*"))
+
+
+def test_legacy_desktop_preparation_requires_committed_index(home: Path) -> None:
+    from setup_system.infrastructure.file_receipts import digest
+    from setup_system.storage import new_backup, restore, state_root
+
+    managed = home / "font.conf"
+    index = state_root() / "workstation.json"
+    backup = new_backup([])
+    managed.write_bytes(b"applied")
+    managed.chmod(0o644)
+    checksum = digest(managed.read_bytes())
+    expected_index = json.dumps({str(managed): checksum, "__backup__": str(backup)}).encode()
+    payload = {
+        "profile": "fonts",
+        "files": [
+            {"path": str(managed), "created": True, "after": checksum},
+            {"path": str(index), "created": True, "after": digest(expected_index)},
+        ],
+        "settings": [],
+    }
+    (backup / "workstation.json").write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="ownership"):
+        restore(backup.name, apply=True)
+    assert managed.read_bytes() == b"applied"
+    index.write_bytes(expected_index)
+    restore(backup.name, apply=True)
+    assert not managed.exists()
+
+
+def test_legacy_git_before_hash_must_match_backup(home: Path) -> None:
+    from setup_system.infrastructure.file_receipts import digest
+    from setup_system.storage import new_backup, restore
+
+    config = home / ".gitconfig"
+    config.write_bytes(b"old")
+    backup = new_backup([config])
+    config.write_bytes(b"new")
+    payload = {
+        "application": "git-profile",
+        "status": "complete",
+        "files": [{"path": str(config), "before": digest(b"wrong"), "after": digest(b"new")}],
+    }
+    (backup / "git-profile.json").write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="original backup"):
+        restore(backup.name, apply=True)
+    assert config.read_bytes() == b"new"

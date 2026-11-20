@@ -1,27 +1,27 @@
 /* Rendered from the shared font policy; colors belong to the managed desktop theme. */
 * {
-  font-family: "@PRIMARY_FAMILY@", "@EMOJI_FAMILY@";
-  font-size: @PANEL_SIZE@px;
+  font-family: "@{ fonts.family }@", "@{ fonts.emoji_fallback }@";
+  font-size: @{ fonts.panel_size }@px;
   letter-spacing: 0px;
   border: none;
   border-radius: 0;
 }
-window#waybar { background: rgba({{ mantle_rgb }}, 0.96); color: {{ text }}; border-radius: 14px; }
-#custom-launcher, #custom-power { color: {{ green }}; padding: 0 14px; font-size: 20px; }
-#clock { color: {{ rosewater }}; font-weight: bold; padding: 0 14px; }
-.workspace { color: {{ subtext0 }}; min-width: 20px; margin: 5px 1px; padding: 0 5px; border-radius: 9px; }
-.workspace.occupied { color: {{ text }}; }
-.workspace.active { color: {{ crust }}; background: {{ green }}; font-weight: bold; }
-#language, #pulseaudio, #network, #backlight, #battery { background: {{ surface0 }}; padding: 0 10px; margin: 5px 2px; border-radius: 9px; }
-#battery.charging, #battery.full { color: {{ green }}; }
-#battery.warning { color: {{ yellow }}; }
-#battery.critical { color: {{ red }}; }
-#network.disconnected, #pulseaudio.muted { color: {{ subtext0 }}; }
+window#waybar { background: rgba(@{ mantle_rgb }@, @{ opacity }@); color: @{ text }@; border-radius: @{ rounding }@px; }
+#custom-launcher, #custom-power { color: @{ green }@; padding: 0 14px; font-size: 20px; }
+#clock { color: @{ rosewater }@; font-weight: bold; padding: 0 14px; }
+.workspace { color: @{ subtext0 }@; min-width: 20px; margin: 5px 1px; padding: 0 5px; border-radius: 9px; }
+.workspace.occupied { color: @{ text }@; }
+.workspace.active { color: @{ crust }@; background: @{ green }@; font-weight: bold; }
+#language, #pulseaudio, #network, #backlight, #battery { background: @{ surface0 }@; padding: 0 10px; margin: 5px 2px; border-radius: 9px; }
+#battery.charging, #battery.full { color: @{ green }@; }
+#battery.warning { color: @{ yellow }@; }
+#battery.critical { color: @{ red }@; }
+#network.disconnected, #pulseaudio.muted { color: @{ subtext0 }@; }
 #tray { padding: 0 10px; }
-tooltip { background: {{ mantle }}; border: 1px solid {{ surface1 }}; border-radius: 10px; }
-window#window { background: {{ base }}; color: {{ text }}; border: 2px solid {{ green }}; border-radius: 16px; }
+tooltip { background: @{ mantle }@; border: 1px solid @{ surface1 }@; border-radius: 10px; }
+window#window { background: @{ base }@; color: @{ text }@; border: 2px solid @{ green }@; border-radius: @{ rounding }@px; }
 #outer-box { padding: 16px; }
-#input { background: {{ surface0 }}; color: {{ text }}; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; }
+#input { background: @{ surface0 }@; color: @{ text }@; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; }
 #entry { padding: 10px; border-radius: 10px; }
-#entry:selected { background: {{ surface1 }}; color: {{ green }}; }
+#entry:selected { background: @{ surface1 }@; color: @{ green }@; }
 #img { margin-right: 12px; }

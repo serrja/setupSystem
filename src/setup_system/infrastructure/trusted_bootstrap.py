@@ -1,7 +1,7 @@
 """Fixed stdlib sudo program: acquire a trusted release before importing root code.
 
-This file is passed verbatim to the system interpreter, never loaded as a root module
-from HOME. Only JSON data crosses stdin. No Python dependency is installed as root.
+The fixed system-Python loader obtains this module from a published release commit
+after validating its platform matrix. Only the normal user's JSON settings cross stdin.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import hashlib
 import io
 import json
 import os
-import platform
 import pwd
 import re
 import stat
@@ -90,8 +89,11 @@ def protected(path: Path, *, directory: bool = True) -> None:
                 or (item != path and not stat.S_ISDIR(info.st_mode))
             ):
                 raise ValueError("Privileged resources require root-owned non-writable paths")
-    if path.exists() and directory and not path.is_dir():
-        raise ValueError("Expected a protected directory")
+    if path.exists():
+        if directory and not path.is_dir():
+            raise ValueError("Expected a protected directory")
+        if not directory and (not path.is_file() or path.stat().st_nlink != 1):
+            raise ValueError("Expected a protected regular file with one link")
 
 
 def acquire(release: str, source_sha: str) -> Path:
@@ -150,11 +152,44 @@ def acquire(release: str, source_sha: str) -> Path:
             item.chmod(0o700 if item.is_dir() else 0o600)
         destination = parent / (source_sha + "-" + digest)
         protected(destination)
-        # A prior complete copy is retained for recovery; use the fresh verified copy now.
         if destination.exists():
-            destination = parent / (source_sha + "-" + stage.name.removeprefix(".verified-"))
+            trusted = {item.relative_to(source): item for item in source.rglob("*")}
+            cached = {item.relative_to(destination): item for item in destination.rglob("*")}
+            if trusted.keys() != cached.keys():
+                raise ValueError(
+                    "Cached privileged source tree conflicts with the verified release"
+                )
+            for relative, original in trusted.items():
+                existing = cached[relative]
+                info = existing.lstat()
+                if (
+                    info.st_uid != os.geteuid()
+                    or info.st_mode != original.lstat().st_mode
+                    or (
+                        original.is_file()
+                        and (
+                            info.st_nlink != 1
+                            or info.st_size != original.stat().st_size
+                            or existing.read_bytes() != original.read_bytes()
+                        )
+                    )
+                ):
+                    raise ValueError("Cached privileged source changed since verification")
+            return destination
         source.rename(destination)
     return destination
+
+
+REGIONAL = frozenset({"timezone", "keyboard", "locale"})
+SYSTEM_ACTIONS = {
+    "base",
+    "login",
+    "system_settings",
+    "workspace_packages",
+    "cleanup",
+    "plymouth",
+    *REGIONAL,
+}
 
 
 def validate_settings(action: str, settings: object, home: Path) -> None:
@@ -164,15 +199,23 @@ def validate_settings(action: str, settings: object, home: Path) -> None:
             "hyprland",
             "graphical_login",
             "timezone",
+            "locale",
             "keyboard",
             "plymouth",
             "xdg",
             "expected_system_sha256",
         },
-        "workspace_packages": {"packages", "happ"},
+        "workspace_packages": {"packages", "happ", "external_debs", "expected_happ_version"},
         "cleanup": {"packages", "mode", "closure", "xdg"},
     }
-    if not isinstance(settings, dict) or not set(settings) <= fields[action]:
+    fields["login"] = fields["system_settings"] = fields["base"]
+    fields.update({k: {"value", "before", "packages", "expected_system_sha256"} for k in REGIONAL})
+    fields["plymouth"] = {"identity", "packages", "expected_system_sha256"}
+    if (
+        action not in fields
+        or not isinstance(settings, dict)
+        or not set(settings) <= fields[action]
+    ):
         raise ValueError("Unexpected privileged settings")
     if "xdg" in settings:
         xdg = settings["xdg"]
@@ -192,27 +235,62 @@ def validate_settings(action: str, settings: object, home: Path) -> None:
                 raise ValueError("XDG paths must stay within caller HOME")
             if any(parent.is_symlink() for parent in (path, *path.parents)):
                 raise ValueError("XDG paths cannot traverse symlinks")
-    if action == "base":
+    if "expected_system_sha256" in settings:
+        revision = settings["expected_system_sha256"]
+        if revision is not None and (
+            not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision)
+        ):
+            raise ValueError("Invalid settings revision")
+    if action in REGIONAL:
+        before = settings.get("before")
+        if before is not None and (not isinstance(before, str) or len(before) > 128):
+            raise ValueError("Unexpected previous regional setting")
+        if not isinstance(settings.get("value"), str) or not re.fullmatch(
+            r"[A-Za-z0-9_+,./-]{1,100}", settings["value"]
+        ):
+            raise ValueError("Unexpected regional value")
+        return
+    if action == "plymouth":
+        if not isinstance(settings.get("identity"), str) or not re.fullmatch(
+            r"[0-9a-f]{64}", settings["identity"]
+        ):
+            raise ValueError("Invalid boot plan identity")
+        return
+    if action in {"base", "login", "system_settings"}:
         if type(settings.get("schema_version")) is not int or settings["schema_version"] != 1:
             raise ValueError("Unsupported system settings schema")
         for name in ("hyprland", "graphical_login", "plymouth"):
             if type(settings.get(name)) is not bool:
                 raise ValueError("Invalid system feature selection")
-        if settings.get("keyboard") not in {"us", "us,ru"}:
+        if settings.get("keyboard") not in {None, "us", "us,ru"}:
             raise ValueError("Unsupported keyboard layout")
-        expected = settings.get("expected_system_sha256")
-        if expected is not None and (
-            not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected)
-        ):
-            raise ValueError("Invalid system settings revision")
+        for key in ("timezone", "locale"):
+            if settings.get(key) is not None and (
+                not isinstance(settings[key], str)
+                or not re.fullmatch(r"[A-Za-z0-9_.+/-]{1,100}", settings[key])
+            ):
+                raise ValueError("Invalid system regional intent")
     else:
         packages = settings.get("packages")
         if not isinstance(packages, list) or not all(isinstance(p, str) for p in packages):
             raise ValueError("Invalid package selection")
         if action == "workspace_packages" and type(settings.get("happ", False)) is not bool:
             raise ValueError("Invalid optional Happ selection")
-        if action == "cleanup" and settings.get("mode") != "remove":
-            raise ValueError("Purge and autoremove require separate reviewed operations")
+        if action == "workspace_packages":
+            version = settings.get("expected_happ_version")
+            if version is not None and (
+                settings.get("happ") is not True
+                or not isinstance(version, str)
+                or not re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,200}", version)
+            ):
+                raise ValueError("Unexpected current Happ version")
+            external = settings.get("external_debs", [])
+            if not isinstance(external, list) or not all(
+                isinstance(x, str) and re.fullmatch(r"[a-z][a-z0-9_]+", x) for x in external
+            ):
+                raise ValueError("Invalid external Debian package selection")
+        if action == "cleanup" and settings.get("mode") not in {"remove", "purge", "autoremove"}:
+            raise ValueError("Unknown cleanup mode")
 
 
 @contextmanager
@@ -240,13 +318,6 @@ def operation_lock(directory: Path = Path("/run/setup-system")) -> Iterator[None
 
 def main() -> int:
     account = caller()
-    release = platform.freedesktop_os_release()
-    if (
-        release.get("ID") != "debian"
-        or release.get("VERSION_ID") != "13"
-        or platform.machine() not in {"x86_64", "aarch64", "arm64"}
-    ):
-        raise ValueError("Privileged workstation apply requires Debian 13 amd64/arm64")
     raw = sys.stdin.buffer.read(65537)
     if len(raw) > 65536:
         raise ValueError("Oversized privileged request")
@@ -258,7 +329,7 @@ def main() -> int:
         "settings",
     }:
         raise ValueError("Invalid privileged request fields")
-    if request["action"] not in {"base", "workspace_packages", "cleanup"}:
+    if request["action"] not in SYSTEM_ACTIONS:
         raise ValueError("Operation is not allowlisted")
     validate_settings(request["action"], request["settings"], Path(account.pw_dir))
     if (
@@ -272,9 +343,17 @@ def main() -> int:
         source = acquire(request["release"], request["source_sha"])
         # Only independently downloaded, root-owned, stdlib-only modules are imported here.
         sys.path.insert(0, str(source / "src"))
+        from setup_system.diagnostics import PartialApplyError, error_text
         from setup_system.infrastructure.privileged_tasks import execute
 
-        return execute(source, account.pw_name, request["action"], request["settings"])
+        try:
+            return execute(source, account.pw_name, request["action"], request["settings"])
+        except PartialApplyError as exc:
+            print("PARTIAL: " + error_text(exc), file=sys.stderr)
+            return 6
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            print("System stage failed: " + error_text(exc), file=sys.stderr)
+            return 5
 
 
 if __name__ == "__main__":

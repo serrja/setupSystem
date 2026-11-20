@@ -10,7 +10,7 @@ import pytest
 
 from setup_system.adapters.debian.hyprland import package_arguments, profile_capabilities
 from setup_system.capabilities import CapabilityStatus, load_policy, parse_policy
-from setup_system.planning import UserProfile, load_capabilities
+from setup_system.planning import load_capabilities
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,7 +101,6 @@ def test_typed_policy_is_immutable_and_dictionary_views_are_detached() -> None:
     [
         ("debian", "codenames", {"12": "bookworm"}),
         ("debian", "apt_architectures", {"x86_64": "arm64", "arm64": "amd64"}),
-        ("debian", "locallyVerified", "false"),
         ("debian", "architectures", "x86_64"),
         ("hyprland", "codename", "bookworm"),
         ("hyprland", "distribution", "ubuntu"),
@@ -145,7 +144,3 @@ def test_public_package_arguments_keep_the_manifest_order_and_pins() -> None:
         *(f"{name}={version}" for name, version in policy.hyprland.backport_packages.items()),
     ]
     assert not any("JetBrainsMono-" in path for path in policy.hyprland.preflight_paths)
-
-
-def test_user_profile_enum_preserves_the_public_wire_values() -> None:
-    assert [value.value for value in UserProfile] == ["base", "terminalDev", "happ"]

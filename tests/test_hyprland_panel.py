@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from setup_system.infrastructure.theme import render
+
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets/hyprland"
 panel = types.ModuleType("managed_hyprland_panel")
@@ -42,7 +44,7 @@ def test_hardware_selects_real_system_batteries_and_native_backlight(tmp_path: P
 
 
 def test_generated_panel_has_no_fake_desktop_battery_or_legacy_dispatch(tmp_path: Path) -> None:
-    template = json.loads((ASSETS / "waybar.json").read_text())
+    template = json.loads(render((ASSETS / "waybar.json").read_text()))
     config = panel.configuration(template, tmp_path / "cache with 'quotes", tmp_path)
     assert "battery" not in config["modules-right"]
     assert "backlight" not in config["modules-right"]
@@ -63,7 +65,7 @@ def test_battery_instances_show_each_real_device_without_fabricated_aggregate(
     for name in ("BAT0", "BAT1"):
         device(tmp_path, "power_supply", name, type="Battery", scope="System", present="1")
     config = panel.configuration(
-        json.loads((ASSETS / "waybar.json").read_text()), tmp_path, tmp_path
+        json.loads(render((ASSETS / "waybar.json").read_text())), tmp_path, tmp_path
     )
     batteries = [config[name] for name in config["modules-right"] if name.startswith("battery#")]
     assert [item["bat"] for item in batteries] == ["BAT0", "BAT1"]
@@ -105,7 +107,9 @@ def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(tmp_pat
     state = tmp_path / "cache with 'quotes"
     state.mkdir()
     panel.publish(state, {1: {"text": "1", "class": ["active"]}})
-    config = panel.configuration(json.loads((ASSETS / "waybar.json").read_text()), state, tmp_path)
+    config = panel.configuration(
+        json.loads(render((ASSETS / "waybar.json").read_text())), state, tmp_path
+    )
     module = config["custom/workspace-1"]
     env = {"PATH": str(tools) + os.pathsep + os.defpath, "CALLS": str(record)}
     result = subprocess.run(
@@ -165,12 +169,16 @@ while True:
         "WAYBAR_READY": str(ready),
         "OBSERVED": str(seen),
     }
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    (profile / "waybar.json").write_text(render((ASSETS / "waybar.json").read_text()))
+    (profile / "style.css").touch()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind("runtime/hypr/fixture/.socket2.sock")
         server.listen(1)
         server.settimeout(10)
         process = subprocess.Popen(
-            [sys.executable, "-I", "-B", str(ASSETS / "panel.py"), str(ASSETS)],
+            [sys.executable, "-I", "-B", str(ASSETS / "panel.py"), str(profile)],
             env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

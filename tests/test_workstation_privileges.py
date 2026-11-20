@@ -9,7 +9,7 @@ from setup_system.infrastructure.user_files import apply_files
 
 
 @pytest.mark.parametrize(
-    "operation", [lambda: workstation.apply(Path("/missing"), "hyprland"), lambda: apply_files({})]
+    "operation", [lambda: workstation.apply_desktop(Path("/missing")), lambda: apply_files({})]
 )
 def test_root_user_configuration_is_rejected_before_writes(
     monkeypatch: pytest.MonkeyPatch, operation

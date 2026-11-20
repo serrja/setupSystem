@@ -1,9 +1,6 @@
 # Workspace catalog
 
-Open `setup-system` → Workspace → Tools. projects lists discovered exact checkouts;
-prepare_projects creates only canonical owner directories. open_project requires an exact
-active catalog name and opens the normal user's editor in that root. It never initializes
-or resets a repository. The shell's `cproj` helper opens the same Textual application.
+Working environment → Tools → Projects lists exact local checkouts from the repository catalog. Select a checkout to open Neovim or Codex in that directory. Prepare project directories creates the canonical owner directories. The shell's `cproj` helper opens the Textual application.
 
 The default owner roots are `$HOME/Projects/serrja` and `$HOME/Projects/pokerlost`.
 `manifests/projects.toml` owns project IDs, origins and reviewed policy/template metadata.

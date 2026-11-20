@@ -50,7 +50,7 @@ def test_preview_uses_dpkg_and_simulation_without_mutation(monkeypatch: pytest.M
     def run(argv):
         calls.append(argv)
         if "dpkg-query" in argv[0]:
-            return "reportbug\tinstalled\tno\tno\napt\tinstalled\tyes\tno\n"
+            return "reportbug\tinstalled\tinstall\tno\tno\napt\tinstalled\tinstall\tyes\tno\n"
         assert "--simulate" in argv
         return "Remv reportbug [13.0]\n"
 
@@ -88,10 +88,11 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
         lambda *args: pytest.fail("Document removal does not execute an editor"),
     )
     selected = frozenset({"reportbug"})
+    results = iter((selected, frozenset(), selected))
     monkeypatch.setattr(
         cleanup,
         "preview",
-        lambda *args, **kwargs: cleanup.CleanupPlan(selected, selected, frozenset(), ""),
+        lambda *args, **kwargs: cleanup.CleanupPlan(next(results), selected, frozenset(), ""),
     )
     records = []
     calls = []
@@ -103,3 +104,40 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
     with pytest.raises(ValueError, match="closure changed"):
         cleanup.apply_cleanup({"mode": "remove", "packages": ["reportbug"], "closure": []})
     assert len(calls) == 1
+
+
+def test_apt_hold_blocks_catalog_candidate(monkeypatch):
+    def run(args):
+        if "dpkg-query" in args[0]:
+            return "reportbug\tinstalled\thold\tno\tno\n"
+        return "Remv reportbug [1.0]\n"
+
+    monkeypatch.setattr(cleanup, "_run", run)
+    with pytest.raises(ValueError, match="Protected"):
+        cleanup.preview(("reportbug",))
+
+
+def test_catalog_controls_editor_requirement(monkeypatch):
+    import setup_system.domain.cleanup as policy
+
+    monkeypatch.setattr(
+        policy, "cleanup_catalog", lambda: {"reportbug": {"requires_verified_editor": True}}
+    )
+    selected = frozenset({"reportbug"})
+    with pytest.raises(ValueError, match="Neovim"):
+        validate_removals(selected, selected, frozenset(), editor_verified=False)
+
+
+@pytest.mark.parametrize(
+    "mode,packages",
+    [("remove", ["--", "reportbug"]), ("purge", ["--", "reportbug"]), ("autoremove", [])],
+)
+def test_each_cleanup_mode_has_its_own_simulation(monkeypatch, mode, packages):
+    def run(args):
+        if "dpkg-query" in args[0]:
+            return "reportbug\tinstalled\tinstall\tno\tno\n"
+        assert args == ["/usr/bin/apt-get", "--simulate", mode, *packages]
+        return ("Purg" if mode == "purge" else "Remv") + " reportbug [1.0]\n"
+
+    monkeypatch.setattr(cleanup, "_run", run)
+    assert cleanup.preview(("reportbug",), mode=mode).removed == {"reportbug"}

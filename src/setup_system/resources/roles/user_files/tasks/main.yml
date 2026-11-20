@@ -1,7 +1,32 @@
 ---
+- name: Check original user files immediately before publishing
+  ansible.builtin.stat:
+    path: "{{ item.destination }}"
+    follow: false
+    checksum_algorithm: sha256
+    get_attributes: false
+    get_mime: false
+  register: user_files_originals
+  loop: "{{ user_files_managed_files }}"
+  loop_control:
+    label: "{{ item.destination }}"
+  failed_when: >-
+    (item.before == '' and user_files_originals.stat.exists) or
+    (item.before != '' and
+     (not user_files_originals.stat.isreg | default(false) or
+      user_files_originals.stat.checksum | default('') != item.before or
+      user_files_originals.stat.mode | default('') != item.before_mode or
+      user_files_originals.stat.uid | default(-1) != item.before_uid or
+      user_files_originals.stat.gid | default(-1) != item.before_gid or
+      user_files_originals.stat.nlink | default(0) != 1))
+
 - name: Write validated user configuration files
   ansible.builtin.copy:
     src: "{{ item.source }}"
     dest: "{{ item.destination }}"
     mode: "{{ item.mode }}"
+    group: "{{ item.group }}"
+    follow: false
   loop: "{{ user_files_managed_files }}"
+  loop_control:
+    label: "{{ item.destination }}"

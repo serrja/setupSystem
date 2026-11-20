@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import os
 import platform
-import shutil
 import subprocess
 import tarfile
 import tomllib
@@ -15,41 +13,84 @@ from pathlib import Path
 
 import tomlkit
 
+from setup_system.application.project_catalog import ProjectCatalog
+from setup_system.capabilities import load_policy
 from setup_system.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
-from setup_system.infrastructure.config_store import safe_file
+from setup_system.infrastructure.config_store import SettingsPaths, safe_file
 from setup_system.infrastructure.theme import RESOURCE_ROOT
-from setup_system.storage import atomic_write, new_backup
+from setup_system.infrastructure.user_files import apply_files
+from setup_system.storage import managed_block
 
 
 def configure_firefox() -> None:
     if os.geteuid() == 0:
         raise ValueError("Browser integration must run as the normal user")
-    if not shutil.which("firefox-esr"):
-        raise ValueError("Firefox ESR is not installed")
-    # Profiles, saved logins, extension storage and bookmarks are never opened here.
-    subprocess.run(
-        ["xdg-settings", "set", "default-web-browser", "firefox-esr.desktop"],
-        check=True,
-        timeout=30,
-    )
-    observed = subprocess.run(
-        ["xdg-settings", "get", "default-web-browser"],
+    result = subprocess.run(
+        ["/usr/bin/firefox-esr", "--version"],
         check=True,
         capture_output=True,
         text=True,
         timeout=30,
     )
-    if observed.stdout.strip() != "firefox-esr.desktop":
-        raise RuntimeError("Default browser readback failed")
+    if "Firefox" not in result.stdout:
+        raise ValueError("Firefox ESR version readback failed")
+
+
+def codex_settings(original: bytes) -> bytes:
+    options = tomlkit.parse(original.decode())
+    if "default_permissions" not in options and "permissions" not in options:
+        options.setdefault("sandbox_mode", "workspace-write")
+    options.setdefault("approval_policy", "on-request")
+    return tomlkit.dumps(options).encode()
+
+
+def _original(path: Path) -> tuple[bytes, str | None]:
+    safe_file(path, os.getuid())
+    if not path.exists():
+        return b"", None
+    if path.stat().st_size > 1024 * 1024:
+        raise ValueError(f"Review oversized configuration before applying: {path.name}")
+    data = path.read_bytes()
+    return data, hashlib.sha256(data).hexdigest()
 
 
 def configure_codex(root: Path) -> None:
     if os.geteuid() == 0:
         raise ValueError("Codex must be installed as the normal user")
     document = tomllib.loads((RESOURCE_ROOT / "catalogs/codex.toml").read_text())
-    architecture = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine())
-    if architecture is None:
-        raise ValueError("Unsupported Codex architecture")
+    architecture = load_policy(root).debian_architecture(platform.machine())
+    config_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    if (
+        not config_home.is_absolute()
+        or not config_home.is_relative_to(Path.home())
+        or ".." in config_home.parts
+    ):
+        raise ValueError("Codex configuration must stay inside the verified HOME")
+    config = config_home / "config.toml"
+    original, before = _original(config)
+    merged = codex_settings(original)
+    override = config_home / "AGENTS.override.md"
+    override_data, override_hash = _original(override)
+    instructions = override if override_data.strip() else config_home / "AGENTS.md"
+    prior, instruction_hash = (
+        (override_data, override_hash) if instructions == override else _original(instructions)
+    )
+    policy_path = SettingsPaths().user.parent / "policy/engineering.md"
+    catalog = ProjectCatalog.model_validate(
+        tomllib.loads((root / "manifests/projects.toml").read_text())
+    )
+    rules = next(item for item in catalog.project if item.id == "serrja/baseRules").policy
+    if rules is None:
+        raise ValueError("Missing baseRules provenance")
+    url = f"https://raw.githubusercontent.com/serrja/baseRules/{rules.commit}/{rules.document}"
+    policy = read_https(url, DownloadPolicy(frozenset({"raw.githubusercontent.com"}), 65536, 30))
+    if hashlib.sha256(policy).hexdigest() != rules.sha256:
+        raise ValueError("Pinned baseRules policy checksum mismatch")
+    body = (
+        f"Read the reviewed engineering contract at `{policy_path}` and the local "
+        "repository instructions. Resolve the exact Git root and preserve unrelated files."
+    )
+    updated_instructions = managed_block(prior.decode(), body).encode()
     pin = document[architecture]
     data = read_https(pin["url"], DownloadPolicy(GITHUB_RELEASE_HOSTS, 256 * 1024 * 1024, 60))
     if hashlib.sha256(data).hexdigest() != pin["sha256"]:
@@ -69,83 +110,13 @@ def configure_codex(root: Path) -> None:
         if stream is None:
             raise ValueError("Missing Codex binary")
         content = stream.read()
-    if target.exists() and target.read_bytes() != content:
-        # Updating an existing binary is explicit and recoverable; no auth/config backup occurs.
-        new_backup([target])
-    atomic_write(target, content, 0o755, preserve_existing_mode=False)
+    apply_files(
+        {target: content, config: merged, instructions: updated_instructions, policy_path: policy},
+        modes={target: 0o755, config: 0o600},
+        expected={config: before, instructions: instruction_hash},
+    )
     actual = subprocess.run(
         [str(target), "--version"], check=True, capture_output=True, text=True, timeout=15
     )
     if actual.stdout.strip() != "codex-cli " + document["version"]:
         raise ValueError("Codex version readback failed")
-    config_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-    if not config_home.is_relative_to(Path.home()):
-        raise ValueError("Codex configuration must stay inside the verified HOME")
-    config = config_home / "config.toml"
-    safe_file(config, os.getuid())
-    original = config.read_bytes() if config.exists() else b""
-    options = tomlkit.parse(original.decode()) if original else tomlkit.document()
-    # The pinned 0.170.0 schema still supports these settings. Preserve an existing model.
-    options["sandbox_mode"] = "workspace-write"
-    options["approval_policy"] = "on-request"
-    if supports_high_reasoning(config_home, options.get("model")):
-        options["model_reasoning_effort"] = "high"
-    if "default_permissions" in options:
-        # Existing explicit profile contracts need manual review; never weaken them silently.
-        raise ValueError(
-            "Review existing Codex permissions profiles before applying classic settings"
-        )
-    ensure_codex_policy(config_home)
-    if original:
-        new_backup([config])
-    atomic_write(config, tomlkit.dumps(options).encode())
-    # auth.json is deliberately never read, copied, backed up or deleted.
-
-
-def ensure_codex_policy(config_home: Path) -> None:
-    from setup_system.infrastructure.config_store import SettingsPaths
-    from setup_system.infrastructure.user_files import apply_files
-
-    revision = "8434509933feaa71ba312f8d02caad7362766d5a"
-    url = f"https://raw.githubusercontent.com/serrja/baseRules/{revision}/docs/engineering.md"
-    policy = read_https(url, DownloadPolicy(frozenset({"raw.githubusercontent.com"}), 65536, 30))
-    if (
-        hashlib.sha256(policy).hexdigest()
-        != "f90f5476d874f68c976203fb201e13fe7399185c78ee9df87b483c1d4491f441"
-    ):
-        raise ValueError("Pinned baseRules policy checksum mismatch")
-    agent = (
-        "# Codex working contract\n\n"
-        f"Read the [pinned engineering baseline]({url}) and the repository's AGENTS.md.\n"
-        "Work from the exact Git root and preserve unrelated changes and secrets.\n"
-        "Use workspace-write and on-request; keep authorization in native account tools.\n"
-        "Instructions and policy text do not grant filesystem, network or system permissions.\n"
-    ).encode()
-    apply_files(
-        {
-            config_home / "AGENTS.md": agent,
-            SettingsPaths().user.parent / "policy/engineering.md": policy,
-        }
-    )
-
-
-def supports_high_reasoning(config_home: Path, model: object) -> bool:
-    """Use public cached model capability metadata; never read the auth store."""
-    if not isinstance(model, str):
-        return False
-    cache = config_home / "models_cache.json"
-    safe_file(cache, os.getuid())
-    if not cache.exists() or cache.stat().st_size > 5 * 1024 * 1024:
-        return False
-    data = json.loads(cache.read_text())
-    models = data.get("models", []) if isinstance(data, dict) else []
-    if not isinstance(models, list):
-        return False
-    for entry in models:
-        if isinstance(entry, dict) and entry.get("slug", entry.get("id")) == model:
-            levels = entry.get("supported_reasoning_levels", [])
-            return isinstance(levels, list) and any(
-                level == "high" or (isinstance(level, dict) and level.get("effort") == "high")
-                for level in levels
-            )
-    return False
