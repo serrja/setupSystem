@@ -18,10 +18,14 @@ from setup_system.infrastructure.file_receipts import (
     FileState,
     Operation,
     Ownership,
+    apply_stage,
     checked_directory,
     digest,
+    has_displaced_original,
     observe,
     ownership,
+    prepared_target,
+    require_recovered,
     target_path,
     writer,
 )
@@ -113,6 +117,33 @@ def _create_parents(path: Path, operation: Operation, folder: Path) -> None:
         operation.save(folder)
 
 
+def _same_filesystem(first: Path, second: Path) -> bool:
+    return first.stat().st_dev == second.stat().st_dev
+
+
+def _prepare_publication(
+    row: FileChange, path: Path, content: bytes, folder: Path, number: int
+) -> None:
+    if _same_filesystem(path.parent, folder):
+        root = folder / "publication"
+        root.mkdir(mode=0o700, exist_ok=True)
+        area = root / str(number)
+        area.mkdir(mode=0o700)
+    else:
+        area = Path(tempfile.mkdtemp(prefix=".setup-system-apply-", dir=path.parent))
+    details = area.stat()
+    row.apply_directory = CreatedDirectory(
+        relative=area.relative_to(Path.home().resolve()).as_posix(),
+        device=details.st_dev,
+        inode=details.st_ino,
+    )
+    prepared = area / "prepared"
+    atomic_write(prepared, content, row.after.mode, preserve_existing_mode=False)
+    if prepared.stat().st_gid != row.after.gid:
+        os.chown(prepared, -1, row.after.gid)
+    row.prepared_inode = prepared.stat().st_ino
+
+
 def _run_role(
     changes: list[FileChange],
     desired: Mapping[Path, bytes],
@@ -125,22 +156,17 @@ def _run_role(
         cfg = stage / "ansible.cfg"
         cfg.write_text("[defaults]\nhost_key_checking=True\nretry_files_enabled=False\n")
         entries = []
-        for number, row in enumerate(changes):
+        for row in changes:
             path = target_path(row.relative)
-            if observe(path) != row.before:
+            area = apply_stage(row, path)
+            if area is None or observe(path) != row.before:
                 raise ValueError(f"File changed before applying configuration: {path}")
-            source = stage / str(number)
-            source.write_bytes(desired[path])
             entries.append(
                 {
-                    "source": str(source),
+                    "source": str(area / "prepared"),
                     "destination": str(path),
                     "mode": format(row.after.mode, "04o"),
-                    "group": str(row.after.gid),
-                    "before": row.before.sha256 if row.before else "",
-                    "before_mode": format(row.before.mode, "04o") if row.before else "",
-                    "before_uid": row.before.uid if row.before else -1,
-                    "before_gid": row.before.gid if row.before else -1,
+                    "change": row.model_dump(mode="json"),
                 }
             )
         playbook: list[dict[str, Any]] = [
@@ -154,9 +180,15 @@ def _run_role(
             }
         ]
 
+        messages = []
+
         def on_event(event: dict[str, Any]) -> bool:
+            result_data = event.get("event_data", {}).get("res", {})
+            if event.get("event") == "runner_item_on_failed":
+                message = result_data.get("msg")
+                if isinstance(message, str):
+                    messages.append(error_text(message))
             if event.get("event") == "runner_item_on_ok":
-                result_data = event.get("event_data", {}).get("res", {})
                 destination = result_data.get("dest")
                 if isinstance(destination, str):
                     record_write(Path(destination))
@@ -175,12 +207,15 @@ def _run_role(
                 "PATH": str(Path(sys.executable).parent) + os.pathsep + os.defpath,
                 "ANSIBLE_CONFIG": str(cfg),
                 "ANSIBLE_HOME": str(stage / "ansible"),
+                "ANSIBLE_NOCOLOR": "1",
                 "ANSIBLE_LOCAL_TEMP": str(stage / "local"),
                 "ANSIBLE_REMOTE_TEMP": str(stage / "remote"),
             },
             quiet=True,
             timeout=300,
         )
+        if result.rc != 0 and messages:
+            raise ValueError(messages[0])
         return int(result.rc)
 
 
@@ -203,6 +238,7 @@ def apply_files(
         target_path((path / ".setup-system-dir").relative_to(Path.home().resolve()).as_posix())
     digests = {path: digest(data) for path, data in desired.items()}
     index = ownership()
+    require_recovered(index, desired)
     changes = _changes(digests, modes, expected, index)
     if not changes and all(p.exists() for p in directories):
         return (
@@ -212,6 +248,7 @@ def apply_files(
         )
     with writer():
         index = ownership(migrate=True)
+        require_recovered(index, desired)
         changes = _changes(digests, modes, expected, index)
         if not changes and all(p.exists() for p in directories):
             return state_root()
@@ -247,8 +284,16 @@ def apply_files(
         rc = -1
         failure: Exception | None = None
         try:
-            for row in changes:
-                _create_parents(target_path(row.relative), op, folder)
+            for number, row in enumerate(changes):
+                path = target_path(row.relative)
+                _create_parents(path, op, folder)
+                _prepare_publication(row, path, desired[path], folder, number)
+                op.save(folder)
+            index.last_operation = backup_id
+            index.publishing.update(
+                {str(path): backup_id for path, row in by_path.items() if row.before}
+            )
+            index.save()
             for directory in directories:
                 _create_parents(directory / ".setup-system-dir", op, folder)
             rc = _run_role(changes, desired, record_write) if changes else 0
@@ -257,10 +302,17 @@ def apply_files(
         finally:
             op.status = "partial"
             op.save(folder)
+            displaced = False
             for row in changes:
                 try:
-                    path = target_path(row.relative)
-                    row.verified = (rc == 0 or row.verified) and observe(path) == row.after
+                    path = target_path(row.relative, validate_file=False)
+                    if has_displaced_original(row, path):
+                        displaced = True
+                    elif index.publishing.get(str(path)) == backup_id:
+                        del index.publishing[str(path)]
+                    row.verified = (row.verified or prepared_target(row, path)) and observe(
+                        path
+                    ) == row.after
                 except (ValueError, OSError):
                     row.verified = False
                     continue
@@ -270,7 +322,7 @@ def apply_files(
             index.save()
             if rc == 0 and all(row.verified for row in changes):
                 op.status = "complete"
-            elif not any(row.verified for row in changes):
+            elif not any(row.verified for row in changes) and not displaced:
                 op.status = "failed"
             op.save(folder)
         if op.status == "partial":

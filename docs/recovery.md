@@ -23,8 +23,13 @@ restore removes empty directories created by that operation and leaves additiona
 files in place. You can repeat a completed restore.
 
 The versioned journal records the expected changes before the user role runs.
-Readback marks each verified write. A failed role can leave a partial operation.
-Review the affected files before retrying or restoring. Legacy file journals are
+The user role stages each replacement on the destination filesystem. For an existing
+file it retains the original inode and checks its contents and ownership before
+publishing. A newly arrived file keeps its place. Readback marks each verified
+write. If a write was interrupted while the original was displaced, open Recovery
+and preview that operation before retrying. Keep its private staging directory
+until Restore finishes. A conflict can leave both the editor's version and the
+displaced file available for inspection. Legacy file journals are
 converted on explicit recovery when their before/after evidence is sufficient.
 Original journals are retained. Unknown schemas and ambiguous legacy ownership
 require manual review. Private application databases use their application's

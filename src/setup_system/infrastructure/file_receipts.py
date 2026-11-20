@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import fcntl
 import hashlib
@@ -10,7 +11,7 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -53,6 +54,8 @@ class FileChange(Record):
     after: FileState
     verified: bool = False
     restore_directory: CreatedDirectory | None = None
+    apply_directory: CreatedDirectory | None = None
+    prepared_inode: int | None = None
 
     @model_validator(mode="after")
     def validate_backup(self) -> Self:
@@ -80,6 +83,9 @@ class Ownership(Record):
     schema_version: Literal[1] = 1
     files: dict[str, Digest] = Field(default_factory=dict)
     last_operation: Annotated[str, Field(pattern="^" + RUN_ID.pattern + "$")] | None = None
+    publishing: dict[str, Annotated[str, Field(pattern="^" + RUN_ID.pattern + "$")]] = Field(
+        default_factory=dict
+    )
 
     def save(self) -> None:
         write_record(state_root() / "workstation.json", self)
@@ -309,6 +315,163 @@ def _rollback_status(row: FileChange, current: FileState | None) -> str:
     return "would-remove" if row.before is None else "would-restore"
 
 
+@contextmanager
+def _directory_fd(directory: Path) -> Iterator[int]:
+    """Pin each parent without following symlinks, including during a concurrent rename."""
+    checked_directory(directory)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open("/", flags)
+    try:
+        home_depth = len(Path.home().resolve().parts)
+        for depth, name in enumerate(directory.parts[1:], start=2):
+            child = os.open(name, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            if depth >= home_depth and (info.st_uid != os.getuid() or info.st_mode & 0o022):
+                raise ValueError(f"Unsafe parent during publication: {directory}")
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _move_new(source: Path, destination: Path) -> None:
+    """Move within one Linux filesystem only when the destination name is free."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    rename = libc.renameat2
+    rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    rename.restype = ctypes.c_int
+    with _directory_fd(source.parent) as source_fd, _directory_fd(destination.parent) as dest_fd:
+        # RENAME_NOREPLACE from the Linux UAPI.
+        if (
+            rename(source_fd, os.fsencode(source.name), dest_fd, os.fsencode(destination.name), 1)
+            != 0
+        ):
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code), str(destination))
+        os.fsync(source_fd)
+        os.fsync(dest_fd)
+
+
+def apply_stage(row: FileChange, path: Path) -> Path | None:
+    record = row.apply_directory
+    if record is None:
+        return None
+    area = checked_directory(Path.home().resolve() / record.relative)
+    backup = state_root() / "backups"
+    private = (
+        area.parent.name == "publication"
+        and area.parent.parent.parent == backup
+        and RUN_ID.fullmatch(area.parent.parent.name)
+    )
+    if not private and not (
+        area.parent == path.parent and area.name.startswith(".setup-system-apply-")
+    ):
+        raise ValueError("Invalid publication staging directory")
+    if not area.exists() and (row.verified or observe(path) == row.before):
+        return None
+    info = area.stat()
+    if (info.st_dev, info.st_ino) != (record.device, record.inode) or info.st_mode & 0o077:
+        raise ValueError("Publication staging directory changed")
+    return area
+
+
+def prepared_target(row: FileChange, path: Path) -> bool:
+    stage = row.apply_directory
+    if stage is None or not path.exists() or path.is_symlink():
+        return False
+    info = path.stat()
+    return (info.st_dev, info.st_ino) == (stage.device, row.prepared_inode)
+
+
+def publish_prepared(row: FileChange) -> Path:
+    """Ansible local module entry. Claim and check the actual displaced inode."""
+    if os.geteuid() == 0:
+        raise ValueError("Cannot publish user files as root")
+    path = target_path(row.relative, validate_file=False)
+    area = apply_stage(row, path)
+    if area is None:
+        raise ValueError("Publication evidence is missing")
+    prepared, original = area / "prepared", area / "original"
+    if not prepared_target(row, prepared) or observe(prepared) != row.after:
+        raise ValueError("Prepared file identity or content changed")
+    if row.before is not None:
+        # Reserve the displaced inode in the journal even if its writer still
+        # holds an open fd. The original remains available after a successful apply.
+        _move_new(path, original)
+        try:
+            if observe(original) != row.before:
+                raise ValueError(f"File changed before publication: {path}")
+        except (ValueError, OSError):
+            try:
+                _move_new(original, path)
+            except FileExistsError:
+                raise ValueError(f"Concurrent edits retained at {path} and {original}") from None
+            raise
+    try:
+        _move_new(prepared, path)
+    except FileExistsError:
+        raise ValueError(f"File appeared during publication: {path}; inspect {area}") from None
+    if not prepared_target(row, path) or observe(path) != row.after:
+        raise ValueError(f"File changed during publication: {path}; inspect {area}")
+    return path
+
+
+def has_displaced_original(row: FileChange, path: Path) -> bool:
+    area = apply_stage(row, path)
+    return bool(area and (area / "prepared").exists() and os.path.lexists(area / "original"))
+
+
+def require_recovered(index: Ownership, targets: Iterable[Path]) -> None:
+    """Keep unrelated files usable while a displaced file awaits recovery."""
+    for path in targets:
+        run_id = index.publishing.get(str(path))
+        if run_id is None:
+            continue
+        operation = load_operation(operation_folder(run_id))
+        relative = path.relative_to(Path.home().resolve()).as_posix()
+        row = next((row for row in operation.files if row.relative == relative), None)
+        if row is None or has_displaced_original(row, path):
+            raise ValueError(
+                f"Restore interrupted file publication {run_id} before applying again: {path}"
+            )
+
+
+def _retire_stage(row: FileChange, path: Path, operation: Operation, folder: Path) -> None:
+    area = apply_stage(row, path)
+    if area is None or os.path.lexists(area / "original"):
+        return
+    prepared = area / "prepared"
+    if prepared_target(row, prepared) and observe(prepared) == row.after:
+        prepared.unlink()
+    if any(area.iterdir()):
+        raise ValueError(f"Unrecognized publication evidence retained at {area}")
+    # The journal keeps the directory identity until the empty directory is gone.
+    area.rmdir()
+    row.apply_directory = None
+    row.prepared_inode = None
+    operation.save(folder)
+
+
+def _interrupted_apply(row: FileChange, path: Path) -> tuple[Path, str] | None:
+    area = apply_stage(row, path)
+    if area is None:
+        return None
+    original = area / "original"
+    if not original.exists() and not original.is_symlink():
+        return None
+    if (
+        (area / "prepared").exists()
+        and not path.exists()
+        and not path.is_symlink()
+        and row.restore_directory is None
+    ):
+        return original, "would-return-displaced"
+    if observe(original) != row.before:
+        return original, "conflict"
+    return None
+
+
 def _holding(row: FileChange, target: Path) -> Path | None:
     record = row.restore_directory
     if record is None:
@@ -325,6 +488,11 @@ def _holding(row: FileChange, target: Path) -> Path | None:
 
 
 def _status(row: FileChange, path: Path) -> str:
+    interrupted = _interrupted_apply(row, path)
+    if interrupted is not None:
+        return interrupted[1]
+    if prepared_target(row, path) and observe(path) == row.after:
+        row.verified = True
     holding = _holding(row, path)
     if holding is not None and (holding / "after").exists():
         if observe(holding / "after") != row.after:
@@ -448,20 +616,36 @@ def _restore_operation(folder: Path, *, apply: bool) -> list[tuple[str, str]]:
             directories.append((path, entry))
     if not apply:
         return [(str(path), status) for _, path, status, _ in rows]
-    for _, path, status, _ in rows:
+    for row, path, status, _ in rows:
         if status == "conflict":
-            raise ValueError(f"Rollback conflicts with a later edit: {path}")
+            area = apply_stage(row, path)
+            retained = (
+                f"; review displaced file in {area}"
+                if area and (area / "original").exists()
+                else ""
+            )
+            raise ValueError(f"Rollback conflicts with a later edit: {path}{retained}")
     load_operation(folder, migrate=True)
     index = ownership(migrate=True)
     results = []
     for row, path, status, content in rows:
         if status != _status(row, path):
             raise ValueError(f"File changed during restore: {path}")
-        status = _restore_file(row, path, content, operation, folder)
-        if row.previously_owned and row.before:
+        if status == "would-return-displaced":
+            interrupted = _interrupted_apply(row, path)
+            if interrupted is None:
+                raise ValueError(f"Displaced file changed before restore: {path}")
+            _move_new(interrupted[0], path)
+            status = "returned displaced file"
+        else:
+            status = _restore_file(row, path, content, operation, folder)
+        _retire_stage(row, path, operation, folder)
+        if row.previously_owned and row.before and observe(path) == row.before:
             index.files[str(path)] = row.before.sha256
         else:
             index.files.pop(str(path), None)
+        if index.publishing.get(str(path)) == operation.run_id:
+            del index.publishing[str(path)]
         results.append((str(path), status))
     for path, entry in sorted(directories, key=lambda item: len(item[0].parts), reverse=True):
         try:

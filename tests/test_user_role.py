@@ -287,3 +287,153 @@ def test_legacy_git_before_hash_must_match_backup(home: Path) -> None:
     with pytest.raises(ValueError, match="original backup"):
         restore(backup.name, apply=True)
     assert config.read_bytes() == b"new"
+
+
+@pytest.mark.parametrize("existed", [True, False])
+def test_concurrent_edit_between_inspection_and_role_publication(
+    home: Path, monkeypatch: pytest.MonkeyPatch, existed: bool
+) -> None:
+    import ansible_runner
+
+    from setup_system.infrastructure.file_receipts import digest
+
+    target = home / "ordinary-editor.txt"
+    if existed:
+        target.write_bytes(b"confirmed owner input")
+    original = ansible_runner.run
+    injected = False
+
+    def during_publication(**kwargs):
+        callback = kwargs["event_handler"]
+
+        def on_event(event):
+            nonlocal injected
+            task = event.get("event_data", {}).get("task", "")
+            if event.get("event") == "playbook_on_task_start" and (
+                "Write validated" in task or "Publish validated" in task
+            ):
+                target.write_bytes(b"owner edit during publication")
+                injected = True
+            return callback(event)
+
+        kwargs["event_handler"] = on_event
+        return original(**kwargs)
+
+    monkeypatch.setattr(ansible_runner, "run", during_publication)
+    with pytest.raises((RuntimeError, ValueError)):
+        apply_files(
+            {target: b"selected content"},
+            expected={target: digest(b"confirmed owner input") if existed else None},
+        )
+    assert injected
+    assert target.read_bytes() == b"owner edit during publication"
+
+
+def test_interrupted_displacement_is_recovered_before_another_apply(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.infrastructure import file_receipts, user_files
+    from setup_system.storage import restore
+
+    target = home / "tool"
+    target.write_bytes(b"owner's original")
+    before = file_receipts.digest(target.read_bytes())
+    original = file_receipts._move_new
+
+    def interrupt(source, destination):
+        original(source, destination)
+        if source == target:
+            raise KeyboardInterrupt
+
+    def run_role(rows, _desired, callback):
+        for row in rows:
+            callback(file_receipts.publish_prepared(row))
+        return 0
+
+    monkeypatch.setattr(file_receipts, "_move_new", interrupt)
+    monkeypatch.setattr(user_files, "_run_role", run_role)
+    with pytest.raises(KeyboardInterrupt):
+        apply_files({target: b"selected"}, expected={target: before})
+    assert not target.exists()
+    ((operation, status),) = file_receipts.list_operations()
+    assert status == "partial"
+    unrelated = home / "unrelated"
+    apply_files({unrelated: b"independent"})
+    assert unrelated.read_bytes() == b"independent"
+    with pytest.raises(ValueError, match="Restore interrupted file publication"):
+        apply_files({target: b"selected"})
+    assert not target.exists()
+    assert restore(operation) == [(str(target), "would-return-displaced")]
+    restore(operation, apply=True)
+    assert target.read_bytes() == b"owner's original"
+
+
+def test_owner_recreates_target_while_prior_inode_is_held(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.diagnostics import PartialApplyError
+    from setup_system.infrastructure import file_receipts, user_files
+    from setup_system.storage import restore
+
+    target = home / "config.ini"
+    target.write_bytes(b"prior file")
+    move = file_receipts._move_new
+
+    def racing_move(source, dest):
+        move(source, dest)
+        if source == target:
+            target.write_bytes(b"owner's replacement")
+
+    def run_role(rows, _desired, callback):
+        for row in rows:
+            callback(file_receipts.publish_prepared(row))
+        return 0
+
+    monkeypatch.setattr(file_receipts, "_move_new", racing_move)
+    monkeypatch.setattr(user_files, "_run_role", run_role)
+    with pytest.raises(PartialApplyError):
+        apply_files({target: b"wanted"}, expected={target: file_receipts.digest(b"prior file")})
+    assert target.read_bytes() == b"owner's replacement"
+    ((operation, _),) = file_receipts.list_operations()
+    op = file_receipts.load_operation(file_receipts.operation_folder(operation))
+    retained = file_receipts.apply_stage(op.files[0], target) / "original"
+    assert retained.read_bytes() == b"prior file"
+    with pytest.raises(ValueError, match="later edit"):
+        restore(operation, apply=True)
+    assert target.read_bytes() == b"owner's replacement" and retained.is_file()
+
+
+def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
+    from setup_system.infrastructure import file_receipts
+    from setup_system.storage import restore
+
+    target = home / "existing"
+    target.write_bytes(b"checked")
+    with target.open("wb") as editor:
+        editor.write(b"checked")
+        editor.flush()
+        operation = apply_files(
+            {target: b"configured"}, expected={target: file_receipts.digest(b"checked")}
+        )
+        editor.seek(0)
+        editor.write(b"editor saved later")
+    row = file_receipts.load_operation(operation).files[0]
+    retained = file_receipts.apply_stage(row, target) / "original"
+    assert target.read_bytes() == b"configured"
+    assert retained.read_bytes() == b"editor saved later"
+    with pytest.raises(ValueError, match="review displaced"):
+        restore(operation.name, apply=True)
+    assert retained.read_bytes() == b"editor saved later"
+
+
+def test_restore_retires_target_filesystem_staging_and_new_parent(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.infrastructure import user_files
+    from setup_system.storage import restore
+
+    monkeypatch.setattr(user_files, "_same_filesystem", lambda _target, _backup: False)
+    target = home / "new directory" / "file"
+    operation = apply_files({target: b"managed"})
+    restore(operation.name, apply=True)
+    assert not target.parent.exists()
