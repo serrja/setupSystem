@@ -4,8 +4,8 @@ Open `setup-system` as the desktop user. Ctrl+1 selects Base system; Ctrl+2 sele
 Working environment. Both tabs remain available during execution. Tab and Shift+Tab
 move focus; Enter activates the selected button. Settings are intentions, not observations.
 
-Base system selects Hyprland, graphical login, keyboard and optional timezone. Empty
-timezone preserves the machine's setting. Workspace selects the theme, applications
+Base system selects Hyprland, graphical login, keyboard, locale and timezone. Empty
+timezone preserves the machine's setting. Workspace selects the desktop theme, connected display layouts, applications
 and explicit cleanup candidates. Missing dependencies block application, not navigation
 or saving intentions. A blocked selected feature can be deselected to apply independent
 features.

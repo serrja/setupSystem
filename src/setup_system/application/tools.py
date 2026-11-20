@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+from pydantic import JsonValue
 
 from setup_system.application import templates
 from setup_system.application.project_layout import active_projects, load_layout
@@ -16,24 +17,22 @@ ToolAction = Literal[
     "projects",
     "prepare_projects",
     "open_project",
+    "open_codex",
     "templates",
     "create_template",
     "update_template",
     "restore",
+    "restore_preview",
     "shell",
     "rtk",
     "git_inspect",
     "git_profiles",
     "git_configure",
     "git_use",
-    "git_restore",
     "template_cache",
     "font_plan",
     "font_apply",
     "font_probe",
-    "font_restore",
-    "shell_restore",
-    "rtk_restore",
 ]
 
 
@@ -43,14 +42,16 @@ class ToolRequest:
     name: str = ""
     destination: Path | None = None
     version: str | None = None
-    data: str = "{}"
+    answers: dict[str, JsonValue] = field(default_factory=dict)
     backup_id: str = ""
+    owner_directory: Path | None = None
 
 
 MUTATING_TOOLS = frozenset(
     {
         "prepare_projects",
         "open_project",
+        "open_codex",
         "create_template",
         "update_template",
         "restore",
@@ -58,12 +59,8 @@ MUTATING_TOOLS = frozenset(
         "rtk",
         "git_configure",
         "git_use",
-        "git_restore",
         "template_cache",
         "font_apply",
-        "font_restore",
-        "shell_restore",
-        "rtk_restore",
     }
 )
 
@@ -77,17 +74,31 @@ def execute(root: Path, request: ToolRequest, *, confirmed: bool = False) -> str
         raise ValueError("Explicit Textual confirmation is required")
     if os.geteuid() == 0:
         raise ValueError("Workspace tools must run as the normal user")
+    if request.action in MUTATING_TOOLS:
+        from setup_system.infrastructure.mutation import user_operation
+
+        with user_operation(Path.home()):
+            return _execute(root, request, confirmed=confirmed)
+    return _execute(root, request, confirmed=confirmed)
+
+
+def _execute(root: Path, request: ToolRequest, *, confirmed: bool) -> str:
     if request.action == "projects":
         return "\n".join(name + ": " + str(path) for name, path in projects(root).items())
     if request.action == "prepare_projects":
         from setup_system.application.project_layout import prepare_owner_directories
 
         return "\n".join(map(str, prepare_owner_directories(load_layout(root))))
-    if request.action == "open_project":
+    if request.action in {"open_project", "open_codex"}:
         available = projects(root)
         if request.name not in available:
             raise ValueError("Select an exact active project name")
-        subprocess.run(["nvim", "."], cwd=available[request.name], check=True)
+        command = (
+            ["nvim", "."]
+            if request.action == "open_project"
+            else [str(Path.home() / ".local/bin/codex")]
+        )
+        subprocess.run(command, cwd=available[request.name], check=True)
         return str(available[request.name])
     if request.action == "templates":
         sources = templates.load_templates(root)
@@ -98,9 +109,6 @@ def execute(root: Path, request: ToolRequest, *, confirmed: bool = False) -> str
     if request.action in {"create_template", "update_template"}:
         if request.destination is None:
             raise ValueError("An explicit destination is required")
-        answers = json.loads(request.data)
-        if not isinstance(answers, dict):
-            raise ValueError("Copier answers must be a JSON object")
         plan = templates.plan_template(
             templates.load_templates(root),
             template=request.name,
@@ -108,16 +116,23 @@ def execute(root: Path, request: ToolRequest, *, confirmed: bool = False) -> str
             destination=request.destination,
             operation="update" if request.action == "update_template" else "create",
             defaults=True,
-            data=answers,
+            data=request.answers,
         )
         result = templates.execute_template(plan)
         if result.status == "conflicts":
             raise RuntimeError("Copier conflicts require manual review; working tree preserved")
-        return result.model_dump_json(indent=2)
-    if request.action == "restore":
+        return (
+            f"{result.status.capitalize()} {result.project_name} at {result.destination}\n"
+            f"{result.template} {result.version} · {result.source_commit}"
+        )
+    if request.action in {"restore", "restore_preview"}:
         from setup_system.storage import restore
 
-        return str(restore(request.backup_id, apply=confirmed))
+        rows = restore(request.backup_id, apply=confirmed and request.action == "restore")
+        return (
+            "\n".join(f"{status}: {path}" for path, status in rows)
+            or "No recoverable file changes."
+        )
     if request.action == "shell":
         from setup_system.application.shell import apply_shell
 
@@ -125,7 +140,7 @@ def execute(root: Path, request: ToolRequest, *, confirmed: bool = False) -> str
     if request.action == "rtk":
         from setup_system.application.rtk import install_rtk
 
-        return str(install_rtk(root))
+        return str(install_rtk(root, update=True))
     if request.action == "template_cache":
         plan = templates.plan_template(
             templates.load_templates(root),
@@ -135,59 +150,31 @@ def execute(root: Path, request: ToolRequest, *, confirmed: bool = False) -> str
             defaults=True,
         )
         return str(templates.prepare_cache(plan))
-    if request.action in {"font_plan", "font_apply", "font_probe", "font_restore"}:
+    if request.action in {"font_plan", "font_apply", "font_probe"}:
         from setup_system.application import workstation
 
         if request.action == "font_probe":
             return "\n".join(workstation.FONT_PROBE)
         if request.action == "font_plan":
-            return workstation.plan(
-                root, "fonts", terminal_profile=request.name or None
-            ).model_dump_json(indent=2)
-        if request.action == "font_restore":
-            return str(workstation.restore_profile(request.backup_id, apply_changes=confirmed))
-        options = json.loads(request.data)
-        if (
-            not isinstance(options, dict)
-            or not set(options) <= {"gnome", "reset_terminal_cell_spacing", "refresh_terminal_font"}
-            or any(type(value) is not bool for value in options.values())
-        ):
-            raise ValueError("Invalid font settings")
-        return str(
-            workstation.apply(root, "fonts", terminal_profile=request.name or None, **options)
-        )
-    if request.action in {"git_profiles", "git_configure", "git_use", "git_restore"}:
+            return workstation.plan_fonts(root)
+        return str(workstation.apply_fonts(root))
+    if request.action in {"git_profiles", "git_configure", "git_use"}:
         from setup_system.application import git_profiles
 
         if request.action == "git_profiles":
-            return str(git_profiles.list_profiles())
-        if request.action == "git_restore":
-            return str(git_profiles.restore_profile(request.backup_id, yes=confirmed))
+            return "\n".join(f"{name}: {path}" for name, path in git_profiles.list_profiles())
         if request.destination is None:
             raise ValueError("An exact repository root is required")
         if request.action == "git_use":
             return str(git_profiles.use_profile(request.name, request.destination, yes=confirmed))
-        directories = json.loads(request.data)
-        if not isinstance(directories, list) or not all(
-            isinstance(item, str) for item in directories
-        ):
-            raise ValueError("Directory defaults must be an explicit JSON list of paths")
         return str(
             git_profiles.configure_profile(
                 request.name,
                 request.destination,
-                [Path(item).expanduser() for item in directories],
+                [request.owner_directory] if request.owner_directory else [],
                 yes=confirmed,
             )
         )
-    if request.action == "shell_restore":
-        from setup_system.application.shell import restore_shell
-
-        return str(restore_shell(request.backup_id))
-    if request.action == "rtk_restore":
-        from setup_system.application.rtk import restore_rtk
-
-        return restore_rtk(request.backup_id)
     if request.action == "git_inspect":
         from setup_system.application.git_profiles import inspect_repository
 

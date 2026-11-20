@@ -1,9 +1,6 @@
 # Project templates
 
-Open `setup-system`, choose Workspace → Tools → templates to inspect reviewed catalog
-versions. Select create_template or update_template, an exact catalog alias, an explicit
-destination and optionally a reviewed version. Copier answers are a JSON object in the
-Data field. Confirm the operation inside Textual.
+Open Working environment → Tools → Templates. Choose a template and a reviewed version, enter the project directory and provide a name when creating a project. For Python, choose a library, service or native profile. Select Create project or Update existing project, then review the confirmation.
 
 The catalog retains Python, Typer, FastAPI and service templates as products. setupSystem's
 own engineering scaffold derives exclusively from PythonTemplate. `projectRules` remains
@@ -11,7 +8,7 @@ an active repository catalog entry; see [workspace](workspace_guide.md).
 
 Git tags `vX.Y.Z-dev.N` map explicitly to Python versions `X.Y.Z.devN`; existing accepted
 PEP 440 tags remain compatible. Only reviewed immutable commits and annotated tags are
-accepted. template_cache prepares the selected verified source for offline use. Missing
+accepted. Prepare offline template caches the selected verified source for offline use. Missing
 cache is a failure, not permission to fetch an unrelated mutable ref.
 
 Create requires a new/empty destination. Update requires recorded trusted Copier answers

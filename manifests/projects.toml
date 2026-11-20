@@ -16,7 +16,7 @@ state = "existing"
 
 [project.template]
 alias = "python"
-recommendedVersion = "0.3.0.dev2"
+recommendedVersion = "0.3.0.dev3"
 
 [[project.template.versions]]
 version = "0.3.0.dev0"
@@ -33,6 +33,11 @@ version = "0.3.0.dev2"
 tag = "v0.3.0.dev2"
 commit = "4609fba54be0fe26645233aa221efca65ebf2b59"
 
+[[project.template.versions]]
+version = "0.3.0.dev3"
+tag = "v0.3.0.dev3"
+commit = "4c7e003099d7f2af2b86d4133ec4fe46e1863a4a"
+
 [[project]]
 id = "serrja/typerTemplate"
 origin = "git@github.com:serrja/typerTemplate.git"
@@ -40,7 +45,7 @@ state = "existing"
 
 [project.template]
 alias = "typer"
-recommendedVersion = "0.1.0.dev2"
+recommendedVersion = "0.1.0.dev3"
 
 [[project.template.versions]]
 version = "0.1.0.dev0"
@@ -57,6 +62,11 @@ version = "0.1.0.dev2"
 tag = "v0.1.0.dev2"
 commit = "5b0559f82bf247362cf67e12497e82c280e857c3"
 
+[[project.template.versions]]
+version = "0.1.0.dev3"
+tag = "v0.1.0.dev3"
+commit = "1080470759f689f0ded8eff3bc52c4c7ece8e7c1"
+
 [[project]]
 id = "serrja/fastapiTemplate"
 origin = "git@github.com:serrja/fastapiTemplate.git"
@@ -64,7 +74,7 @@ state = "existing"
 
 [project.template]
 alias = "fastapi"
-recommendedVersion = "0.3.0.dev1"
+recommendedVersion = "0.3.0.dev2"
 
 [[project.template.versions]]
 version = "0.3.0.dev0"
@@ -75,6 +85,11 @@ commit = "be054a55739bc843d00866ed4b2ab2f20c63830b"
 version = "0.3.0.dev1"
 tag = "v0.3.0.dev1"
 commit = "50b920bc597529d50fab2f207523bf0cb65b76bf"
+
+[[project.template.versions]]
+version = "0.3.0.dev2"
+tag = "v0.3.0.dev2"
+commit = "cdd052c039682bd9782daab0fb0dcca17c7218ca"
 
 [[project]]
 id = "serrja/serrja"
@@ -98,6 +113,12 @@ state = "existing"
 
 [project.template]
 alias = "service"
+recommendedVersion = "0.3.0.dev2"
+
+[[project.template.versions]]
+version = "0.3.0.dev2"
+tag = "v0.3.0.dev2"
+commit = "62e43ff7438c855964b625535f3ebdac50b09ee3"
 
 [[project]]
 id = "pokerlost/pypokerlost"
@@ -160,6 +181,11 @@ state = "existing"
 id = "serrja/baseRules"
 origin = "git@github.com:serrja/baseRules.git"
 state = "existing"
+
+[project.policy]
+commit = "8434509933feaa71ba312f8d02caad7362766d5a"
+document = "docs/engineering.md"
+sha256 = "f90f5476d874f68c976203fb201e13fe7399185c78ee9df87b483c1d4491f441"
 
 [[project]]
 id = "pokerlost/projectRules"

@@ -19,15 +19,6 @@ The Hyprland profile uses the public Lua API of upstream v0.55.2 and
 Debian-packaged desktop components; their licenses remain with those packages.
 No third-party dotfiles installer or graphical shell is vendored.
 
-## Temporary download client
-
-Xray-core 26.11.9 retains its Mozilla Public License 2.0. The installer downloads
-its official release archive with the exact digest and source reference recorded
-in [the network manifest](manifests/network.toml). The upstream archive contains
-its license. No Xray binary or source is redistributed in setupSystem releases;
-the temporary executable, archive and connection configuration are removed after
-download preparation. User-supplied optional seeds remain their own upstream copies.
-
 ## Terminal application
 
 Textual is an MIT-licensed runtime dependency from Textualize. It is installed from
@@ -36,6 +27,6 @@ Textual source is vendored in setupSystem. See https://github.com/Textualize/tex
 
 ## Catppuccin Neovim theme
 
-The optional Neovim setup fetches `catppuccin/nvim` at
-`edefef779ab08ce1a4a404713e3012b0d202bd35` under its upstream MIT license.
+The optional Neovim setup fetches `catppuccin/nvim` at the revision in
+[the editor manifest](manifests/editor.toml) under its upstream MIT license.
 The checkout retains its upstream license. No theme plugin implementation is vendored.

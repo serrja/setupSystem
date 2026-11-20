@@ -1,8 +1,6 @@
 # Configuration
 
-Desired settings use schema version 1. Unknown fields, unsupported versions and secret
-fields are rejected. Version-zero TOML without `schema_version` migrates in memory;
-only an explicit save writes it. Machine facts are inspected separately.
+User settings schema 2 stores selected catalog IDs, theme, display layout and cleanup choices. Reading version 1 maps its application switches into the new selection in memory. Save intentions to persist the migration with a recoverable copy of the original. System settings retain schema 1. Unknown versions or fields require review.
 
 | Location | Ownership / purpose |
 | --- | --- |
@@ -21,3 +19,5 @@ never a writable TOML command or playbook path.
 
 Passwords, authentication tokens, private application databases and subscription URLs
 are not settings. Let sudo and each application's native account UI manage them.
+
+A previous installation can have a private `/etc/setup-system` directory. If Base system reports that it cannot read `system.toml`, an administrator should inspect the directory, its ownership and access controls on the target. The app needs traversal of that directory and read access to the system intentions file. Where the files are reviewed as shareable, grant traversal on **that directory only** and read access on **that file only** to the intended user, for example with a per-user POSIX ACL. Preserve private sibling files and avoid recursive permission changes. Workspace operations remain available while Base settings need review. The Firefox action can migrate an exact earlier managed policy in otherwise empty, private policy directories. It preserves unknown files for administrator review.

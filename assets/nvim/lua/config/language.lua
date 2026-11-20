@@ -9,22 +9,21 @@ end
 
 function module.setup()
   local capabilities = require("blink.cmp").get_lsp_capabilities()
-  local configs = {
-    { name = "basedpyright", command = { "basedpyright-langserver", "--stdio" } },
-    { name = "clangd", command = { "clangd" } },
-    { name = "lua_ls", command = { "lua-language-server" } },
-    { name = "ts_ls", command = { "typescript-language-server", "--stdio" } },
-    { name = "dartls", command = { "dart", "language-server", "--protocol=lsp" } },
-    { name = "jsonls", command = { "vscode-json-language-server", "--stdio" } },
-    { name = "yamlls", command = { "yaml-language-server", "--stdio" } },
-    { name = "marksman", command = { "marksman", "server" } },
-  }
-  local vuePlugin = vim.fn.stdpath("data") .. "/tools/node_modules/@vue/typescript-plugin"
-  local vueReady = vim.fn.executable("vue-language-server") == 1
-    and vim.fn.executable("typescript-language-server") == 1
-    and vim.fn.isdirectory(vuePlugin) == 1
-  if vueReady then
-    table.insert(configs, { name = "vue_ls", command = { "vue-language-server", "--stdio" } })
+  local settings = vim.json.decode(table.concat(vim.fn.readfile(vim.g.setup_system_config .. "/languages.json")))
+  local configs = {}
+  local data = vim.env.XDG_DATA_HOME or (vim.env.HOME .. "/.local/share")
+  local nodeModules = data .. "/setup-system/language-tools/typescript-vue/" .. settings.node_environment .. "/node_modules"
+  for _, profile in ipairs(settings.selected) do
+    if profile == "python" then
+      table.insert(configs, { name = "basedpyright", command = { "basedpyright-langserver", "--stdio" } })
+    elseif profile == "cpp" then
+      table.insert(configs, { name = "clangd", command = { "clangd" } })
+    elseif profile == "dart_flutter" then
+      table.insert(configs, { name = "dartls", command = { "dart", "language-server", "--protocol=lsp" } })
+    elseif profile == "typescript_vue" then
+      table.insert(configs, { name = "vue_ls", command = { "vue-language-server", "--stdio" } })
+      table.insert(configs, { name = "ts_ls", command = { "typescript-language-server", "--stdio" } })
+    end
   end
   for _, item in ipairs(configs) do
     if vim.fn.executable(item.command[1]) == 1 then
@@ -42,21 +41,13 @@ function module.setup()
             clientConfig.settings.python = { pythonPath = python }
           end
         end
-      elseif item.name == "lua_ls" then
-        config.settings = {
-          Lua = {
-            runtime = { version = "LuaJIT" },
-            diagnostics = { globals = { "vim" } },
-            workspace = { checkThirdParty = false },
-            telemetry = { enable = false },
-          },
-        }
-      elseif item.name == "ts_ls" and vueReady then
+      elseif item.name == "ts_ls" then
         config.filetypes =
           { "javascript", "javascriptreact", "typescript", "typescriptreact", "vue" }
         config.init_options = {
+          tsserver = { path = nodeModules .. "/typescript/lib/tsserver.js" },
           plugins = {
-            { name = "@vue/typescript-plugin", location = vuePlugin, languages = { "vue" } },
+            { name = "@vue/typescript-plugin", location = nodeModules .. "/@vue/typescript-plugin", languages = { "vue" } },
           },
         }
       end

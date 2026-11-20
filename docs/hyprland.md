@@ -6,8 +6,9 @@ is separate from package acquisition and runs under the normal desktop account.
 
 The managed Lua entrypoint includes `setup-system.profile`; personal overrides stay in
 `$XDG_CONFIG_HOME/hypr/local.lua`. Existing unrelated entrypoints require a reviewed
-include. Preferred monitor mode/automatic scaling, Lua workspace IPC and battery/backlight
-detection are retained until actual upstream module compatibility is verified.
+include. Outputs use their preferred mode and automatic scale until you preview an explicit
+layout in Textual. The launcher starts the workspace IPC bridge and detects the available
+batteries and backlights. [Panel compatibility and display preview](theme.md).
 
 Super+Enter opens Foot; Super+D applications; Super+E Thunar; Super+F9 the power menu;
 Ctrl+Alt+F3 reaches TTY recovery. The session wrapper configures portals, audio,

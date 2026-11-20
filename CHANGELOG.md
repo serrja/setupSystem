@@ -1,18 +1,14 @@
 # Changelog
 
-Reviewed application and command-line compatibility changes.
+## Unreleased
+
+- Use one versioned file journal for desktop, fonts, editors, shell and Git
+  settings. Workspace recovery previews changes and preserves later edits.
+- Render the selected font policy in the managed desktop applications.
 
 ## 0.2.0.dev2
 
-- Use one manifest-owned JetBrainsMono Nerd Font Mono policy for GNOME, the
-  selected terminal profile and rendered Hyprland components. Keep emoji fallback
-  after ordinary text, preserve terminal size and existing user overrides.
-- Add an explicit GNOME Terminal cell-spacing reset, complete profile diagnostics
-  and a literal multilingual comparison probe. Window zoom and rendered appearance
-  remain separate visual checks; prepared Hyprland assets do not prove a session.
-- Add an opt-in stale font refresh for an existing GNOME Terminal profile, with
-  real monitor acknowledgement, a private receipt and restoration of the equivalent
-  font selection. Do not restart applications or change session/global scaling.
+- Added shared desktop font selection and a multilingual glyph sample.
 
 ## 0.2.0.dev0
 

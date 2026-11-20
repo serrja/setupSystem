@@ -13,19 +13,33 @@ expand to newly introduced dependencies. See `cleanup.json` for partial/failed a
 - `/var/lib/setup-system/install.json`: signed APT acquisition, closure and actual package stages.
 - `/var/lib/setup-system/desktop.json` and `desktop-backups/`: managed login/boot evidence.
 - `/var/lib/setup-system/settings-backups/`: previous system desired settings by content hash.
-- `$XDG_STATE_HOME/setup-system/backups/`: private user backups with before/after ownership evidence.
-- `$XDG_STATE_HOME/setup-system/workstation.json`: existing managed desktop file ownership.
-  New user roles share this same ownership receipt so theme/base repeats remain compatible.
+- `$XDG_STATE_HOME/setup-system/workstation.json` holds the user ownership index.
+- `$XDG_STATE_HOME/setup-system/backups/` holds private file operation journals and original bytes.
 
-Keep original source/runtime releases. Delivery rejects a changed existing release rather
-than overwriting it. Native H02 metadata, hashes and source identity remain required.
-The system executor imports a newly verified root-owned source copy, never the user's
-editable release tree. No authentication store is part of an application backup.
+Open Workspace Tools, select Recovery and preview an operation. The preview lists
+which files will be restored or removed. Apply checks the current hash, owner and
+mode against the recorded state. A later edit requires review. A successful
+restore removes empty directories created by that operation and leaves additional
+files in place. You can repeat a completed restore.
 
-Open `setup-system`, use Workspace Tools and review the backup ID before restoring.
-Existing files changed since the operation require manual review. Package database
-repair belongs to Debian administration on the selected target: inspect `dpkg --audit`
-and APT's proposed resolution before authorizing any repair. No automatic purge/autoremove.
+The versioned journal records the expected changes before the user role runs.
+The user role stages each replacement on the destination filesystem. For an existing
+file it retains the original inode and checks its contents and ownership before
+publishing. A newly arrived file keeps its place. Readback marks each verified
+write. If a write was interrupted while the original was displaced, open Recovery
+and preview that operation before retrying. Keep its private staging directory
+until Restore finishes. A conflict can leave both the editor's version and the
+displaced file available for inspection. Restore also retains the inode it removes. If an
+editor later saves through a file descriptor it already had open, preview the same
+operation to find those bytes. Legacy file journals are
+converted on explicit recovery when their before/after evidence is sufficient.
+Original journals are retained. Unknown schemas and ambiguous legacy ownership
+require manual review. Private application databases use their application's
+native recovery procedure.
+
+System recovery depends on the stage that completed. Keep original release
+artifacts. Use `dpkg --audit` to inspect an interrupted package operation and
+review APT's proposed resolution before authorizing repair.
 
 For a failed graphical login, retain SSH or Ctrl+Alt+F3. Inspect greetd's journal and
 restore the backed-up managed login/GRUB files only after checking their receipts.

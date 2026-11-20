@@ -196,7 +196,9 @@ def _system_path(path: Path) -> None:
         raise ValueError("System parent is not privately controlled by this user")
 
 
-def _write_system(path: Path, content: bytes, mode: int = 0o600) -> None:
+def _write_system(
+    path: Path, content: bytes, mode: int = 0o600, *, parent_mode: int = 0o700
+) -> None:
     _system_path(path)
     if path.exists() and path.read_bytes() == content:
         return
@@ -206,9 +208,9 @@ def _write_system(path: Path, content: bytes, mode: int = 0o600) -> None:
         missing.append(directory)
         directory = directory.parent
     for directory in reversed(missing):
-        directory.mkdir(mode=0o700)
+        directory.mkdir(mode=parent_mode)
         # Only directories just created below the validated parent are changed.
-        directory.chmod(0o700)
+        directory.chmod(parent_mode)
     _system_path(path)
     descriptor, name = tempfile.mkstemp(prefix=".setup-system-", dir=path.parent)
     try:
@@ -585,6 +587,7 @@ def _check_happ_unit_policy(paths: SystemPaths) -> None:
 def _check_existing_happ(
     expected_version: str,
     *,
+    expected_happ_version: str | None = None,
     run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
 ) -> None:
     """Refuse implicit Happ upgrades or repairs that could disrupt an active connection."""
@@ -610,6 +613,22 @@ def _check_existing_happ(
         )
     except (OSError, subprocess.SubprocessError):
         raise ValueError(message) from None
+    if expected_happ_version is not None:
+        if not re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,200}", expected_happ_version):
+            raise ValueError(message)
+        if result.returncode or result.stdout != f"install ok installed\n{expected_happ_version}\n":
+            raise ValueError("Happ package changed after confirming its version")
+        if expected_happ_version != expected_version:
+            active = run(
+                ["/usr/bin/systemctl", "--quiet", "is-active", "happd.service"],
+                check=False,
+                capture_output=True,
+                timeout=15,
+                env=environment,
+            )
+            if active.returncode not in {3, 4}:
+                raise ValueError("Disconnect and stop the active Happ service before upgrading")
+        return
     if result.returncode == 1 and result.stdout == "":
         return
     if result.returncode == 0 and result.stdout == f"install ok installed\n{expected_version}\n":
@@ -675,7 +694,12 @@ def _copy_happ(source: Path, target: TargetUser, destination: Path, digest: str)
         os.close(descriptor)
 
 
-def _freeze_selection(arguments: list[str], output: str, happ_version: str) -> list[str]:
+def _freeze_selection(
+    arguments: list[str],
+    output: str,
+    happ_version: str,
+    local_versions: dict[str, str] | None = None,
+) -> list[str]:
     """Retain explicit requests and constrain the simulated dependency closure exactly."""
     selected: dict[str, str] = {}
     for line in output.splitlines():
@@ -694,6 +718,11 @@ def _freeze_selection(arguments: list[str], output: str, happ_version: str) -> l
         if name.split(":", 1)[0] == "happ":
             if version != happ_version:
                 raise RuntimeError("APT simulation selected an unexpected Happ version")
+            continue
+        local = (local_versions or {}).get(name.split(":", 1)[0])
+        if local is not None:
+            if version != local:
+                raise RuntimeError("APT selected a different local artifact version")
             continue
         selected[name] = version
     frozen: list[str] = []
@@ -765,6 +794,9 @@ class _PackageSession:
     run: Callable[..., subprocess.CompletedProcess[str]]
     emit: Callable[[str], None]
     journal: InstallJournal = field(default_factory=InstallJournal)
+    local_debs: tuple[Path, ...] = ()
+    expected_happ_version: str | None = None
+    persist_backports: bool = True
 
     def execute(
         self, argv: list[str], timeout: int = APT_TIMEOUT, *, manager_offline: bool = False
@@ -819,6 +851,11 @@ class _PackageSession:
                 stage / "archives" / self.pin.cache_name(),
                 follow_symlinks=False,
             )
+        local_versions = {}
+        for local in self.local_debs:
+            name, version, _arch = local.stem.split("_")
+            os.link(local, stage / "archives" / local.name, follow_symlinks=False)
+            local_versions[name] = version
         source = stage / "debian.sources"
         source.write_text(self.sources.staging())
         source.chmod(0o644)
@@ -832,6 +869,7 @@ class _PackageSession:
                 list(self.commands.selection),
                 simulation.stdout,
                 self.pin.version if self.pin is not None else "",
+                local_versions,
             )
         )
         self.checkpoint(InstallStage.DOWNLOADS, "resolution")
@@ -842,16 +880,21 @@ class _PackageSession:
     def install(self) -> None:
         self.checkpoint(InstallStage.PACKAGES, status=InstallStatus.RUNNING)
         if self.pin is not None:
-            _check_existing_happ(self.pin.version, run=self.run)
+            _check_existing_happ(
+                self.pin.version, expected_happ_version=self.expected_happ_version, run=self.run
+            )
             _check_happ_unit_policy(self.paths)
         self.emit("Stage: packages (offline network namespace; existing service starts deferred)")
         with _defer_services(self.paths.policy):
             self.execute(self.commands.apply(), timeout=PACKAGE_TIMEOUT, manager_offline=True)
-        self.checkpoint(InstallStage.SOURCE, "packages")
-        _write_system(self.paths.backports, self.sources.managed_backports(), 0o644)
+        completed = "packages"
+        if self.persist_backports:
+            self.checkpoint(InstallStage.SOURCE, completed)
+            _write_system(self.paths.backports, self.sources.managed_backports(), 0o644)
+            completed = "source"
         self.checkpoint(
             InstallStage.HAPP_SERVICE if self.pin else InstallStage.USER,
-            "source",
+            completed,
             status=InstallStatus.PACKAGES_COMPLETE,
         )
 

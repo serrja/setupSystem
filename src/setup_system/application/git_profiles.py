@@ -7,12 +7,13 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from setup_system.storage import atomic_write, new_backup, restore, state_root
+from setup_system.infrastructure.file_receipts import digest
+from setup_system.infrastructure.user_files import apply_files
 
 IDENTITY_KEYS = ("user.name", "user.email", "user.useConfigOnly", "user.signingKey")
 SIGNING_KEYS = ("commit.gpgSign", "tag.gpgSign", "gpg.format")
@@ -206,7 +207,7 @@ def _verify_effective(repo: Path, edits: dict[Path, dict[str, str]]) -> None:
 def _apply(
     edits: dict[Path, dict[str, str]], *, yes: bool, effective_repo: Path | None = None
 ) -> tuple[Path | None, list[str]]:
-    """Use Git's writer only after backup, recording every changed target for rollback."""
+    """Render scoped edits with native Git and publish with the shared recovery adapter."""
     changed: dict[Path, dict[str, str]] = {}
     before: dict[Path, str | None] = {}
     for path, fields in edits.items():
@@ -227,45 +228,29 @@ def _apply(
         if not changed and effective_repo is not None:
             _verify_effective(effective_repo, edits)
         return None, actions or ["unchanged"]
-    _safe_path(state_root())
-    backup = new_backup([path for path in changed if path.exists()])
-    receipt = backup / "git-profile.json"
-    record: dict[str, Any] = {
-        "application": "git-profile",
-        "status": "prepared",
-        "files": [
-            {"path": str(path), "before": before[path], "after": before[path]} for path in changed
-        ],
-    }
-    atomic_write(receipt, (json.dumps(record, indent=2) + "\n").encode())
-    try:
-        for path, fields in changed.items():
-            if _hash(path) != before[path]:
+    desired = {}
+    with tempfile.TemporaryDirectory(prefix="setup-system-git-") as directory:
+        for index, (path, fields) in enumerate(changed.items()):
+            staged = Path(directory) / str(index)
+            original = path.read_bytes() if path.exists() else None
+            if (digest(original) if original is not None else None) != before[path]:
                 raise ValueError(f"Configuration changed since planning: {path}")
-            item = next(item for item in record["files"] if item["path"] == str(path))
-            if not path.exists():
-                path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-                atomic_write(path, b"")
-                item["after"] = _hash(path)
-                atomic_write(receipt, (json.dumps(record, indent=2) + "\n").encode())
+            staged.write_bytes(original or b"")
             for key, value in fields.items():
-                if _hash(path) != item["after"]:
-                    raise ValueError(f"Configuration changed during apply: {path}")
-                _git("config", "--file", str(path), "--replace-all", "--", key, value)
-                item["after"] = _hash(path)
-                atomic_write(receipt, (json.dumps(record, indent=2) + "\n").encode())
-        for path, fields in changed.items():
-            for key, value in fields.items():
-                if _git("config", "--file", str(path), "--no-includes", "--get-all", key) != value:
-                    raise ValueError(f"Configuration readback failed: {path}")
-        if effective_repo is not None:
-            _verify_effective(effective_repo, edits)
-        record["status"] = "complete"
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        record["status"] = "failed"
-        raise ValueError(f"Git profile apply failed; inspect private backup {backup}") from None
-    finally:
-        atomic_write(receipt, (json.dumps(record, indent=2) + "\n").encode())
+                _git("config", "--file", str(staged), "--replace-all", "--", key, value)
+                if (
+                    _git("config", "--file", str(staged), "--no-includes", "--get-all", key)
+                    != value
+                ):
+                    raise ValueError(f"Git configuration readback failed for {key}")
+            desired[path] = staged.read_bytes()
+    backup = apply_files(
+        desired,
+        modes={path: 0o600 for path in changed if before[path] is None},
+        expected={path: before[path] for path in changed},
+    )
+    if effective_repo is not None:
+        _verify_effective(effective_repo, edits)
     return backup, [action.replace("would update", "updated", 1) for action in actions]
 
 
@@ -305,51 +290,3 @@ def use_profile(name: str, repo: Path, *, yes: bool = False) -> tuple[Path | Non
     ):
         raise ValueError("Per-worktree configuration requires a separate reviewed operation")
     return _apply({repo / ".git/config": identity.fields()}, yes=yes, effective_repo=repo)
-
-
-def restore_profile(backup_id: str, *, yes: bool = False) -> list[tuple[str, str]]:
-    """Restore only this operation's files after verifying no later edit is lost."""
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
-        raise ValueError("Invalid backup ID")
-    folder = _safe_path(state_root() / "backups" / backup_id)
-    record = json.loads((folder / "git-profile.json").read_text())
-    if record.get("application") != "git-profile" or record.get("status") not in {
-        "prepared",
-        "complete",
-        "failed",
-    }:
-        raise ValueError("A Git profile operation receipt is required")
-    items = record["files"]
-    targets = {str(_safe_path(Path(item["path"]))): item for item in items}
-    if len(targets) != len(items):
-        raise ValueError("Repeated rollback targets")
-    for path, item in targets.items():
-        if _hash(Path(path)) != item["after"]:
-            raise ValueError(f"Rollback blocked by later changes: {path}")
-    manifest = json.loads((folder / "manifest.json").read_text())
-    expected = {
-        path: item["before"] for path, item in targets.items() if item["before"] is not None
-    }
-    backed_up = {}
-    for item in manifest["items"]:
-        relative = Path(item["home_relative"])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("Unsafe backup target")
-        target = str(_safe_path(Path.home() / relative))
-        if target != item["source"]:
-            raise ValueError("Backup target paths disagree")
-        backed_up[target] = item["sha256"]
-    if backed_up != expected or len(backed_up) != len(manifest["items"]):
-        raise ValueError("Backup targets do not match the operation receipt")
-    preview = restore(backup_id)
-    actions = [(path, "would-restore" if state == "conflict" else state) for path, state in preview]
-    created = [Path(path) for path, item in targets.items() if item["before"] is None]
-    actions += [(str(path), "would-remove-created") for path in created]
-    if yes:
-        if existing_created := [path for path in created if path.is_file()]:
-            new_backup(existing_created)
-        actions = restore(backup_id, apply=True, replace_current=True)
-        for created_path in created:
-            created_path.unlink(missing_ok=True)
-            actions.append((str(created_path), "removed-created"))
-    return actions

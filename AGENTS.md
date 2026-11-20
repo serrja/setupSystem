@@ -12,7 +12,7 @@ and planning strictly read-only. Textual is the only public configuration interf
 Do not restore the retired system shell installer or public command router.
 The release bootstrap delivers the app and launches it as the normal user.
 
-Preserve projectRules in the catalog, terminalDev, user data and local edits. Back up
+Preserve projectRules in the catalog, the selected editor profile, user data and local edits. Back up
 managed files before replacement and reject unknown conflicts. Never run installation
 from shell/editor startup, add Docker-group membership, replace the system Python, or
 infer sandbox isolation from a policy file. Separate root system operations from verified

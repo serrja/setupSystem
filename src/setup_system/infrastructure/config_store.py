@@ -15,8 +15,7 @@ from platformdirs import user_cache_path, user_config_path, user_state_path
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_system.domain.settings import SystemSettings, UserSettings
-from setup_system.storage import atomic_write
+from setup_system.domain.settings import V1_APP_KEYS, SystemSettings, UserSettings
 
 
 class _UserSettingsBoundary(UserSettings, BaseSettings):
@@ -51,12 +50,14 @@ def safe_file(path: Path, uid: int) -> None:
     for parent in (path, *path.parents):
         if parent.is_symlink():
             raise ValueError("Settings paths cannot traverse symlinks")
-    if path.exists():
+    try:
         info = path.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1:
-            raise ValueError("Settings must be an owned, single-link regular file")
-        if info.st_mode & 0o022:
-            raise ValueError("Settings cannot be writable by other users")
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1:
+        raise ValueError("Settings must be an owned, single-link regular file")
+    if info.st_mode & 0o022:
+        raise ValueError("Settings cannot be writable by other users")
 
 
 class ConfigStore[T: BaseModel]:
@@ -88,7 +89,7 @@ class ConfigStore[T: BaseModel]:
             )
         return self.model.model_validate(values)
 
-    def save(self, settings: T, expected: str | None) -> str:
+    def prepare(self, settings: T, expected: str | None) -> bytes:
         _, actual = self.read()
         if actual != expected:
             raise ValueError("Settings changed since inspection; reload before saving")
@@ -104,18 +105,38 @@ class ConfigStore[T: BaseModel]:
                 else:
                     target[key] = value
 
+        if isinstance(settings, UserSettings) and document.get("schema_version", 1) == 1:
+            for key in V1_APP_KEYS:
+                document.pop(key, None)
         for key in type(settings).model_fields:
             if key not in values and key in document:
                 del document[key]
         merge(document, values)
-        output = tomlkit.dumps(document).encode()
-        if raw == output:
-            return hashlib.sha256(output).hexdigest()
-        if raw:
-            backup = self.path.with_name(self.path.name + "." + str(actual) + ".bak")
-            safe_file(backup, self.uid)
-            if not backup.exists():
-                atomic_write(backup, raw, 0o600)
-        safe_file(self.path, self.uid)
-        atomic_write(self.path, output, 0o600)
+        return tomlkit.dumps(document).encode()
+
+    def save(self, settings: T, expected: str | None) -> str:
+        from setup_system.infrastructure.user_files import apply_files
+
+        output = self.prepare(settings, expected)
+        apply_files({self.path: output}, modes={self.path: 0o600}, expected={self.path: expected})
         return hashlib.sha256(output).hexdigest()
+
+
+def save_intentions(
+    user: UserSettings,
+    system: SystemSettings,
+    user_revision: str | None,
+    draft_revision: str | None,
+) -> tuple[str, str]:
+    from setup_system.infrastructure.user_files import apply_files
+
+    path = SettingsPaths().user
+    draft = path.parent / "system-intentions.toml"
+    user_bytes = ConfigStore(path, UserSettings).prepare(user, user_revision)
+    draft_bytes = ConfigStore(draft, SystemSettings).prepare(system, draft_revision)
+    apply_files(
+        {path: user_bytes, draft: draft_bytes},
+        modes={path: 0o600, draft: 0o600},
+        expected={path: user_revision, draft: draft_revision},
+    )
+    return hashlib.sha256(user_bytes).hexdigest(), hashlib.sha256(draft_bytes).hexdigest()

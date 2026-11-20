@@ -10,5 +10,5 @@ from setup_system.domain.settings import Section
 subprocess.run([sys.executable, "-I", "-m", "setup_system", "--help"], check=True, timeout=30)
 root = Path(__file__).resolve().parents[1]
 plan = InstallationService(root).plan(InstallRequest(Operation.PLAN, section=Section.WORKSPACE))
-assert [action.id for action in plan.actions] == ["theme"]
+assert not plan.actions
 assert not plan.blockers

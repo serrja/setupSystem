@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from setup_system.capabilities import load_policy
 from setup_system.downloads import (
     UV_RELEASE_HOSTS,
     DownloadError,
@@ -40,13 +41,13 @@ _RUNTIME = _runtime_policy()
 RUNTIME_PYTHON = _RUNTIME["python"]
 UV_VERSION = _RUNTIME["uv"]
 UV_PLATFORMS = {
-    ("debian", "x86_64"): _RUNTIME["amd64_target"],
-    ("debian", "arm64"): _RUNTIME["arm64_target"],
+    ("debian", machine): _RUNTIME[apt_arch + "_target"]
+    for machine, apt_arch in load_policy().debian.apt_architectures.items()
 }
 RELEASE_BASE = _RUNTIME["uv_base"] + "/" + UV_VERSION
 UV_SHA256 = {
     _RUNTIME[architecture + "_target"]: _RUNTIME[architecture + "_sha256"]
-    for architecture in ("amd64", "arm64")
+    for architecture in load_policy().debian.apt_architectures.values()
 }
 
 
