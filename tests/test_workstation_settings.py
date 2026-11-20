@@ -31,7 +31,10 @@ def test_unknown_secret_and_unsupported_schema_fields_are_rejected(invalid: dict
         UserSettings.model_validate(invalid)
 
 
-def test_store_preserves_comments_backups_and_conflict_detection(tmp_path: Path) -> None:
+def test_store_preserves_comments_backups_and_conflict_detection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     path = tmp_path / "settings.toml"
     path.write_text("# Keep this comment\nschema_version = 1\nfirefox = false\n")
     store = ConfigStore(path, UserSettings)
@@ -77,7 +80,10 @@ def test_palette_and_effect_ranges_are_validated() -> None:
             ThemeSettings.model_validate(values)
 
 
-def test_nested_theme_comments_and_cleared_optional_timezone_survive_save(tmp_path: Path) -> None:
+def test_nested_theme_comments_and_cleared_optional_timezone_survive_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     path = tmp_path / "settings.toml"
     path.write_text(
         "schema_version=1\n[theme]\n# keep nested comment\nrounding=12 # corner choice\n"
