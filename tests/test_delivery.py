@@ -77,3 +77,19 @@ def test_delivery_rejects_symlink_destination_before_write(
     with pytest.raises(ValueError, match="symlink"):
         delivery.prepare(source, "v1.2.3", uv)
     assert list(outside.iterdir()) == []
+
+
+def test_delivery_publishes_same_unprivileged_textual_entry_and_preserves_owner_edits(
+    prepared: tuple[Path, Path, Path],
+) -> None:
+    source, uv, home = prepared
+    destination, _ = delivery.prepare(source, "v1.2.3", uv)
+    launcher = home / ".local/bin/setup-system"
+    content = launcher.read_text()
+    assert "-I -B -m setup_system --source" in content
+    assert "sudo" not in content and str(destination) in content
+    assert launcher.stat().st_mode & 0o777 == 0o755
+    launcher.write_text("#!/bin/sh\n# Owner customization\n")
+    with pytest.raises(ValueError, match="launcher differs"):
+        delivery.prepare(source, "v1.2.3", uv)
+    assert "Owner customization" in launcher.read_text()

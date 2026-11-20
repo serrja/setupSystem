@@ -28,6 +28,7 @@ from setup_system.adapters.debian.hyprland import (
 )
 from setup_system.adapters.debian.packages import installed_version
 from setup_system.capabilities import load_policy
+from setup_system.domain.settings import ThemeSettings
 from setup_system.downloads import (
     GITHUB_RELEASE_HOSTS,
     DownloadError,
@@ -37,6 +38,7 @@ from setup_system.downloads import (
     read_https,
 )
 from setup_system.font_policy import font_cache_name, load_font_archive
+from setup_system.infrastructure.theme import configure_targets
 from setup_system.storage import atomic_write, new_backup, restore, state_root
 
 Profile = Literal["fonts", "hyprland"]
@@ -91,7 +93,9 @@ class FontPolicy(BaseModel):
 
     def render(self, source: Path) -> bytes:
         """Render only the explicit font placeholders, keeping other user syntax intact."""
-        content = source.read_text()
+        from setup_system.infrastructure.theme import render
+
+        content = render(source.read_text())
         values = {
             "PRIMARY_FAMILY": self.family,
             "EMOJI_FAMILY": self.emoji_fallback,
@@ -750,6 +754,8 @@ def apply(
     reset_terminal_cell_spacing: bool = False,
     refresh_terminal_font: bool = False,
     offline: bool = False,
+    theme: ThemeSettings | None = None,
+    keyboard: str | None = None,
 ) -> Path:
     """Apply portable files with conflict checks and a recoverable per-write receipt."""
     if profile == "hyprland" and os.geteuid() == 0:
@@ -771,12 +777,13 @@ def apply(
             is None
         ):
             raise ValueError(
-                f"Hyprland {expected} must be installed by setup-system install apply "
-                "before user apply"
+                f"Hyprland {expected} must be installed in Textual Base system before user apply"
             )
         _required_commands(root)
     policy = font_policy(root)
     desired = _targets(root, profile)
+    if profile == "hyprland" and theme is not None:
+        desired = configure_targets(desired, theme, keyboard=keyboard)
     if profile == "fonts":
         for family in (policy.emoji_fallback,):
             if family not in _run(["fc-match", "-f", "%{family}", family]):

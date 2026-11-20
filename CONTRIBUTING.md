@@ -2,7 +2,7 @@
 
 setupSystem owns Debian installation and managed user configuration. Change upstream
 templates and policy in their owning repositories; this consumer accepts reviewed
-immutable pins. Preserve public CLI identifiers, user files, projectRules and recovery
+immutable pins. Preserve the published package/entrypoint names, user files, projectRules and recovery
 contracts. Read [AGENTS](AGENTS.md) and the pinned baseRules contract before editing.
 
 ## 🧪 Prepare and check

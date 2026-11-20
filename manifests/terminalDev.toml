@@ -5,6 +5,9 @@ version = "0.12.6"
 linux_x86_64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz"
 linux_x86_64_sha256 = "474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87"
 
+linux_arm64_url = "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-arm64.tar.gz"
+linux_arm64_sha256 = "8f1f64a0bdb97247034038c3823c6cbad5bdf9ecd5751b85494b71c3ee04c815"
+
 [plugins.lazy]
 repo = "folke/lazy.nvim"
 commit = "306a05526ada86a7b30af95c5cc81ffba93fef97"
@@ -81,3 +84,7 @@ linux_x86_64_sha256 = "48ee7db28346f96f4bd545e190ab080a88a7b5a664e97649cf5d5c604
 version = "0.27.1"
 linux_x86_64_url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-x64.zip"
 linux_x86_64_sha256 = "c7e686aec16ba17053c2e6fd87600ccb10cf8ba3d055756b17e756d538e11114"
+
+[plugins.catppuccin]
+repo = "catppuccin/nvim"
+commit = "edefef779ab08ce1a4a404713e3012b0d202bd35"

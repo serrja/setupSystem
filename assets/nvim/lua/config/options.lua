@@ -22,9 +22,9 @@ vim.opt.listchars = { tab = "→ ", trail = "·", extends = "›", precedes = "�
 vim.opt.exrc = false
 vim.opt.modeline = false
 vim.opt.shadafile = "NONE"
-vim.opt.clipboard = ""
+vim.opt.clipboard = vim.env.WAYLAND_DISPLAY and "unnamedplus" or ""
 vim.opt.statusline = "%f %m %r %= %y %l:%c"
-vim.cmd.colorscheme("habamax")
+vim.cmd.colorscheme("catppuccin_mocha_green")
 
 -- Native EditorConfig applies after FileType and remains authoritative.
 vim.api.nvim_create_autocmd("FileType", {

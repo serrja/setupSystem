@@ -118,9 +118,9 @@ def test_plan_is_read_only_and_all_preauthentication_resources_are_system_owned(
     assert "cage -s" in config["default_session"]["command"]
     assert str(account.home) not in config["default_session"]["command"]
     assert all("get-default" in argv for argv in commands.calls)
-    assert any("recovery-key" in line for line in plan.describe())
+    assert any("recovery timeout" in line for line in plan.describe())
     assert any("root=encrypted" in line for line in plan.describe())
-    assert any(b"GRUB_RECORDFAIL_TIMEOUT=0" in f.content for f in plan.files)
+    assert any(b"GRUB_RECORDFAIL_TIMEOUT=10" in f.content for f in plan.files)
 
 
 def test_apply_enables_next_boot_and_repeat_has_no_duplicate_backup_or_commands(
@@ -509,6 +509,7 @@ def test_display_manager_launcher_requires_an_active_local_logind_seat(
         ["/bin/sh", str(launcher), "--display-manager"],
         env={
             "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
             "XDG_SESSION_ID": "fixture-session",
             "XDG_RUNTIME_DIR": str(runtime),
         },

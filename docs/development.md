@@ -5,7 +5,7 @@ and Python 3.14.7; CI additionally checks the CLI's Python 3.12 minimum. They ne
 Docker, sudo, GitHub credentials or graphical session. The isolated resolver regressions
 require `apt-get` and `apt-cache`; they use private cached indexes and simulated plans,
 without network access, package installation or host APT state changes. Source-access
-probes and user workers reuse the running CLI interpreter; the Debian quality image
+probes and user operations reuse the running application interpreter; the Debian quality image
 does not install a separate system Python.
 The locked development and application runtime remains Python 3.14.7.
 
@@ -18,11 +18,13 @@ make native-ci
 ```
 
 `native-check` runs `make CONTAINERIZED=1 check`: Ruff check/format, strict mypy,
-compilation, lock validation, read-only entrypoint checks and the full fixture suite.
+compilation, lock validation, ShellCheck, Ansible lint/syntax, read-only entrypoint
+checks and the full fixture suite. Ansible scratch data stays under ignored coverage/.
+Ansible-lint has a transitive Black dependency; project Python formatting still uses Ruff.
 Tests run once per supported runtime in CI. `native-build` creates one wheel and one
 sdist under `coverage/native-artifacts/`; `native-verify` installs the wheel and locked
 runtime dependencies into a disposable environment outside the source checkout.
-It checks metadata, noneditable wheel provenance, resources and actual CLI commands.
+It checks metadata, noneditable wheel provenance, resources and the public Textual entrypoint and headless navigation.
 `native-ci` runs those three targets in order. After changing the package version,
 choose a fresh `NATIVE_ARTIFACT_DIR` if the previous directory contains older artifacts.
 

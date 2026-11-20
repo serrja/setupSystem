@@ -13,11 +13,9 @@ from pathlib import Path
 from urllib.error import HTTPError
 
 import pytest
-from typer.testing import CliRunner
 
 from setup_system import downloads
 from setup_system.application import happ, workstation
-from setup_system.cli import workstation as commands
 from setup_system.planning import Platform
 
 
@@ -223,30 +221,6 @@ def test_http_failure_reports_only_status_and_host(
             happ.download_happ(root, home / "happ.deb")
     assert "403" in str(problem.value) and "github.com" in str(problem.value)
     assert secret not in str(problem.value) and "token=" not in str(problem.value)
-
-
-def test_prefetch_cli_and_offline_apply_forward_without_gui(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[tuple[str, object]] = []
-    monkeypatch.setattr(
-        workstation, "prefetch_workstation", lambda root: calls.append(("prefetch", root))
-    )
-
-    def apply(root: Path, profile: str, **options: object) -> Path:
-        calls.append(("offline", options["offline"]))
-        return tmp_path
-
-    monkeypatch.setattr(workstation, "apply", apply)
-    runner = CliRunner()
-    assert (
-        runner.invoke(commands.workstation_app, ["prefetch", "--profile", "hyprland"]).exit_code
-        == 0
-    )
-    result = runner.invoke(
-        commands.workstation_app, ["apply", "--profile", "hyprland", "--yes", "--offline"]
-    )
-    assert result.exit_code == 0 and calls[-1] == ("offline", True)
 
 
 def test_installed_matching_fonts_need_no_cache_or_network(

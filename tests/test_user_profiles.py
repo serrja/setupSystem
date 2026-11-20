@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
 from setup_system.application import user_profiles as profiles
 from setup_system.application.interaction import ConsoleInteraction
@@ -97,21 +96,3 @@ def test_unknown_profile_fails_before_plan_or_writes(
     with pytest.raises(ValueError, match=r"^Unknown setup profile$"):
         profiles.UserProfileService(tmp_path).run("unknown")
     assert not list(tmp_path.iterdir())
-
-
-def test_cli_delegates_profile_and_consent_and_keeps_exit_code(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from setup_system.cli import main, system
-
-    calls: list[tuple[str, bool]] = []
-
-    def run(self: profiles.UserProfileService, profile: str, *, yes: bool) -> int:
-        calls.append((profile, yes))
-        self.interaction.write("fixture application failure", error=True)
-        return 5
-
-    monkeypatch.setattr(system.UserProfileService, "run", run)
-    result = CliRunner().invoke(main.app, ["apply", "--profile", "happ", "--yes"])
-    assert result.exit_code == 5 and calls == [("happ", True)]
-    assert "fixture application failure" in result.output

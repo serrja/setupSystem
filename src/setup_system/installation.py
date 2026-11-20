@@ -760,7 +760,7 @@ class _PackageSession:
 
     commands: AptCommands
     sources: AptSources
-    pin: HappPin
+    pin: HappPin | None
     paths: SystemPaths
     run: Callable[..., subprocess.CompletedProcess[str]]
     emit: Callable[[str], None]
@@ -795,6 +795,8 @@ class _PackageSession:
         stage = self.commands.stage
         stage.chmod(0o700)
         local = stage / "happ.deb"
+        if self.pin is None:
+            raise ValueError("No Happ artifact was selected")
         _copy_happ(happ, target, local, self.pin.digest)
         metadata = self.execute(
             ["/usr/bin/dpkg-deb", "--field", str(local), "Package", "Version", "Architecture"]
@@ -811,9 +813,12 @@ class _PackageSession:
             directory.mkdir(mode=0o755)
             directory.chmod(0o755)
         # APT needs both its canonical archive alias and the original local input path offline.
-        os.link(
-            stage / "happ.deb", stage / "archives" / self.pin.cache_name(), follow_symlinks=False
-        )
+        if self.pin is not None:
+            os.link(
+                stage / "happ.deb",
+                stage / "archives" / self.pin.cache_name(),
+                follow_symlinks=False,
+            )
         source = stage / "debian.sources"
         source.write_text(self.sources.staging())
         source.chmod(0o644)
@@ -823,7 +828,11 @@ class _PackageSession:
         simulation = self.execute(self.commands.simulate())
         validate_simulation(simulation.stdout)
         self.commands = self.commands.freeze(
-            _freeze_selection(list(self.commands.selection), simulation.stdout, self.pin.version)
+            _freeze_selection(
+                list(self.commands.selection),
+                simulation.stdout,
+                self.pin.version if self.pin is not None else "",
+            )
         )
         self.checkpoint(InstallStage.DOWNLOADS, "resolution")
         self.emit("Stage: downloads (packages only; no installation or service changes)")
@@ -832,14 +841,19 @@ class _PackageSession:
 
     def install(self) -> None:
         self.checkpoint(InstallStage.PACKAGES, status=InstallStatus.RUNNING)
-        _check_existing_happ(self.pin.version, run=self.run)
-        _check_happ_unit_policy(self.paths)
+        if self.pin is not None:
+            _check_existing_happ(self.pin.version, run=self.run)
+            _check_happ_unit_policy(self.paths)
         self.emit("Stage: packages (offline network namespace; existing service starts deferred)")
         with _defer_services(self.paths.policy):
             self.execute(self.commands.apply(), timeout=PACKAGE_TIMEOUT, manager_offline=True)
         self.checkpoint(InstallStage.SOURCE, "packages")
         _write_system(self.paths.backports, self.sources.managed_backports(), 0o644)
-        self.checkpoint(InstallStage.HAPP_SERVICE, "source", status=InstallStatus.PACKAGES_COMPLETE)
+        self.checkpoint(
+            InstallStage.HAPP_SERVICE if self.pin else InstallStage.USER,
+            "source",
+            status=InstallStatus.PACKAGES_COMPLETE,
+        )
 
     def activate_happ(self) -> None:
         self.checkpoint(InstallStage.HAPP_SERVICE, status=InstallStatus.RUNNING)
@@ -880,16 +894,17 @@ def prepare_packages(
     root: Path,
     *,
     target: TargetUser,
-    happ: Path,
-    proxy: str | None,
+    happ: Path | None = None,
+    proxy: str | None = None,
     run: Callable[..., subprocess.CompletedProcess[str]] = run_command,
     paths: SystemPaths | None = None,
     release: dict[str, str] | None = None,
     architecture: str | None = None,
     emit: Callable[[str], None] = print,
     extra_packages: tuple[str, ...] = (),
+    graphical_login: bool = True,
 ) -> Iterator[PreparedPackages]:
-    """Download through an explicit proxy, then expose a fully offline package stage."""
+    """Acquire signed Debian packages directly; Happ is an explicit optional artifact."""
     paths = SystemPaths() if paths is None else paths
     if len(extra_packages) != len(set(extra_packages)) or any(
         package != "systemd-timesyncd" for package in extra_packages
@@ -898,7 +913,12 @@ def prepare_packages(
     packages = list(
         dict.fromkeys(
             (
-                *package_arguments(root=root, os_release=release, architecture=architecture),
+                *package_arguments(
+                    root=root,
+                    os_release=release,
+                    architecture=architecture,
+                    graphical_login=graphical_login,
+                ),
                 *extra_packages,
             )
         )
@@ -908,18 +928,27 @@ def prepare_packages(
     proxy = _loopback_proxy(proxy)
     if target.uid <= 0:
         raise ValueError("Happ installation needs a verified non-root target user")
-    validate_user_path(happ, target)
-    pin = HappPin.load(root / "manifests/happ.toml", apt_architecture)
+    if happ is not None:
+        validate_user_path(happ, target)
+    pin = HappPin.load(root / "manifests/happ.toml", apt_architecture) if happ else None
     sources = AptSources(policy.hyprland.codename, policy.hyprland.backports, paths.keyring)
     _validate_package_paths(paths, sources.managed_backports())
     validate_service_manager(root=root, run=run)
-    _check_existing_happ(pin.version, run=run)
+    if pin is not None:
+        _check_existing_happ(pin.version, run=run)
     _check_offline_namespace(run)
     with tempfile.TemporaryDirectory(prefix="setup-system-apt-", dir=paths.runtime) as temporary:
         stage = Path(temporary)
         session = _PackageSession(
             AptCommands(
-                stage, proxy, ("python3", "ca-certificates", *packages, str(stage / "happ.deb"))
+                stage,
+                proxy,
+                (
+                    "python3",
+                    "ca-certificates",
+                    *packages,
+                    *((str(stage / "happ.deb"),) if happ else ()),
+                ),
             ),
             sources,
             pin,
@@ -927,7 +956,8 @@ def prepare_packages(
             run,
             emit,
         )
-        session.stage_artifact(happ, target)
+        if happ is not None:
+            session.stage_artifact(happ, target)
         session.checkpoint(InstallStage.METADATA)
         prepared: PreparedPackages | None = None
         try:

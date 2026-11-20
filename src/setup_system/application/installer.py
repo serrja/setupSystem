@@ -1,34 +1,32 @@
-"""One installation use case shared by Textual, Typer and private user workers."""
+"""App-owned plan/apply service; viewing and saving intentions never elevate privileges."""
 
 from __future__ import annotations
 
+import json
 import os
-import shlex
+import platform
 import subprocess
-import sys
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from threading import Event, Lock
 from typing import Protocol
 
-from setup_system import installation as system
 from setup_system.application.interaction import ConsoleInteraction, Interaction
-from setup_system.desktop_system import DesktopPlan, DesktopSystem
 from setup_system.diagnostics import error_text
-from setup_system.installation_state import InstallStage
-from setup_system.network_session import NetworkReady, TemporaryNetwork
-from setup_system.runtime import RUNTIME_PYTHON, UV_VERSION, UserRuntime
-from setup_system.system_inspection import validate_home_access, validate_timezone
+from setup_system.domain.operations import Action, WorkstationPlan
+from setup_system.domain.settings import Section, SystemSettings, UserSettings
+from setup_system.infrastructure.config_store import ConfigStore, SettingsPaths
+from setup_system.infrastructure.privileged import PrivilegedExecutor
+from setup_system.infrastructure.theme import configure_targets, preview, render
+from setup_system.infrastructure.user_files import apply_files
+from setup_system.installation import TargetUser
 
 
 class Operation(StrEnum):
     PLAN = "plan"
     APPLY = "apply"
-    NETWORK_STAGE = "network-stage"
-    PREPARE_USER = "prepare-user"
-    USER_STAGE = "user-stage"
 
 
 @dataclass(frozen=True)
@@ -37,539 +35,371 @@ class InstallRequest:
     user: str | None = None
     yes: bool = False
     overrides: dict[str, Path] = field(default_factory=dict)
-    subscription_file: Path | None = None
     timezone: str | None = None
+    section: Section = Section.BASE
+    system: SystemSettings = field(default_factory=SystemSettings)
+    settings: UserSettings = field(default_factory=UserSettings)
 
 
-@dataclass(frozen=True)
-class InstallPlan:
-    target: system.TargetUser
-    environment: dict[str, str]
-    packages: tuple[str, ...]
-    desktop: DesktopPlan | None = None
-
-
-class RuntimePort(Protocol):
-    def lock(self) -> str | None: ...
-    def inputs(self) -> list[tuple[Path, bool]]: ...
-    def prepare(self) -> Path: ...
-    def existing(self) -> Path: ...
-
-
-class NetworkPort(Protocol):
-    def start(self, subscription: str | None) -> NetworkReady: ...
-    def close(self) -> None: ...
-
-
-class PackagesPort(Protocol):
-    def install(self) -> None: ...
-    def activate_happ(self) -> None: ...
-
-
-class NetworkFactory(Protocol):
-    def __call__(
-        self,
-        root: Path,
-        target: system.TargetUser,
-        environment: dict[str, str],
-        *,
-        subscription_file: Path | None = None,
-    ) -> NetworkPort: ...
-
-
-class PackageFactory(Protocol):
-    def __call__(
-        self,
-        root: Path,
-        *,
-        target: system.TargetUser,
-        happ: Path,
-        proxy: str | None,
-        paths: system.SystemPaths,
-        run: Callable[..., subprocess.CompletedProcess[str]],
-        emit: Callable[[str], None],
-        extra_packages: tuple[str, ...] = (),
-    ) -> AbstractContextManager[PackagesPort]: ...
-
-
-class DesktopPort(Protocol):
-    def plan(
-        self,
-        target: system.TargetUser,
-        environment: Mapping[str, str],
-        *,
-        timezone: str | None = None,
-    ) -> DesktopPlan | None: ...
-    def revalidate(self, plan: DesktopPlan) -> DesktopPlan: ...
-    def apply(self, plan: DesktopPlan) -> None: ...
-
-
-class UnsupportedTargetError(ValueError):
-    """The selected machine cannot execute this installation profile."""
-
-
-@dataclass
-class ApplyProgress:
-    stage: InstallStage = InstallStage.TEMPORARY_NETWORK
-    user_prepared: bool = False
-    user_configured: bool = False
-    desktop_configured: bool = False
-
-    def completed(self) -> tuple[str, ...]:
-        return tuple(
-            stage
-            for stage, done in (
-                ("user-downloads", self.user_prepared),
-                ("user-configuration", self.user_configured),
-                ("system-desktop", self.desktop_configured),
-            )
-            if done
-        )
+class Executor(Protocol):
+    def run(self, action: str, settings: dict[str, object]) -> None: ...
 
 
 class InstallationService:
-    """Own preflight and download/cleanup/offline-apply ordering behind explicit ports."""
+    """Keep one immutable running plan across navigation, with boundary cancellation."""
 
     def __init__(
         self,
         root: Path,
         *,
-        runtime: RuntimePort | None = None,
-        network: NetworkFactory = TemporaryNetwork,
-        packages: PackageFactory | None = None,
-        paths: system.SystemPaths | None = None,
         interaction: Interaction | None = None,
-        desktop: DesktopPort | None = None,
+        executor: Executor | None = None,
+        authorize: Callable[[], bool] | None = None,
+        identity: Callable[[str | None], TargetUser] | None = None,
     ) -> None:
+        self.root = root
+        self.identity = identity
         self.interaction = ConsoleInteraction() if interaction is None else interaction
-        self.root = root.resolve()
-        self.runtime = UserRuntime(self.root) if runtime is None else runtime
-        self.network = network
-        self.packages: PackageFactory = system.prepare_packages if packages is None else packages
-        self.paths = system.SystemPaths() if paths is None else paths
-        self.desktop: DesktopPort = (
-            DesktopSystem(self.root, run=system.run_command) if desktop is None else desktop
-        )
+        self.paths = SettingsPaths()
+        self.cancel = Event()
+        self._mutation = Lock()
+        self.completed: list[str] = []
+        self.authorize = authorize
+        self.executor = executor
+        if executor is None:
+            marker = self.paths.state / "release.json"
+            if marker.is_file() and not marker.is_symlink() and marker.stat().st_size < 8192:
+                record = json.loads(marker.read_text())
+                self.executor = PrivilegedExecutor(record["release"], record["source_sha"])
 
-    def plan(self, request: InstallRequest) -> InstallPlan:
-        timezone = validate_timezone(request.timezone)
-        try:
-            packages = tuple(system.current_packages(self.root))
-        except (OSError, ValueError) as exc:
-            raise UnsupportedTargetError(str(exc)) from exc
-        target = system.resolve_target(request.user)
-        environment = system.user_environment(target, request.overrides)
-        system.validate_installation_paths(self.root, target, environment)
-        for path in (
-            "uv.lock",
-            "pyproject.toml",
-            "manifests/platforms.toml",
-            "manifests/runtime.toml",
-            "manifests/network.toml",
-            "manifests/happ.toml",
-            "assets/hyprland/profile.lua",
-            "src/setup_system/_worker_entry.py",
-            "src/setup_system/worker_protocol.py",
-            "src/setup_system/application/interaction.py",
-            "src/setup_system/runtime.py",
-            "src/setup_system/capabilities.py",
-            "src/setup_system/downloads.py",
-            "src/setup_system/font_policy.py",
-            "src/setup_system/installation_state.py",
-            "src/setup_system/system_inspection.py",
-            "src/setup_system/desktop_system.py",
-            "assets/login/login_session.py",
-            "assets/login/greeter.css",
-            "assets/hyprland/panel.py",
-            "src/setup_system/adapters/debian/package_session.py",
-            "src/setup_system/application/installer.py",
-            "src/setup_system/network_worker.py",
-        ):
-            if not (self.root / path).is_file():
-                raise ValueError("Incomplete local source bundle")
-        self.runtime.lock()
-        system.validate_source_access(
-            self.root, target, self.runtime.inputs(), run=system.run_command
-        )
-        if request.subscription_file is not None:
-            from setup_system.network_worker import validate_subscription_file
+    def plan(self, request: InstallRequest) -> WorkstationPlan:
 
-            if not request.subscription_file.is_absolute():
-                raise ValueError("--vpn-config-file requires an absolute private filename")
-            try:
-                validate_subscription_file(request.subscription_file, target)
-            except (OSError, ValueError):
-                raise ValueError(
-                    "VPN input file is missing, unsafe or not privately owned"
-                ) from None
-        if request.operation in {Operation.PLAN, Operation.APPLY}:
-            try:
-                system.validate_service_manager(root=self.root, run=system.run_command)
-            except ValueError as exc:
-                raise UnsupportedTargetError(str(exc)) from exc
-        desktop = (
-            self.desktop.plan(target, environment, timezone=timezone)
-            if request.operation in {Operation.PLAN, Operation.APPLY}
-            else None
-        )
-        if desktop is not None:
-            packages = tuple(dict.fromkeys((*packages, *desktop.extra_packages)))
-        return InstallPlan(target, environment, packages, desktop)
+        from setup_system import installation as system
+        from setup_system.infrastructure.inspection import observations
 
-    def show_plan(self, plan: InstallPlan) -> None:
-        target = plan.target
-        self.interaction.write(
-            f"Hyprland plan for {target.name} (uid={target.uid}, gid={target.gid}), "
-            f"HOME={target.home}"
+        target = (
+            system.resolve_target(request.user)
+            if self.identity is None
+            else self.identity(request.user)
         )
-        self.interaction.write(
-            "1. Non-root temporary pinned Xray: hidden HTTPS subscription input; "
-            "loopback HTTP only."
-        )
-        self.interaction.write(
-            "2. Download and verify Happ, signed Debian/backports packages, "
-            "locked runtime and fonts."
-        )
-        self.interaction.write(
-            "3. Stop/remove the temporary client and its configuration before applying packages."
-        )
-        self.interaction.write(
-            "4. Offline package apply; defer vendor restarts, then start the required Happ helper."
-        )
-        self.interaction.write(
-            "5. Offline Typer user configuration with backups; "
-            "no automatic graphical session/reboot."
-        )
-        self.interaction.write("Packages: python3 ca-certificates happ " + " ".join(plan.packages))
-        self.interaction.write(
-            f"User runtime: uv {UV_VERSION}, Python {RUNTIME_PYTHON}; "
-            + plan.environment["XDG_CONFIG_HOME"]
-        )
-        self.interaction.write(
-            "Preserve network configuration, locale, login shell and session; "
-            "change timezone only when explicitly selected."
-        )
-        if plan.desktop is not None:
-            for detail in plan.desktop.describe():
-                self.interaction.write(detail)
-        self.interaction.write(
-            "Plan performs no downloads or metadata refresh. "
-            "Initial client/subscription access is required."
-        )
+        overrides = {
+            kind: Path(os.environ[f"XDG_{kind.upper()}_HOME"])
+            for kind in ("config", "data", "state", "cache")
+            if f"XDG_{kind.upper()}_HOME" in os.environ
+        }
+        overrides.update(request.overrides)
+        environment = system.user_environment(target, overrides)
+        from setup_system.system_inspection import validate_timezone
 
-    def _output(self, result: subprocess.CompletedProcess[str]) -> None:
-        if result.stdout:
-            self.interaction.write(result.stdout, end="")
-        if result.stderr:
-            self.interaction.write(result.stderr, end="", error=True)
-
-    def _user_action(self, plan: InstallPlan, *, prepare: bool) -> int:
-        os.environ.update(plan.environment)
-        runtime = self.runtime.prepare() if prepare else self.runtime.existing()
-        arguments = [str(runtime / "bin/setup-system"), "workstation"]
-        arguments += (
-            ["prefetch", "--profile", "hyprland"]
-            if prepare
-            else ["apply", "--profile", "hyprland", "--offline", "--yes"]
+        validate_timezone(request.system.timezone)
+        revision = None
+        if request.section == Section.BASE:
+            revision = ConfigStore(self.paths.system, SystemSettings, uid=0).read()[1]
+        release = platform.freedesktop_os_release()
+        supported = (
+            release.get("ID") == "debian"
+            and release.get("VERSION_ID") == "13"
+            and platform.machine() in {"x86_64", "aarch64", "arm64"}
         )
-        result = system.run_command(arguments, cwd=plan.target.home, timeout=900, check=False)
-        self._output(result)
-        if result.returncode:
-            self.interaction.write(f"FAILED user command: exit {result.returncode}", error=True)
-            return 5
-        return 0
+        blocked: tuple[str, ...] = (
+            () if supported else ("This action requires Debian 13 (trixie), amd64/arm64",)
+        )
+        if self.executor is None:
+            blocked += ("System apply requires a published release with native build provenance",)
+        actions: list[Action] = []
+        if request.section == Section.BASE:
+            if request.system.hyprland:
+                from setup_system.adapters.debian.hyprland import package_arguments
 
-    def _user_process(
-        self, plan: InstallPlan, operation: Operation, *, proxy: str | None = None
-    ) -> int:
-        from setup_system.worker_protocol import worker_arguments
-
-        validate_home_access(plan.target.home)
-        environment = dict(plan.environment)
-        if proxy is not None:
-            environment.update(HTTP_PROXY=proxy, HTTPS_PROXY=proxy)
-        offline = operation == Operation.USER_STAGE
-        if offline:
-            environment["UV_OFFLINE"] = "true"
-        arguments = [
-            sys.executable,
-            "-I",
-            "-B",
-            str(self.root / "src/setup_system/_worker_entry.py"),
-            *worker_arguments(operation, plan.target.name, environment),
-        ]
-        if offline:
-            # Create only this process's network namespace, then restore the real user's groups.
-            arguments = [
-                "/usr/bin/unshare",
-                "--net",
-                "--",
-                "/usr/bin/setpriv",
-                "--reuid",
-                str(plan.target.uid),
-                "--regid",
-                str(plan.target.gid),
-                "--init-groups",
-                *arguments,
-            ]
-            result = system.run_command(
-                arguments,
-                cwd=plan.target.home,
-                env=environment,
-                umask=0o077,
-                timeout=1200,
-                termination_grace=15,
-                check=False,
-            )
+                try:
+                    packages = package_arguments(
+                        root=self.root, graphical_login=request.system.graphical_login
+                    )
+                except ValueError as exc:
+                    packages = []
+                    blocked += (str(exc),)
+                actions.append(
+                    Action(
+                        "base",
+                        "Signed official Debian/backports packages: " + " ".join(packages),
+                        True,
+                        blocked,
+                    )
+                )
+                actions.append(
+                    Action("desktop_files", "User Hyprland, portals, fonts and shared theme")
+                )
+            if request.system.graphical_login and not request.system.hyprland:
+                actions.append(
+                    Action(
+                        "login", "Graphical login", True, ("Select Hyprland before applying login",)
+                    )
+                )
+            if request.system.plymouth:
+                actions.append(
+                    Action(
+                        "plymouth",
+                        "Native encrypted-disk unlock theme",
+                        True,
+                        (
+                            "Initramfs/bootloader recovery requires a validated disposable target; "
+                            "existing unlock remains unchanged",
+                        ),
+                    )
+                )
         else:
-            result = system.run_command(
-                arguments,
-                cwd=plan.target.home,
-                env=environment,
-                user=plan.target.uid,
-                group=plan.target.gid,
-                extra_groups=os.getgrouplist(plan.target.name, plan.target.gid),
-                umask=0o077,
-                timeout=2400,
-                termination_grace=15,
-                check=False,
-            )
-        self._output(result)
-        return result.returncode if result.returncode >= 0 else 5
+            actions.append(Action("theme", preview(request.settings.theme)))
+            workspace_packages = self.workspace_packages(request.settings)
+            if workspace_packages or request.settings.happ:
+                actions.append(
+                    Action(
+                        "workspace_packages",
+                        "Official Debian packages: " + " ".join(workspace_packages),
+                        True,
+                        blocked,
+                    )
+                )
+            if request.settings.neovim:
+                actions.append(
+                    Action(
+                        "neovim", "Pinned Neovim and existing lazy/blink/LSP/editor configuration"
+                    )
+                )
+            if request.settings.firefox:
+                actions.append(
+                    Action(
+                        "firefox",
+                        "Firefox Strict tracking protection, HTTPS-Only and uBlock Origin",
+                    )
+                )
+            if request.settings.codex:
+                actions.append(
+                    Action(
+                        "codex",
+                        "Pinned official Codex CLI; preserve model and native authorization",
+                    )
+                )
+            if request.settings.chatgpt:
+                actions.append(
+                    Action(
+                        "chatgpt",
+                        "Official ChatGPT Desktop",
+                        True,
+                        (
+                            "UNAVAILABLE: official Linux download returned HTTP 403; "
+                            "version and checksum could not be verified",
+                        ),
+                    )
+                )
+            for name in request.settings.optional_apps:
+                actions.append(
+                    Action(
+                        name,
+                        "Optional application",
+                        False,
+                        ("UNAVAILABLE: no verified package adapter for " + name,),
+                    )
+                )
+            if "python" in request.settings.language_profiles:
+                actions.append(Action("python_tools", "Hash-locked Ruff and one basedpyright LSP"))
+            for profile in request.settings.language_profiles:
+                if profile != "python":
+                    actions.append(
+                        Action(
+                            "languages",
+                            profile,
+                            False,
+                            ("UNAVAILABLE: this language profile has no validated delivery lock",),
+                        )
+                    )
+            if request.settings.cleanup:
+                actions.append(Action("cleanup", "Explicit package removal only", True, blocked))
+        return WorkstationPlan(
+            request.section,
+            request.system,
+            request.settings,
+            tuple(actions),
+            (
+                f"Machine: {release.get('PRETTY_NAME', 'unknown')} / {platform.machine()}",
+                "Network, SSH, existing sessions, disks and native password prompts are preserved.",
+                *observations(target.home),
+                "GPU, monitor/HiDPI, boot/unlock and GUI success require a real target smoke test.",
+            ),
+            environment=tuple(
+                (kind, environment[f"XDG_{kind.upper()}_HOME"])
+                for kind in ("config", "data", "state", "cache")
+            ),
+            system_revision=revision,
+        )
+
+    @staticmethod
+    def workspace_packages(settings: UserSettings) -> tuple[str, ...]:
+        packages: list[str] = []
+        if settings.firefox:
+            packages.append("firefox-esr")
+        if settings.developer_tools:
+            packages.extend(("git", "gh", "zsh", "ripgrep", "fzf"))
+        if settings.neovim:
+            packages.append("git")
+        return tuple(dict.fromkeys(packages))
+
+    def show_plan(self, plan: WorkstationPlan) -> None:
+        for line in plan.describe():
+            self.interaction.write(line)
 
     def run(self, request: InstallRequest) -> int:
-        private = request.operation in {
-            Operation.USER_STAGE,
-            Operation.PREPARE_USER,
-            Operation.NETWORK_STAGE,
-        }
-        if private and os.geteuid() == 0:
-            self.interaction.write("Refusing root user-stage.", error=True)
-            return 2
-        if request.operation == Operation.PLAN and request.yes:
-            self.interaction.write("--yes belongs to apply.", error=True)
-            return 2
         try:
             plan = self.plan(request)
-        except UnsupportedTargetError as exc:
-            self.interaction.write(f"UNSUPPORTED: {exc}. No changes made.", error=True)
-            return 4
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            self.interaction.write(f"Preflight failed: {error_text(exc)}", error=True)
-            return 2
-        if private:
-            return self._run_private(plan, request)
-        self.show_plan(plan)
-        if request.operation == Operation.PLAN:
-            return 0
-        if not self._consent(request):
-            return 2
-        return self._apply(plan, request)
-
-    def _run_private(self, plan: InstallPlan, request: InstallRequest) -> int:
-        try:
-            validate_home_access(plan.target.home)
-            if request.operation == Operation.NETWORK_STAGE:
-                from setup_system.network_worker import serve_network
-
-                os.environ.update(plan.environment)
-                return serve_network(self.root, plan.target, request.subscription_file)
-            return self._user_action(plan, prepare=request.operation == Operation.PREPARE_USER)
-        except (
-            OSError,
-            ValueError,
-            RuntimeError,
-            subprocess.SubprocessError,
-            KeyboardInterrupt,
-        ) as exc:
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self.interaction.write(
-                f"FAILED user runtime/configuration: {type(exc).__name__}: {error_text(exc)}",
+                "Preflight failed; no operation started: " + error_text(exc), error=True
+            )
+            return 2
+        try:
+            self.show_plan(plan)
+            if request.operation == Operation.PLAN:
+                return 4 if plan.blockers else 0
+            if not self._mutation.acquire(blocking=False):
+                self.interaction.write("Another mutating operation is already running")
+                return 2
+            try:
+                self.cancel.clear()
+                self.completed = []
+                if plan.blockers:
+                    return 4
+                if not request.yes and not self.interaction.confirm(
+                    "Apply this fixed plan snapshot?\n" + "\n".join(plan.describe())
+                ):
+                    return 2
+                if any(action.privileged for action in plan.actions):
+                    if self.authorize is None or not self.authorize():
+                        self.interaction.write("Privilege authorization was not granted")
+                        return 2
+                for action in plan.actions:
+                    if self.cancel.is_set() or self.interaction.cancelled:
+                        self.interaction.write(
+                            "CANCELLED at a safe boundary; completed: " + ", ".join(self.completed)
+                        )
+                        return 3
+                    self.interaction.write("Running: " + action.id)
+                    self._apply(action.id, plan)
+                    self.completed.append(action.id)
+                self.interaction.write("Complete; no reboot or graphical session was started")
+                return 0
+            finally:
+                self._mutation.release()
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            self.interaction.write(
+                "PARTIAL/FAILED: " + error_text(exc) + "; completed: " + ", ".join(self.completed),
                 error=True,
             )
             return 5
 
-    def _consent(self, request: InstallRequest) -> bool:
-        if os.geteuid() != 0:
-            self.interaction.write(
-                "Run setup-system install apply with root privileges and a verified target user.",
-                error=True,
+    def _apply(self, action: str, plan: WorkstationPlan) -> None:
+        if action == "base":
+            assert self.executor is not None
+            self.executor.run(
+                "base",
+                {
+                    **plan.system.model_dump(mode="json"),
+                    "xdg": dict(plan.environment),
+                    "expected_system_sha256": plan.system_revision,
+                },
             )
-            return False
-        if not request.yes:
-            if not self.interaction.interactive:
-                self.interaction.write("No TTY: apply requires explicit --yes consent.", error=True)
-                return False
-            if not self.interaction.confirm("Apply the complete plan?"):
-                return False
-        if request.subscription_file is None and not self.interaction.interactive:
-            self.interaction.write(
-                "No TTY: temporary VPN requires a private --vpn-config-file.", error=True
+        elif action == "workspace_packages":
+            assert self.executor is not None
+            self.executor.run(
+                "workspace_packages",
+                {"packages": list(self.workspace_packages(plan.user)), "happ": plan.user.happ},
             )
-            return False
-        return True
+        elif action == "desktop_files":
+            from setup_system.application import workstation
 
-    def _apply(self, plan: InstallPlan, request: InstallRequest) -> int:
-        try:
-            from setup_system.network_worker import subscription_address
+            workstation.apply(
+                self.root, "hyprland", theme=plan.user.theme, keyboard=plan.system.keyboard
+            )
+        elif action == "theme":
+            from setup_system.application.workstation import _targets
 
-            subscription = (
-                None
-                if request.subscription_file is not None
-                else subscription_address(self.interaction.subscription())
+            apply_files(
+                configure_targets(
+                    _targets(self.root, "hyprland"), plan.user.theme, keyboard=plan.system.keyboard
+                )
             )
-        except (EOFError, OSError, ValueError):
-            self.interaction.write(
-                "A valid hidden HTTPS subscription or private input file is required.",
-                error=True,
-            )
-            return 2
-        progress = ApplyProgress()
-        try:
-            validate_home_access(plan.target.home)
-            network = self.network(
-                self.root,
-                plan.target,
-                plan.environment,
-                subscription_file=request.subscription_file,
-            )
-            self.interaction.write(
-                "Stage: temporary download network and verified Happ artifact", flush=True
-            )
-            try:
-                ready = network.start(subscription)
-                subscription = None
-                self._apply_packages(plan, network, ready, progress)
-            finally:
-                network.close()
-            system.mark_user_stage(self.paths, "complete", completed=progress.completed())
-        except (
-            OSError,
-            ValueError,
-            RuntimeError,
-            subprocess.SubprocessError,
-            KeyboardInterrupt,
-        ) as exc:
-            return self._failed(progress, exc)
-        return self._complete(plan)
+        elif action == "neovim":
+            from setup_system.application.terminal_dev import install_neovim, install_plugins
+            from setup_system.planning import detect_platform
 
-    def _apply_packages(
-        self,
-        plan: InstallPlan,
-        network: NetworkPort,
-        ready: NetworkReady,
-        progress: ApplyProgress,
-    ) -> None:
-        progress.stage = InstallStage.PACKAGE_DOWNLOADS
-        extra = plan.desktop.extra_packages if plan.desktop is not None else ()
-        with self.packages(
-            self.root,
-            target=plan.target,
-            happ=ready.happ,
-            proxy=ready.http_proxy,
-            paths=self.paths,
-            run=system.run_command,
-            emit=self.interaction.write,
-            extra_packages=extra,
-        ) as packages:
-            progress.stage = InstallStage.USER_DOWNLOADS
-            self.interaction.write("Stage: locked user runtime and font downloads", flush=True)
-            code = self._user_process(plan, Operation.PREPARE_USER, proxy=ready.http_proxy)
-            if code:
-                raise RuntimeError(f"User downloads failed with exit {code}")
-            progress.user_prepared = True
-            progress.stage = InstallStage.TEMPORARY_NETWORK_CLEANUP
-            network.close()
-            self.interaction.write(
-                "Temporary download client/config removed; "
-                "package and user-file apply use offline namespaces.",
-                flush=True,
+            install_neovim(self.root, detect_platform())
+            files = {
+                self.paths.user.parent.parent
+                / "nvim"
+                / p.relative_to(self.root / "assets/nvim"): render(p.read_text()).encode()
+                for p in (self.root / "assets/nvim").rglob("*")
+                if p.is_file()
+            }
+            files[self.paths.user.parent / "editor.json"] = b'{"EDITOR":"nvim","VISUAL":"nvim"}\n'
+            files[self.paths.user.parent.parent / "environment.d/90-setup-system-editor.conf"] = (
+                b"EDITOR=nvim\nVISUAL=nvim\nGIT_EDITOR=nvim\n"
             )
-            progress.stage = InstallStage.PACKAGES
-            packages.install()
-            progress.stage = InstallStage.HAPP_SERVICE
-            packages.activate_happ()
-            progress.stage = InstallStage.USER
-            self.interaction.write("Stage: offline user configuration through Typer", flush=True)
-            code = self._user_process(plan, Operation.USER_STAGE)
-            if code:
-                raise RuntimeError(f"User configuration failed with exit {code}")
-            progress.user_configured = True
-            if plan.desktop is not None:
-                progress.stage = InstallStage.SYSTEM_DESKTOP
-                system.mark_user_stage(
-                    self.paths,
-                    "running",
-                    stage=progress.stage,
-                    completed=progress.completed(),
-                )
-                self.interaction.write(
-                    "Stage: graphical login, existing encryption, clock and GRUB", flush=True
-                )
-                desktop_plan = self.desktop.revalidate(plan.desktop)
-                self.desktop.apply(desktop_plan)
-                progress.desktop_configured = True
+            apply_files(files)
+            install_plugins(self.root)
+            os.environ.update(EDITOR="nvim", VISUAL="nvim", GIT_EDITOR="nvim")
+        elif action == "python_tools":
+            from setup_system.infrastructure.language_tools import install_python_tools
 
-    def _failed(self, progress: ApplyProgress, exc: BaseException) -> int:
-        paths = self.paths
-        if paths.journal.is_file() and not paths.journal.is_symlink():
-            try:
-                system.mark_user_stage(
-                    paths,
-                    "failed",
-                    stage=None
-                    if progress.stage
-                    in {
-                        InstallStage.PACKAGE_DOWNLOADS,
-                        InstallStage.PACKAGES,
-                        InstallStage.HAPP_SERVICE,
-                    }
-                    else progress.stage,
-                    completed=progress.completed(),
+            install_python_tools()
+        elif action == "firefox":
+            from setup_system.infrastructure.app_configs import configure_firefox
+
+            configure_firefox()
+        elif action == "codex":
+            from setup_system.infrastructure.app_configs import configure_codex
+
+            configure_codex(self.root)
+        elif action == "cleanup":
+            import shutil
+
+            from setup_system.infrastructure.cleanup import preview as cleanup_preview
+
+            editor_verified = (
+                os.environ.get("EDITOR") == "nvim"
+                and os.environ.get("VISUAL") == "nvim"
+                and shutil.which("nvim") is not None
+            )
+            if editor_verified:
+                editor_verified = (
+                    subprocess.run(
+                        ["nvim", "--clean", "--headless", "+q"],
+                        capture_output=True,
+                        check=False,
+                        timeout=30,
+                    ).returncode
+                    == 0
                 )
-            except (OSError, ValueError) as journal_error:
-                self.interaction.write(
-                    f"Journal update failed: {error_text(journal_error)}", error=True
-                )
-            journal = f"journal: {paths.journal}"
+            report = cleanup_preview(plan.user.cleanup, editor_verified=editor_verified)
+            self.interaction.write(report.simulation)
+            if not report.requested:
+                return
+            if not self.interaction.confirm(
+                "Remove exactly these packages: "
+                + ", ".join(sorted(report.removed))
+                + "?\n"
+                + report.simulation
+            ):
+                raise ValueError("Package removal cancelled")
+            assert self.executor is not None
+            self.executor.run(
+                "cleanup",
+                {
+                    "packages": sorted(report.requested),
+                    "mode": plan.user.cleanup_mode,
+                    "closure": sorted(report.removed),
+                    "xdg": dict(plan.environment),
+                },
+            )
         else:
-            journal = "journal not created (failure before the first record)"
-        self.interaction.write(
-            f"FAILED installation stage {progress.stage}: {error_text(exc)}; {journal}. "
-            "No APT rollback is promised.",
-            error=True,
-        )
-        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-            self.interaction.write(error_text(exc.stderr), error=True)
-        return 5
+            raise ValueError("No verified adapter for action: " + action)
 
-    def _complete(self, plan: InstallPlan) -> int:
-        launcher = Path(plan.environment["XDG_DATA_HOME"]) / "setup-system/bin/start-hyprland"
-        recovery = launcher.parent.parent / "runtime/bin/setup-system"
-        self.interaction.write(
-            "Installation completed; REAL LOGIN/GUI must be checked on the target machine."
-        )
-        if plan.desktop is not None:
-            self.interaction.write(
-                "Next normal boot: authenticate on the graphical login screen as "
-                + plan.target.name
-                + "; Hyprland starts after authentication. No reboot performed."
-            )
-            self.interaction.write(
-                "GRUB menu delay is zero; existing encrypted-disk unlock prompts remain. "
-                "TTY recovery: Ctrl+Alt+F3."
-            )
-        self.interaction.write(
-            "TTY fallback: log in locally as "
-            + plan.target.name
-            + " and run: "
-            + shlex.quote(str(launcher))
-        )
-        self.interaction.write(
-            "Open Happ from the launcher and use its native subscription import; "
-            "no secret link was saved."
-        )
-        self.interaction.write("Log out: Super+F9 then Logout; switch to TTY with Ctrl+Alt+F3.")
-        self.interaction.write(
-            "Recovery preview: " + shlex.quote(str(recovery)) + " workstation restore BACKUP_ID"
-        )
-        return 0
+    def save_user(self, settings: UserSettings, expected: str | None) -> str:
+        return ConfigStore(self.paths.user, UserSettings).save(settings, expected)

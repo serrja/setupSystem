@@ -17,8 +17,8 @@ from setup_system.installation_state import (
     InstallStatus as InstallStatus,
 )
 
-DEBIAN_ARCHIVE = "http://deb.debian.org/debian"
-DEBIAN_SECURITY = "http://security.debian.org/debian-security"
+DEBIAN_ARCHIVE = "https://deb.debian.org/debian"
+DEBIAN_SECURITY = "https://security.debian.org/debian-security"
 APT_TIMEOUT = 180
 PACKAGE_TIMEOUT = 1800
 SERVICE_QUERY_TIMEOUT = 30
