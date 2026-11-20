@@ -1,4 +1,4 @@
-"""Read-only planning shared by the installation service and the Typer CLI."""
+"""Read-only planning shared by application services and Textual."""
 
 from __future__ import annotations
 
@@ -193,7 +193,7 @@ def create_plan(root: Path, profile: str | UserProfile = UserProfile.BASE) -> Pl
                 "Install and configure Zsh as the current user's default shell",
                 "package privilege and login behavior",
                 "targeted sudo for package; current-user chsh for login shell",
-                "setup-system apply --profile terminalDev --yes",
+                "Open setup-system and select the corresponding Workspace action",
             ),
             Step(
                 "terminalDev.tools",
@@ -202,7 +202,7 @@ def create_plan(root: Path, profile: str | UserProfile = UserProfile.BASE) -> Pl
                 "Install pinned Neovim and plugins from verified upstream commits",
                 "network and executable code",
                 "user",
-                "setup-system apply --profile terminalDev --yes",
+                "Open setup-system and select the corresponding Workspace action",
             ),
             Step(
                 "terminalDev.config",
@@ -223,7 +223,7 @@ def create_plan(root: Path, profile: str | UserProfile = UserProfile.BASE) -> Pl
                 "Preserve installed Happ; otherwise verify the pinned official release",
                 "system package and possible desktop permissions",
                 "targeted sudo on Debian only",
-                "setup-system happ setup --yes",
+                "Open setup-system and select the corresponding Workspace action",
             ),
             Step(
                 "happ.nativeAutostart",
@@ -232,7 +232,7 @@ def create_plan(root: Path, profile: str | UserProfile = UserProfile.BASE) -> Pl
                 "Read back native autostart; UI action is required where no supported API exists",
                 "login behavior",
                 "user",
-                "setup-system happ configureAutostart",
+                "Open setup-system and select the corresponding Workspace action",
             ),
         )
     return Plan(platform, steps, observed)

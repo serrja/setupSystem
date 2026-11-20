@@ -1,6 +1,6 @@
-"""Run the installed application through its canonical Typer composition."""
+"""Open the same installed Textual application as setup-system."""
 
-from setup_system.cli.main import app
+from setup_system.entrypoint import main
 
 if __name__ == "__main__":
-    app()
+    main()

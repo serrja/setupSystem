@@ -1,7 +1,7 @@
 local managerPath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if vim.fn.isdirectory(managerPath) == 0 then
   vim.notify(
-    "Plugins are unavailable. Run: setup-system apply --profile terminalDev --yes",
+    "Plugins are unavailable. Open setup-system, select Workspace / Neovim and Apply",
     vim.log.levels.WARN
   )
   return

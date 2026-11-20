@@ -6,22 +6,22 @@
   border: none;
   border-radius: 0;
 }
-window#waybar { background: rgba(24, 24, 37, 0.96); color: #cdd6f4; border-radius: 14px; }
-#custom-launcher, #custom-power { color: #89b4fa; padding: 0 14px; font-size: 20px; }
-#clock { color: #f5e0dc; font-weight: bold; padding: 0 14px; }
-.workspace { color: #6c7086; min-width: 20px; margin: 5px 1px; padding: 0 5px; border-radius: 9px; }
-.workspace.occupied { color: #cdd6f4; }
-.workspace.active { color: #11111b; background: #89b4fa; font-weight: bold; }
-#language, #pulseaudio, #network, #backlight, #battery { background: #313244; padding: 0 10px; margin: 5px 2px; border-radius: 9px; }
-#battery.charging, #battery.full { color: #a6e3a1; }
-#battery.warning { color: #f9e2af; }
-#battery.critical { color: #f38ba8; }
-#network.disconnected, #pulseaudio.muted { color: #a6adc8; }
+window#waybar { background: rgba({{ mantle_rgb }}, 0.96); color: {{ text }}; border-radius: 14px; }
+#custom-launcher, #custom-power { color: {{ green }}; padding: 0 14px; font-size: 20px; }
+#clock { color: {{ rosewater }}; font-weight: bold; padding: 0 14px; }
+.workspace { color: {{ subtext0 }}; min-width: 20px; margin: 5px 1px; padding: 0 5px; border-radius: 9px; }
+.workspace.occupied { color: {{ text }}; }
+.workspace.active { color: {{ crust }}; background: {{ green }}; font-weight: bold; }
+#language, #pulseaudio, #network, #backlight, #battery { background: {{ surface0 }}; padding: 0 10px; margin: 5px 2px; border-radius: 9px; }
+#battery.charging, #battery.full { color: {{ green }}; }
+#battery.warning { color: {{ yellow }}; }
+#battery.critical { color: {{ red }}; }
+#network.disconnected, #pulseaudio.muted { color: {{ subtext0 }}; }
 #tray { padding: 0 10px; }
-tooltip { background: #181825; border: 1px solid #45475a; border-radius: 10px; }
-window#window { background: #1e1e2e; color: #cdd6f4; border: 2px solid #89b4fa; border-radius: 16px; }
+tooltip { background: {{ mantle }}; border: 1px solid {{ surface1 }}; border-radius: 10px; }
+window#window { background: {{ base }}; color: {{ text }}; border: 2px solid {{ green }}; border-radius: 16px; }
 #outer-box { padding: 16px; }
-#input { background: #313244; color: #cdd6f4; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; }
+#input { background: {{ surface0 }}; color: {{ text }}; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; }
 #entry { padding: 10px; border-radius: 10px; }
-#entry:selected { background: #45475a; color: #89b4fa; }
+#entry:selected { background: {{ surface1 }}; color: {{ green }}; }
 #img { margin-right: 12px; }

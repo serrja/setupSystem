@@ -57,6 +57,9 @@ help:
 install:
 	$(UV) sync --locked
 lint:
+	$(UV) run --locked shellcheck install.sh assets/hyprland/*.sh assets/hyprland/start-hyprland
+	ANSIBLE_HOME="$(CURDIR)/coverage/ansible" $(UV) run --locked ansible-lint --offline src/setup_system/resources/user_files.yml
+	ANSIBLE_HOME="$(CURDIR)/coverage/ansible" $(UV) run --locked ansible-playbook --syntax-check -i localhost, src/setup_system/resources/user_files.yml
 	$(RUFF) check .
 	$(RUFF) format --check .
 	$(RUFF) format --check --line-length 88 docker/release.py docker/python_release.py

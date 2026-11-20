@@ -1,5 +1,5 @@
 #!/bin/sh
-# Deliver a versioned CLI as the real user; all system setup belongs to Textual/Typer.
+# Deliver a versioned CLI as the real user; all system setup belongs to Textual.
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -35,6 +35,8 @@ fetch() {
     else
         # APT's native HTTPS transport needs no additional package installation.
         blocks=$(( (limit + 511) / 512 ))
+        # Positional parameters expand in the bounded child, not in this shell.
+        # shellcheck disable=SC2016
         as_user sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$blocks" \
             /usr/bin/timeout --kill-after=5s 300s /usr/lib/apt/apt-helper \
             -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true \
@@ -72,7 +74,7 @@ policy_value() {
     printf '%s\n' "$value"
 }
 bootstrap_main() {
-    release= target=
+    release='' target=''
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --help|-h) usage; return 0 ;;
@@ -87,6 +89,7 @@ bootstrap_main() {
     printf '%s\n' "$release" | /bin/grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+)?$' || fail 'Use an explicit versioned release'
     [ "$(uname -s)" = Linux ] && [ "$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = debian ] || fail 'This bootstrap requires Debian'
     if [ -n "${SUDO_USER-}" ]; then
+        [ "$(id -u)" -eq 0 ] || fail 'Sudo identity is only valid for a root bootstrap caller'
         [ -z "$target" ] || [ "$target" = "$SUDO_USER" ] || fail 'Explicit user differs from sudo caller'
         target=$SUDO_USER
         [ "${SUDO_UID-}" = "$(id -u "$target")" ] && \
@@ -98,7 +101,6 @@ bootstrap_main() {
         current=$(id -un)
         [ -z "$target" ] || [ "$target" = "$current" ] || fail 'Use the current normal user'
         target=$current
-        command -v sudo >/dev/null || fail 'Use root with --user when sudo is unavailable'
     fi
     printf '%s\n' "$target" | /bin/grep -Eq '^[a-z_][a-z0-9_-]*[$]?$' || fail 'Invalid target user'
     [ "$(id -u "$target")" -ne 0 ] || fail 'Root is not a desktop user'
@@ -107,7 +109,7 @@ bootstrap_main() {
     case "$target_home" in /*) ;; *) fail 'Target HOME must be absolute' ;; esac
     [ -d "$target_home" ] && [ ! -L "$target_home" ] && \
         [ "$(stat -c %u "$target_home")" = "$(id -u "$target")" ] || fail 'Unsafe target HOME'
-    for relative in .local .local/share .local/share/setup-system \
+    for relative in .local .local/bin .local/share .local/share/setup-system \
         .local/share/setup-system/bin .local/share/setup-system/python \
         .local/share/setup-system/runtime .local/share/setup-system/releases \
         .cache .cache/setup-system .cache/setup-system/uv; do
@@ -115,14 +117,19 @@ bootstrap_main() {
         [ ! -L "$path" ] || fail 'Managed runtime paths must not traverse symlinks'
         if [ -e "$path" ]; then
             [ -d "$path" ] && [ "$(stat -c %u "$path")" = "$(id -u "$target")" ] || fail 'Unsafe managed runtime directory'
+            mode=$(stat -c %a "$path")
+            [ "$((0$mode & 022))" -eq 0 ] || fail 'Managed runtime directory is writable by others'
         fi
     done
     for tool in tar sha256sum awk mktemp runuser timeout find findmnt; do
         command -v "$tool" >/dev/null || fail "Missing bootstrap prerequisite: $tool"
     done
     command -v curl >/dev/null || [ -x /usr/lib/apt/apt-helper ] || fail 'No supported HTTPS downloader'
-    [ -t 1 ] && ( : </dev/tty ) 2>/dev/null || fail 'An interactive terminal is required'
+    if [ ! -t 1 ] || ! ( : </dev/tty ) 2>/dev/null; then
+        fail 'An interactive terminal is required'
+    fi
     case "$(uname -m)" in x86_64) architecture=amd64 ;; aarch64|arm64) architecture=arm64 ;; *) fail 'Unsupported architecture' ;; esac
+    [ "$(awk -F= '$1 == "VERSION_ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)" = 13 ] || fail 'This workstation requires Debian 13'
     check_home_unlock
     # The private user-owned workspace is never a privileged extraction destination.
     workspace=$(as_user mktemp -d /tmp/setup-system-delivery.XXXXXXXX)
@@ -155,6 +162,7 @@ bootstrap_main() {
     native=$(printf '%s' "${release#v}" | sed 's/-dev\./.dev/')
     base=https://github.com/serrja/setupSystem/releases/download/$release
     fetch "$base/checksums.sha256" "$workspace/checksums.sha256" 32768
+    fetch "$base/python-build-receipt.json" "$workspace/python-build-receipt.json" 262144
     archive=setup_system-$native.tar.gz
     fetch "$base/$archive" "$workspace/$archive"
     expected=$(awk -v file="$archive" '$2 == file { print $1 }' "$workspace/checksums.sha256")
@@ -187,15 +195,19 @@ PYTHON
     source=$workspace/source/setup_system-$native
     [ -d "$source/src/setup_system" ] && [ -f "$source/uv.lock" ] || fail 'Incomplete release source'
     as_user "$uv_command" run --no-project --python "$python" --no-config -- python -I -B \
-        "$source/src/setup_system/_delivery_entry.py" "$source" "$release" "$uv_command"
+        "$source/src/setup_system/_delivery_entry.py" "$source" "$release" "$uv_command" \
+        "$workspace/python-build-receipt.json"
     source=$target_home/.local/share/setup-system/releases/$release
     executable=$target_home/.local/share/setup-system/runtime/bin/python
     as_user rm -rf -- "$workspace"
     trap - EXIT
     exec </dev/tty
     if [ "$(id -u)" -eq 0 ]; then
-        exec "$executable" -I -B -m setup_system --source "$source" --user "$target"
+        exec runuser -u "$target" -- env -i HOME="$target_home" USER="$target" LOGNAME="$target" \
+            PATH="$target_home/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin" TERM="${TERM:-xterm-256color}" \
+            "$executable" -I -B -m setup_system --source "$source"
     fi
-    exec sudo -- "$executable" -I -B -m setup_system --source "$source"
+    exec env HOME="$target_home" USER="$target" LOGNAME="$target" \
+        "$executable" -I -B -m setup_system --source "$source"
 }
 bootstrap_main "$@"

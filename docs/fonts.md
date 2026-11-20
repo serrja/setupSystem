@@ -16,33 +16,33 @@ edits require review. User files outside these owned paths remain untouched.
 ## Apply the selected profile
 
 ```bash
-setup-system workstation plan --profile fonts
-setup-system workstation apply --profile fonts --yes
-setup-system workstation doctor --profile fonts
+# Textual: Workspace / Tools / font_plan (Name = optional terminal profile UUID)
+# Textual: Workspace / Tools / font_apply (Data = explicit JSON options)
+# Textual: Workspace / Tools / font_plan (Name = optional terminal profile UUID)
 ```
 
 Noto Color Emoji must already be installed from the current distro. This portable
 profile does not install Debian packages on Ubuntu. GNOME changes are opt-in:
 
 ```bash
-setup-system workstation apply --profile fonts --gnome --yes
+# Textual: Workspace / Tools / font_apply (Data = explicit JSON options)
 gsettings get org.gnome.Terminal.ProfilesList list
-setup-system workstation doctor --profile fonts --terminal-profile EXISTING_UUID
-setup-system workstation apply --profile fonts --terminal-profile EXISTING_UUID --yes
+# Textual: Workspace / Tools / font_plan (Name = optional terminal profile UUID)
+# Textual: Workspace / Tools / font_apply (Data = explicit JSON options)
 ```
 
-`--gnome` changes only UI/document/monospace/title fonts, with manifest-owned sizes.
+The explicit `gnome` option changes only UI/document/monospace/title fonts, with manifest-owned sizes.
 The selected existing GNOME Terminal profile keeps its current font size. A profile
 using the system font requires separate review; that preference is not toggled.
 Only after diagnosing increased **profile cell spacing**, reset that profile:
 
 ```bash
-setup-system workstation apply --profile fonts --terminal-profile EXISTING_UUID --reset-terminal-cell-spacing --yes
+# Textual: Workspace / Tools / font_apply (Data = explicit JSON options)
 ```
 
 This opt-in resets only `cell-width-scale` and `cell-height-scale` to `1.0`; they
 change cell spacing, not glyph shape or display DPI. It does not reset window-local
-zoom. If both values are already `1.0`, this flag is not a repair for another cause.
+zoom. If both values are already `1.0`, this option is not a repair for another cause.
 GNOME Terminal's [100% / Ctrl+0 action](https://help.gnome.org/gnome-terminal/app-zoom.html)
 resets zoom in the selected window; capture the prior zoom before changing it.
 Screen scale, locale, TERM, shell, theme and application-specific font overrides
@@ -70,7 +70,7 @@ Use this separate opt-in only for an existing profile already using the installe
 primary Regular font:
 
 ```bash
-setup-system workstation apply --profile fonts --terminal-profile EXISTING_UUID --refresh-terminal-font --yes
+# Textual: Workspace / Tools / font_apply (Data = explicit JSON options)
 ```
 
 Preflight requires the existing profile, its custom font, `fc-cache`, `gdbus`, the
@@ -100,7 +100,7 @@ hints, not active-window measurements. Doctor explicitly leaves zoom, pixel cell
 geometry and GUI verification unknown.
 
 ```bash
-setup-system workstation font-probe
+Textual Workspace / Tools / font_probe
 fc-match -f '%{family}; %{style}; %{spacing}; %{file}\n' 'JetBrainsMono Nerd Font Mono:style=Regular'
 fc-match -f '%{family}; %{file}\n' 'JetBrainsMono Nerd Font Mono:charset=0416'
 fc-match -f '%{family}; %{file}\n' 'JetBrainsMono Nerd Font Mono:charset=1f600'
@@ -117,7 +117,7 @@ keeps the primary family ahead of fallback for ordinary text.
 
 Compare this probe in the same real window at the same size: ordinary terminal,
 Codex output, tmux if installed, `nvim --clean`, then the normal Neovim profile.
-Use Neovim's `:read !setup-system workstation font-probe` to load exactly the same
+Use Workspace Tools / font_probe to obtain exactly the same
 text. Inspect `:set ambiwidth?` and terminal-cell screenshots; do not set global
 `ambiwidth=double`. Terminal Neovim uses the terminal font, with no conflicting
 `guifont` setting. A two-cell/ZWJ emoji still depends on the renderer. Record the
@@ -127,14 +127,14 @@ headless glyph-width checks cannot establish the visual result.
 ## Rollback
 
 ```bash
-setup-system workstation restore BACKUP_ID
-setup-system workstation restore BACKUP_ID --apply
+# Textual: Workspace / Tools / font_restore (Backup ID = selected snapshot)
+# Textual: Workspace / Tools / font_restore (Backup ID = selected snapshot)
 ```
 
 Each apply prints its private backup ID. Restore previews by default, refuses
 later file/settings edits, restores previous values and removes only unchanged
 new files. The separate `workstation backup` snapshots existing profile files;
-use the general `setup-system restore --backup ID --dry-run` for that snapshot.
+use the general Textual Workspace Tools backup preview for that snapshot.
 
 `would-restore` means the current file still matches the operation's recorded
 after-hash and can return to its backed-up before-state. A later edit is a blocking
@@ -143,3 +143,7 @@ they changed the same files. Legacy backups can include an unchanged ownership
 receipt: that target must still match its backup hash or rollback is refused.
 A refresh-only backup does not undo the font monitor's cache update; its before
 and after font values can be identical. No restore command recreates stale cells.
+
+Font application Data accepts only `gnome`, `reset_terminal_cell_spacing` and
+`refresh_terminal_font` boolean fields. Enter an existing terminal profile UUID in Name.
+No GNOME desktop is installed by this portable operation.

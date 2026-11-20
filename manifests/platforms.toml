@@ -10,7 +10,7 @@ apt_architectures = { x86_64 = "amd64", arm64 = "arm64" }
 architectures = ["x86_64", "arm64"]
 status = "implemented"
 locallyVerified = false
-terminalDevArm64 = "blocked: pinned editor archives and parser toolchain unavailable"
+terminalDevArm64 = "blocked: optional parser toolchain pins unavailable on arm64"
 
 [hyprland]
 distribution = "debian"

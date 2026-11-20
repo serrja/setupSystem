@@ -8,7 +8,9 @@ This repository owns Debian workstation preparation, Hyprland installation and e
 scoped portable user configuration. General system installation remains Debian-only;
 profile capabilities can be narrower. Detect and reject unsupported targets before side
 effects. Keep the source handoff and privileged installation service stdlib-only,
-and `plan` strictly read-only.
+and planning strictly read-only. Textual is the only public configuration interface.
+Do not restore the retired system shell installer or public command router.
+The release bootstrap delivers the app and launches it as the normal user.
 
 Preserve projectRules in the catalog, terminalDev, user data and local edits. Back up
 managed files before replacement and reject unknown conflicts. Never run installation

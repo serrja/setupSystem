@@ -36,6 +36,10 @@ export XDG_CONFIG_HOME=@CONFIG_HOME@
 export XDG_DATA_HOME=@DATA_HOME@
 export XDG_STATE_HOME=@STATE_HOME@
 export XDG_CACHE_HOME=@CACHE_HOME@
+export PATH="$HOME/.local/bin:$PATH"
+if command -v nvim >/dev/null 2>&1; then
+    export EDITOR=nvim VISUAL=nvim GIT_EDITOR=nvim
+fi
 export XDG_CURRENT_DESKTOP=Hyprland
 export XDG_SESSION_TYPE=wayland
 if [ -n "${DBUS_SESSION_BUS_ADDRESS-}" ]; then

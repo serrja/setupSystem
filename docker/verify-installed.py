@@ -15,6 +15,7 @@ from pathlib import Path
 import setup_system
 from setup_system.application.project_layout import load_layout
 from setup_system.application.templates import load_templates
+from setup_system.infrastructure.theme import palette
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--wheel", type=Path)
@@ -55,33 +56,41 @@ for alias in ("python", "typer", "fastapi"):
     assert metadata.versions and metadata.recommended_version is not None
     assert metadata.recommended_version in {item.version for item in metadata.versions}
 subprocess.run(["git", "--version"], check=True)
-subprocess.run(["setup-system", "templates", "list"], check=True)
-for alias in sources:
-    subprocess.run(["setup-system", "templates", "versions", alias], check=True)
-for command in ("create", "update", "cache"):
-    subprocess.run(["setup-system", "templates", command, "--help"], check=True)
-
-# Exercise the installed UI in a fresh interpreter: captured stdio must not break
-# the real backend process. The missing source rejects plan before any host apply.
+# Installed resources and headless navigation are checked outside the source checkout.
+assert palette()["green"] == "#a6e3a1"
 ui_probe = """import asyncio,sys
 from pathlib import Path
-from setup_system.application.installer import InstallRequest,Operation
+from setup_system.application.installer import InstallationService,InstallRequest,Operation
+from setup_system.installation import TargetUser
+import os
 from setup_system.tui.installer import InstallationApp
+from textual.widgets import TabbedContent
 async def exercise():
- app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN))
- async with app.run_test(size=(80,25)) as pilot:
-  assert app.focused.id=='user'
-  await pilot.press('enter')
+ service=InstallationService(Path(sys.argv[1]),identity=lambda _:TargetUser(
+  "fixture",os.getuid(),os.getgid(),Path.home(),"/bin/sh"))
+ app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN),service=service)
+ service.interaction=app.interaction
+ async with app.run_test(size=(100,40)) as pilot:
+  assert not app.busy
+  await pilot.press('ctrl+2')
+  assert app.query_one('#sections',TabbedContent).active=='workspace'
+  await pilot.click('#plan')
   await app.workers.wait_for_complete()
   await pilot.pause()
-  assert app.last_code==4 and not app.busy,app.output_lines
-  assert app.focused.id=='plan'
+  assert app.last_code==0 and not app.busy,app.output_lines
 asyncio.run(exercise())
 """
 with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
     subprocess.run(
-        [sys.executable, "-I", "-B", "-c", ui_probe, str(Path(ui_home) / "missing-source")],
-        env={**os.environ, "HOME": ui_home},
+        [sys.executable, "-I", "-B", "-c", ui_probe, str(root)],
+        env={
+            **os.environ,
+            "HOME": ui_home,
+            "XDG_CONFIG_HOME": str(Path(ui_home) / "config"),
+            "XDG_STATE_HOME": str(Path(ui_home) / "state"),
+            "XDG_DATA_HOME": str(Path(ui_home) / "data"),
+            "XDG_CACHE_HOME": str(Path(ui_home) / "cache"),
+        },
         timeout=60,
         check=True,
     )
