@@ -9,8 +9,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from rich.text import Text
-from typer.testing import CliRunner
 
 from setup_system.application import templates
 from setup_system.application.project_catalog import (
@@ -19,8 +17,6 @@ from setup_system.application.project_catalog import (
     git_tag_for_python_version,
     python_version_for_git_tag,
 )
-from setup_system.cli import main
-from setup_system.cli import templates as commands
 
 
 @pytest.mark.parametrize(
@@ -189,29 +185,6 @@ def test_real_copy_and_offline_update_preserve_project_files_and_refs(
     assert not git(destination, "remote")
 
 
-def test_cli_update_accepts_parent_relative_destination(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    caller = tmp_path / "caller"
-    caller.mkdir()
-    monkeypatch.chdir(caller)
-    monkeypatch.setattr(commands, "load_templates", lambda root: {"python": source})
-    runner = CliRunner()
-    options = ["--template", "python", "--destination", "../project", "--defaults"]
-    created = runner.invoke(main.app, ["templates", "create", *options, "--version", "0.1.0"])
-    assert created.exit_code == 0, created.output
-    destination = tmp_path / "project"
-    git(destination, "init", "--quiet")
-    head = commit(destination, "generated project")
-    updated = runner.invoke(
-        main.app,
-        ["templates", "update", *options, "--version", "0.2.0", "--offline"],
-    )
-    assert updated.exit_code == 0, updated.output
-    assert "Updated documentation" in (destination / "README.md").read_text()
-    assert git(destination, "rev-parse", "HEAD") == head
-
-
 def test_destination_and_missing_offline_cache_fail_before_writes(
     tmp_path: Path, source: templates.TemplateSource
 ) -> None:
@@ -258,40 +231,6 @@ def test_bad_tag_and_corrupt_cache_fail_closed(
     with pytest.raises(ValueError, match="corrupt"):
         templates.execute_template(correct)
     assert not correct.destination.exists()
-
-
-def test_cli_lists_versions_defaults_and_real_create(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(commands, "load_templates", lambda root: {"python": source})
-    runner = CliRunner()
-    versions = runner.invoke(main.app, ["templates", "versions", "python"])
-    assert (
-        versions.exit_code == 0
-        and "0.2.0 v0.2.0" in versions.output
-        and "recommended" in versions.output
-    )
-    destination = tmp_path / "cli"
-    result = runner.invoke(
-        main.app,
-        [
-            "templates",
-            "create",
-            "--template",
-            "python",
-            "--defaults",
-            "--destination",
-            str(destination),
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert "template python 0.2.0" in result.output
-    assert "templates update" in result.output
-    assert "uv lock\nuv sync --locked" in result.output
-    assert "python -c 'import example'" in result.output
-    assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
-    rejected = runner.invoke(main.app, ["templates", "create", "--defaults"])
-    assert rejected.exit_code == 2 and "--template" in Text.from_ansi(rejected.output).plain
 
 
 def test_update_rejects_dirty_project_and_untrusted_answers(
@@ -358,25 +297,6 @@ def test_copier_merge_conflict_is_not_reported_as_success(
     assert result.status == "conflicts"
     assert git(destination, "rev-parse", "HEAD") == before
     assert "User documentation." in (destination / "README.md").read_text()
-
-
-def test_cli_interactive_selection_and_explicit_answers(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(commands, "load_templates", lambda root: {"python": source})
-    destination = tmp_path / "interactive"
-    prompts = iter(["python", "0.2.0", str(destination)])
-    monkeypatch.setattr(commands.typer, "prompt", lambda message, **kwargs: next(prompts))
-    import sys
-
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    answers = tmp_path / "answers.json"
-    answers.write_text('{"projectName": "interactiveProject"}')
-    # Call the boundary directly so CliRunner does not replace the terminal probe.
-    commands.templates_create(
-        template=None, version=None, destination=None, data=answers, defaults=True, offline=False
-    )
-    assert "interactiveProject" in (destination / "README.md").read_text()
 
 
 def test_internal_answers_and_symlink_destinations_are_rejected(
@@ -487,3 +407,72 @@ def test_current_github_dev_tag_verifies_native_metadata_and_copier_answers(
     assert result.source_commit == head and result.version == "0.3.0.dev2"
     answers = yaml.safe_load((destination / ".copier-answers.yml").read_text())
     assert answers["_commit"] == "v0.3.0-dev.2"
+
+
+def test_workspace_tool_update_accepts_parent_relative_destination(
+    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.application.tools import ToolRequest, execute
+
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    monkeypatch.chdir(caller)
+    monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
+    execute(
+        tmp_path,
+        ToolRequest(
+            "create_template", name="python", destination=Path("../project"), version="0.1.0"
+        ),
+        confirmed=True,
+    )
+    destination = tmp_path / "project"
+    git(destination, "init", "--quiet")
+    head = commit(destination, "generated project")
+    execute(
+        tmp_path,
+        ToolRequest(
+            "update_template", name="python", destination=Path("../project"), version="0.2.0"
+        ),
+        confirmed=True,
+    )
+    assert "Updated documentation" in (destination / "README.md").read_text()
+    assert git(destination, "rev-parse", "HEAD") == head
+
+
+def test_workspace_tool_lists_reviewed_versions_and_creates_recommendation(
+    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.application.tools import ToolRequest, execute
+
+    monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
+    assert "python: 0.1.0, 0.2.0" in execute(tmp_path, ToolRequest("templates"))
+    destination = tmp_path / "selected"
+    result = execute(
+        tmp_path,
+        ToolRequest("create_template", name="python", destination=destination),
+        confirmed=True,
+    )
+    assert json.loads(result)["version"] == "0.2.0"
+    assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
+    with pytest.raises(ValueError, match="destination"):
+        execute(tmp_path, ToolRequest("create_template", name="python"), confirmed=True)
+
+
+def test_workspace_tool_preserves_explicit_answers_and_requires_confirmation(
+    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.application.tools import ToolRequest, execute
+
+    monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
+    destination = tmp_path / "interactive"
+    request = ToolRequest(
+        "create_template",
+        name="python",
+        destination=destination,
+        data='{"projectName":"interactiveProject"}',
+    )
+    with pytest.raises(ValueError, match="confirmation"):
+        execute(tmp_path, request)
+    assert not destination.exists()
+    execute(tmp_path, request, confirmed=True)
+    assert "interactiveProject" in (destination / "README.md").read_text()

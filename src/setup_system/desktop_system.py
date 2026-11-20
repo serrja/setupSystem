@@ -10,6 +10,7 @@ import shlex
 import stat
 import subprocess
 import tempfile
+import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,8 +109,7 @@ class DesktopPlan:
             "Graphical login: greetd + gtkgreet + Cage on VT7; "
             "authenticate normally, then start Hyprland as the selected user.",
             "Login starts at the next normal boot; no autologin, session switch or reboot.",
-            "GRUB retained: hidden menu, timeout 0 including recordfail; "
-            "no recovery-key waiting window is guaranteed.",
+            "GRUB retained: visible menu, 5-second timeout and 10-second recovery timeout.",
             "Package installation can enable the vendor greetd alias before this final stage; "
             "service startup stays deferred.",
             *(f"Managed system file: {item.path}" for item in self.files),
@@ -211,7 +211,7 @@ class DesktopSystem:
         default = self._read(paths.grub_default)
         update = self._read(paths.update_grub)
         if default is None or update is None:
-            raise ValueError("GRUB configuration and update-grub are required for zero-delay boot")
+            raise ValueError("GRUB configuration and update-grub are required for recoverable boot")
         if not os.access(paths.update_grub, os.X_OK):
             raise ValueError("The installed update-grub is not executable")
         digest = self._fingerprint(paths.grub_config, limit=16 * 1024 * 1024)
@@ -269,6 +269,18 @@ class DesktopSystem:
                 raise ValueError("Invalid desktop management file digest or mode")
             result[name] = {"sha256": digest, "mode": mode}
         return result
+
+    def _greeter_style(self) -> bytes:
+        palette_path = self.root / "src/setup_system/resources/themes/catppuccin_mocha_green.toml"
+        # Minimal synthetic fixtures can use already rendered CSS.
+        content = (self.root / "assets/login/greeter.css").read_text()
+        if "{{" in content:
+            colors = tomllib.loads(palette_path.read_text())
+            for key, value in colors.items():
+                content = content.replace("{{ " + key + " }}", value)
+            if "{{" in content:
+                raise ValueError("Unknown greeter palette token")
+        return content.encode()
 
     def plan(
         self,
@@ -373,11 +385,11 @@ class DesktopSystem:
             (paths.unit_dropin, dropin, 0o644),
             (paths.registry / f"{target.uid}.json", registry, 0o644),
             (paths.bridge, bridge_source, 0o755),
-            (paths.style, (self.root / "assets/login/greeter.css").read_bytes(), 0o644),
+            (paths.style, self._greeter_style(), 0o644),
             (
                 paths.grub_dropin,
                 b"# Managed by setupSystem. Keep existing boot entries and crypto settings.\n"
-                b"GRUB_TIMEOUT_STYLE=hidden\nGRUB_TIMEOUT=0\nGRUB_RECORDFAIL_TIMEOUT=0\n",
+                b"GRUB_TIMEOUT_STYLE=menu\nGRUB_TIMEOUT=5\nGRUB_RECORDFAIL_TIMEOUT=10\n",
                 0o644,
             ),
         )

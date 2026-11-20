@@ -1,26 +1,18 @@
 # Workspace catalog
 
-`manifests/projects.toml` is the sole catalog for canonical `$HOME/Projects/OWNER/REPO`
-locations. Entries grant no filesystem permissions and do not create repositories.
-Only exact Git roots are discovered; nested directories and symlink traversal are rejected.
-Explicit custom project roots also verify all effective fetch/push origins.
+Open `setup-system` → Workspace → Tools. projects lists discovered exact checkouts;
+prepare_projects creates only canonical owner directories. open_project requires an exact
+active catalog name and opens the normal user's editor in that root. It never initializes
+or resets a repository. The shell's `cproj` helper opens the same Textual application.
 
-```bash
-setup-system projects list
-setup-system projects path --name serrja/setupSystem
-setup-system projects open --name serrja/setupSystem
-setup-system projects open --name serrja/setupSystem --tmux
-```
+The default owner roots are `$HOME/Projects/serrja` and `$HOME/Projects/pokerlost`.
+`manifests/projects.toml` owns project IDs, origins and reviewed policy/template metadata.
+An explicit custom project root must still validate the exact Git root and effective
+origin. Dirty working trees, alternate HOME paths and paths with spaces remain supported.
+No obsolete owner spelling is selected automatically.
 
-The catalog contains current accessible serrja/pokerlost repositories, including
-projectRules and pokerDemo. It does not list unavailable jobdesk or foreign-owner
-aliases. Repository availability is an audit-time observation, not an instruction to
-fetch on every launch or delete local user data.
-
-`projects prepare --yes` creates only missing owner directories on supported Debian.
-It never initializes repositories. Old checkout relocation commands and path aliases
-have been removed; existing data outside canonical locations is left untouched.
-
-Templates use the same reviewed catalog and immutable release pins. See [templates](templates.md).
-`agents launch serrja/setupSystem --mode review` resolves the discovered root at launch.
-User-owned scopes remain available for unrelated names and are not rewritten by the picker.
+`pokerlost/projectRules` remains active with its
+[reviewed immutable policy](https://github.com/pokerlost/projectRules/blob/537da92f8e22f35355a96f868d1b98d83e066c75/docs/project.md).
+Its catalog digest and origin must match; a parent Git repository does not establish a
+valid nested checkout. Catalog data never grants write access to another repository.
+See [templates](templates.md) and [Git profiles](git_profiles.md).

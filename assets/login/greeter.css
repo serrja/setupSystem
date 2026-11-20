@@ -1,29 +1,6 @@
-window {
-    background-image: linear-gradient(135deg, #111827, #24334d);
-    color: #e5edf7;
-    font-family: "Noto Sans", "DejaVu Sans", sans-serif;
-    font-size: 16px;
-}
-box#body {
-    background-color: rgba(17, 24, 39, 0.94);
-    border: 1px solid #455d7c;
-    border-radius: 18px;
-    padding: 36px;
-}
-entry {
-    color: #e5edf7;
-    background-color: #24334d;
-    border: 1px solid #607a9d;
-    border-radius: 8px;
-    padding: 10px;
-}
-button {
-    color: #111827;
-    background-image: none;
-    background-color: #9dc6f0;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 20px;
-}
-button:focus, entry:focus { border-color: #d5e8ff; }
-label#error { color: #f5b5b5; }
+window { background-color: {{ base }}; color: {{ text }}; font-family: "Noto Sans", sans-serif; font-size: 16px; }
+box#body { background-color: {{ mantle }}; border: 2px solid {{ green }}; border-radius: 12px; padding: 36px; }
+entry { color: {{ text }}; background-color: {{ surface0 }}; border: 1px solid {{ subtext0 }}; border-radius: 12px; padding: 10px; }
+button { color: {{ crust }}; background-image: none; background-color: {{ green }}; border-radius: 12px; padding: 10px 20px; }
+button:focus, entry:focus { border-color: {{ teal }}; }
+label#error { color: {{ red }}; }

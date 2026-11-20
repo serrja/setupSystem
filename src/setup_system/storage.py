@@ -128,7 +128,9 @@ def restore(
     if manifest.get("run_id") != backup_id:
         raise ValueError("Backup manifest ID mismatch")
     if manifest.get("application") == "happ" and apply:
-        raise ValueError("Use setup-system happ restore for Happ state while the app is closed")
+        raise ValueError(
+            "Restore private Happ state through Happ itself while the application is closed"
+        )
     prepared: list[tuple[Path, bytes, int, str]] = []
     for item in manifest["items"]:
         relative = Path(item.get("home_relative") or Path(item["source"]).relative_to(Path.home()))

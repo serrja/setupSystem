@@ -100,17 +100,30 @@ command.chmod(0o755)
     )
     if corrupt:
         checksum.write_text("0" * 64 + "  " + released.name + "\n")
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    runuser = shims / "runuser"
+    runuser.write_text('#!/bin/sh\nshift 3\nexec "$@"\n')
+    runuser.chmod(0o755)
     script = (ROOT / "install.sh").read_text().rsplit('bootstrap_main "$@"', 1)[0]
     script += f"""
+PATH={shlex.quote(str(shims))}:$PATH
 id() {{ case "$1" in -u) [ "$#" -eq 1 ] && printf 0 || printf 12345 ;; -g) printf 12345 ;; esac; }}
 getent() {{ printf '%s\\n' 'fixture:x:12345:12345::{home}:/bin/sh'; }}
-stat() {{ printf 12345; }}
+stat() {{ case "$2" in %a) printf 700 ;; *) printf 12345 ;; esac; }}
 uname() {{ [ "$1" = -s ] && printf Linux || printf {machine}; }}
-awk() {{ if [ "${{3-}}" = /etc/os-release ]; then printf debian; else command awk "$@"; fi; }}
+awk() {{
+ if [ "${{3-}}" = /etc/os-release ]; then
+  case "$2" in *VERSION_ID*) printf 13 ;; *) printf debian ;; esac
+ else command awk "$@"; fi
+}}
 as_user() {{ env HOME={shlex.quote(str(home))} "$@"; }}
 fetch() {{
  case "$1" in
   */runtime.toml) cp {shlex.quote(str(policy))} "$2" ;;
+  */python-build-receipt.json)
+    printf '{{"schemaVersion":1,"sourceSha":"%s"}}' \
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa > "$2" ;;
   */checksums.sha256) cp {shlex.quote(str(checksum))} "$2" ;;
   */setup_system-1.2.3.tar.gz) cp {shlex.quote(str(released))} "$2" ;;
   */uv-*.tar.gz)

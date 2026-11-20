@@ -1,55 +1,17 @@
-# Testing and delivery
+# Testing
 
-Run `make native-check` after preparing the locked environment; `make native-ci`
-adds wheel/sdist build and isolated installed acceptance. The pinned Docker equivalent
-is `make ci-local`. [Development](development.md) owns preparation commands.
+`make native-check` runs the locked Ruff/format/type, ShellCheck, Ansible lint/syntax,
+entrypoint and fixture gates. `make native-ci` adds wheel/sdist and outside-installed
+acceptance. [Development](development.md) owns the exact commands and runtime versions.
 
-## 🧪 Scope of evidence
+Tests use synthetic HOME/XDG, temporary Git fixtures, mock package/system executors,
+private APT simulations and headless/PTY Textual. They check source checksums/provenance,
+caller validation, unsafe archives, screen changes during apply, immutable snapshots,
+consent, cancellation, partial failures, recovery, conflicts and removal-negative cases.
+The legacy temporary proxy tests are replaced by direct transport and release-executor
+checks; native provider/release, Copier and Debian adapter contracts remain covered.
 
-Source tests use synthetic HOME/XDG directories, temporary Git repositories, fixtures
-and mock executors. They cover unsupported platform/user arguments before writes,
-read-only plan, command failures, ownership boundaries, conflict preservation,
-backup/recovery and reruns. Desktop fixtures additionally separate privileged
-greetd/GRUB/clock changes from user configuration, reject locked encrypted HOME,
-exercise native-session environment checks, preserve existing NTP providers and
-recover managed system files after partial failures. Panel tests use synthetic sysfs
-and Unix sockets for hardware selection and Lua workspace commands. They never select the developer host as an installation
-target, invoke an actual system apply, or mount a real HOME/device into a test guest.
-
-Real Copier copy/update tests use annotated Git fixtures offline, preserve owner
-code/settings/migrations, reject unsafe origins/conflicts and suppress template tasks.
-Native release tests build real Hatchling wheels/sdists in an exact Git export,
-verify allocated dev/stable metadata, reject mismatched source/attempt/receipt and
-confirm the original project/lock stay unchanged. They do not allocate real releases.
-The actual inline contribution guard is exercised with accepted and rejected branch
-promotions, fork identities and invalid titles.
-
-`native-verify` installs the exact wheel with locked runtime requirements in a new
-external virtual environment and checks metadata, PEP 610 noneditable provenance,
-bundled manifests/resources and CLI commands. The H02 builder checks the allocated
-version before attestation; provider verification independently inspects archive
-bytes without executing consumer code. Unit/mock evidence is distinct from a hosted
-run, published byte audit or interrupted-draft recovery.
-
-The source suite runs once per promised Python runtime in CI and produces statement
-and branch coverage. Coverage below 100% is advisory. Assertions, types, malformed
-configurations, build failures and missing/stale reports fail. Report unavailable
-network, Docker or guest capabilities explicitly; do not turn them into success.
-
-## 🖥️ Installation and session smoke
-
-A real installer smoke requires an explicitly selected disposable copy of the
-owner's clean Debian system, verified guest identity/codename/architecture and no
-passthrough of working HOME/disks. Run the public one-command entrypoint and repeat
-it there; record actual ownership, files, APT/source plan and recovery results.
-A container or mock executor does not prove this installation or graphical behavior.
-Keyboard regressions also run the real Textual terminal driver in an 80×25 PTY
-with Linux-console and xterm terminal types, raw Enter bytes and a fixture service.
-This checks terminal input and focus without applying system changes; it is not a
-physical Debian-console or graphical-session smoke.
-
-Check login/TTY return, renderer/GPU, audio, screen sharing, lock/resume and network
-preservation in a real session. If no approved disposable guest is available, state
-`REAL INSTALL/GUI SMOKE NOT RUN`; successful unit tests or package builds do not
-replace that evidence. Never start a compositor, reboot or interrupt an existing
-session as part of ordinary source CI.
+No test applies the system installer on the developer host. Container/native results
+are not physical installation evidence. Real boot, LUKS unlock, GPU/Hyprland, panel,
+audio, portals, Firefox policies/extensions and ChatGPT/Happ GUI acceptance require an
+explicitly selected disposable Debian target. Report unavailable checks honestly.

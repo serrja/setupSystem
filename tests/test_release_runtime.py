@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.application.installer import InstallationService, InstallRequest, Operation
 from setup_system.runtime import UserRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -248,66 +247,6 @@ def test_readonly_source_lock_is_normalized_privately_without_changing_input(
     assert hashes(source) == before
 
 
-@pytest.mark.parametrize("kind", ["missing-license", "assets-symlink"])
-def test_invalid_allocated_build_inputs_fail_before_system_apply(
-    source: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    kind: str,
-) -> None:
-    from setup_system import installation as install
-
-    runtime = UserRuntime(source)
-    allocate(source, "0.3.0")
-    for manifest in ("platforms.toml", "runtime.toml", "network.toml", "happ.toml"):
-        (source / "manifests" / manifest).write_text('owner = "fixture"\n')
-    (source / "src/setup_system/application").mkdir()
-    for filename in (
-        "_worker_entry.py",
-        "worker_protocol.py",
-        "application/interaction.py",
-        "runtime.py",
-        "application/installer.py",
-        "network_worker.py",
-    ):
-        (source / "src/setup_system" / filename).write_text('"""Fixture source."""\n')
-    (source / "assets/hyprland").mkdir()
-    (source / "assets/hyprland/profile.lua").write_text("-- Fixture profile.\n")
-    if kind == "missing-license":
-        (source / "LICENSE").unlink()
-    else:
-        outside = tmp_path / "external assets"
-        (source / "assets").rename(outside)
-        (source / "assets").symlink_to(outside, target_is_directory=True)
-    home = tmp_path / "target home"
-    home.mkdir()
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
-    monkeypatch.setattr(os, "geteuid", lambda: 0)
-    monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
-    monkeypatch.setattr(install, "resolve_target", lambda name: target)
-    monkeypatch.setattr(install, "validate_installation_paths", lambda *args: None)
-    monkeypatch.setattr(
-        install,
-        "prepare_packages",
-        lambda *args, **kwargs: pytest.fail("APT reached invalid bundle"),
-    )
-    monkeypatch.setattr(
-        install,
-        "run_command",
-        lambda *args, **kwargs: pytest.fail("User runtime reached invalid bundle"),
-    )
-    before = hashes(source)
-    assert (
-        InstallationService(source, runtime=runtime).run(
-            InstallRequest(Operation.APPLY, user="alice", yes=True)
-        )
-        == 2
-    )
-    assert "Preflight failed:" in capsys.readouterr().err
-    assert hashes(source) == before and not list(home.iterdir())
-
-
 @pytest.mark.parametrize(
     "case",
     [
@@ -365,3 +304,22 @@ def test_prepared_runtime_handoff_is_read_only_and_rejects_unsafe_state(
         with pytest.raises((ValueError, RuntimeError)):
             UserRuntime(ROOT).existing()
     assert hashes(home) == before
+
+
+@pytest.mark.parametrize("kind", ["missing-license", "assets-symlink"])
+def test_invalid_allocated_build_inputs_fail_before_system_apply(
+    source: Path, tmp_path: Path, kind: str
+) -> None:
+    runtime = UserRuntime(source)
+    allocate(source, "0.4.0")
+    if kind == "missing-license":
+        (source / "LICENSE").unlink()
+    else:
+        outside = tmp_path / "external assets"
+        (source / "assets").rename(outside)
+        (source / "assets").symlink_to(outside, target_is_directory=True)
+    before = hashes(source)
+    expected_error = FileNotFoundError if kind == "missing-license" else ValueError
+    with pytest.raises(expected_error):
+        runtime.inputs()
+    assert hashes(source) == before

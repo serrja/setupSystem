@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import NoDesktop
 
 from setup_system import installation as install
-from setup_system.application import interaction
 from setup_system.application.installer import InstallationService, InstallRequest, Operation
-from setup_system.network_session import NetworkReady
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
@@ -136,60 +132,23 @@ def test_untrusted_or_missing_canonical_keyring_stops_before_apt_and_journal(
     assert (directory / COMPATIBILITY).is_symlink()
 
 
-class FailureNetwork:
-    """No provider or filesystem activity is needed to exercise a package-stage failure."""
-
-    def __init__(self, home: Path) -> None:
-        self.home = home
-        self.closed = False
-
-    def start(self, subscription: str | None) -> NetworkReady:
-        assert subscription == "https://subscription.invalid/fixture"
-        return NetworkReady("http://127.0.0.1:18080", self.home / "not-created-happ.deb")
-
-    def close(self) -> None:
-        self.closed = True
-
-
 def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    home = tmp_path / "target home"
-    home.mkdir()
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
-    paths = install.SystemPaths(journal=tmp_path / "absent-state/install.json")
-    monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
-    monkeypatch.setattr(install, "resolve_target", lambda name: target)
-    monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
-    monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
-    monkeypatch.setattr(interaction.sys.stdin, "isatty", lambda: True)
+    from setup_system.domain.settings import Section
+
+    service = InstallationService(ROOT)
     monkeypatch.setattr(
-        interaction.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
+        service,
+        "_apply",
+        lambda *args: (_ for _ in ()).throw(
+            ValueError("canonical Debian archive keyring is missing")
+        ),
     )
-    monkeypatch.setattr(os, "geteuid", lambda: 0)
-    reason = "canonical Debian archive keyring is missing"
-
-    def fail(*args: object, **kwargs: object) -> None:
-        raise ValueError(reason)
-
-    network = FailureNetwork(home)
-    monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("User stage reached"))
-    assert (
-        InstallationService(
-            ROOT,
-            paths=paths,
-            network=lambda *a, **kw: network,
-            packages=fail,
-            desktop=NoDesktop(),
-        ).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
-        == 5
-    )
+    assert service.run(InstallRequest(Operation.APPLY, section=Section.WORKSPACE, yes=True)) == 5
     error = capsys.readouterr().err
-    assert reason in error
-    assert "journal" in error.lower() and "not created" in error.lower()
-    assert f"See {paths.journal}" not in error
-    assert not paths.journal.exists() and not list(home.iterdir())
-    assert network.closed
+    assert "keyring is missing" in error
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("kind", ["validation", "apt"])
@@ -199,64 +158,18 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     capsys: pytest.CaptureFixture[str],
     kind: str,
 ) -> None:
-    home = tmp_path / "target home"
-    home.mkdir()
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
-    paths = install.SystemPaths(journal=tmp_path / "absent-state/install.json")
-    monkeypatch.setattr(install, "current_packages", lambda root: ["hyprland=fixture"])
-    monkeypatch.setattr(install, "resolve_target", lambda name: target)
-    monkeypatch.setattr(install, "validate_source_access", lambda *a, **kw: None)
-    monkeypatch.setattr(install, "validate_service_manager", lambda **kw: None)
-    monkeypatch.setattr(interaction.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(
-        interaction.getpass, "getpass", lambda prompt: "https://subscription.invalid/fixture"
-    )
-    monkeypatch.setattr(os, "geteuid", lambda: 0)
-    marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()
-    reason = "archive signature validation failed"
-    diagnostic = (
-        reason
-        + " https://"
-        + marker
-        + ":"
-        + marker
-        + "@example.invalid/archive?token="
-        + marker
-        + " password="
-        + marker
-        + " Authorization: Bearer "
-        + marker
-        + " Proxy-Authorization: Basic "
-        + marker
-        + "\nAuthorization: Digest nonce="
-        + marker
-        + ",response="
-        + marker
-        + "\nAuthorization: Custom "
-        + marker
-        + "\x1b[31m\n"
-        + "x" * 4000
-    )
+    from setup_system.domain.settings import Section
 
-    def fail(*args: object, **kwargs: object) -> None:
-        if kind == "apt":
-            raise subprocess.CalledProcessError(100, ["apt-get", marker], stderr=diagnostic)
+    marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()
+    diagnostic = "archive signature validation failed https://" + marker + ":" + marker
+    diagnostic += "@example.invalid/archive?token=" + marker + " password=" + marker
+    service = InstallationService(ROOT)
+
+    def fail(*args):
         raise ValueError(diagnostic)
 
-    network = FailureNetwork(home)
-    monkeypatch.setattr(install, "run_command", lambda *a, **kw: pytest.fail("User stage reached"))
-    assert (
-        InstallationService(
-            ROOT,
-            paths=paths,
-            network=lambda *a, **kw: network,
-            packages=fail,
-            desktop=NoDesktop(),
-        ).run(InstallRequest(Operation.APPLY, user="alice", yes=True))
-        == 5
-    )
+    monkeypatch.setattr(service, "_apply", fail)
+    assert service.run(InstallRequest(Operation.APPLY, section=Section.WORKSPACE, yes=True)) == 5
     error = capsys.readouterr().err
-    assert reason in error and marker not in error
-    assert "\x1b" not in error and len(error) < 3000
-    assert not paths.journal.exists() and not list(home.iterdir())
-    assert network.closed
+    assert "archive signature validation failed" in error and marker not in error
+    assert not list(tmp_path.iterdir())

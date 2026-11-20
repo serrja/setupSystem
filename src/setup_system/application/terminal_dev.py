@@ -119,7 +119,15 @@ def install_neovim(project_root: Path, platform: Platform) -> str:
     config = _manifest(project_root)["neovim"]
     if not isinstance(config, dict):
         raise ValueError("Invalid Neovim manifest")
-    key = _archive_key(platform)
+    key = (
+        "linux_arm64"
+        if (
+            platform.implemented
+            and platform.distribution == "debian"
+            and platform.architecture == "arm64"
+        )
+        else _archive_key(platform)
+    )
     version = str(config["version"])
     target = _data_home() / "setup-system/neovim" / version
     binary = target / "bin/nvim"

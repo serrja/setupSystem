@@ -33,3 +33,9 @@ download preparation. User-supplied optional seeds remain their own upstream cop
 Textual is an MIT-licensed runtime dependency from Textualize. It is installed from
 the locked Python distribution; its own license remains in that distribution. No
 Textual source is vendored in setupSystem. See https://github.com/Textualize/textual.
+
+## Catppuccin Neovim theme
+
+The optional Neovim setup fetches `catppuccin/nvim` at
+`edefef779ab08ce1a4a404713e3012b0d202bd35` under its upstream MIT license.
+The checkout retains its upstream license. No theme plugin implementation is vendored.

@@ -118,7 +118,6 @@ def test_debian_terminal_apply_configures_current_user_zsh(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The explicit Debian dev profile must reach the portable shell apply."""
-    cli = importlib.import_module("setup_system.cli.system")
     profiles = importlib.import_module("setup_system.application.user_profiles")
     platform = Platform("debian", "13", "x86_64", True, False, "supported")
     calls: list[str] = []
@@ -154,6 +153,6 @@ def test_debian_terminal_apply_configures_current_user_zsh(
     monkeypatch.setattr(profiles, "install_parsers", lambda *_args: "unchanged")
     monkeypatch.setattr(profiles, "install_system_tools", lambda *_args: ("unchanged", False))
 
-    cli.apply(yes=True, profile="terminalDev")
+    assert profiles.UserProfileService(tmp_path).run("terminalDev", yes=True) == 0
 
     assert calls == ["install_zsh", "configuration", "shell", "chsh"]

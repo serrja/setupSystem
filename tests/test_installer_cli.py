@@ -1,173 +1,25 @@
-"""The Typer and source entrypoints share one installation application service."""
+"""The retired shell and public automation frontends cannot bypass Textual consent."""
 
 from pathlib import Path
 
-import pytest
-from typer.testing import CliRunner
-
-from setup_system.cli.main import app
-
-ROOT = Path(__file__).resolve().parents[1]
+from setup_system.application.installer import InstallRequest, Operation
+from setup_system.domain.settings import Section
 
 
-def test_retired_installation_frontends_are_absent() -> None:
-    assert not (ROOT / "setup.sh").exists()
-    assert not (ROOT / "bootstrap.py").exists()
-    assert not (ROOT / "src/setup_system/user_install.py").exists()
+def test_request_is_an_immutable_plan_input() -> None:
+    from dataclasses import FrozenInstanceError
+
+    import pytest
+
+    request = InstallRequest(Operation.PLAN)
+    with pytest.raises(FrozenInstanceError):
+        request.section = Section.WORKSPACE
+    assert request.yes is False
 
 
-@pytest.mark.parametrize("source", [str(ROOT), "."])
-def test_typer_install_plan_uses_application_service(monkeypatch, source: str) -> None:
-    monkeypatch.chdir(ROOT)
-    from setup_system.application import installer
-
-    calls = []
-    monkeypatch.setattr(
-        installer.InstallationService,
-        "run",
-        lambda self, request: calls.append((self.root, request)) or 0,
-    )
-    result = CliRunner().invoke(
-        app,
-        [
-            "install",
-            "plan",
-            "--source",
-            source,
-            "--user",
-            "alice",
-            "--xdg-config-home",
-            "/home/alice/config with spaces",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert len(calls) == 1
-    root, request = calls[0]
-    assert root == ROOT
-    assert request.operation == installer.Operation.PLAN
-    assert request.user == "alice"
-    assert request.overrides == {"config": Path("/home/alice/config with spaces")}
-    assert not request.yes
-
-
-def test_typer_install_apply_propagates_real_result(monkeypatch) -> None:
-    from setup_system.application import installer
-
-    calls = []
-    monkeypatch.setattr(
-        installer.InstallationService, "run", lambda self, request: calls.append(request) or 5
-    )
-    result = CliRunner().invoke(app, ["install", "apply", "--source", str(ROOT), "--yes"])
-    assert result.exit_code == 5
-    assert len(calls) == 1
-    assert calls[0].operation == installer.Operation.APPLY
-    assert calls[0].yes
-
-
-def test_typer_install_plan_refuses_apply_consent() -> None:
-    result = CliRunner().invoke(app, ["install", "plan", "--yes"])
-    assert result.exit_code == 2
-
-
-@pytest.mark.parametrize("operation", ["plan", "apply"])
-def test_typer_private_subscription_file_is_mapped_without_reading(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
-) -> None:
-    from setup_system.application import installer
-
-    private = tmp_path / "private input with spaces"
-    private.write_text("https://provider.invalid/subscription?token=SYNTHETIC_PRIVATE_MARKER")
-    private.chmod(0o600)
-    observed = []
-    monkeypatch.setattr(
-        installer.InstallationService, "run", lambda self, request: observed.append(request) or 0
-    )
-    args = ["install", operation, "--vpn-config-file", str(private)]
-    if operation == "apply":
-        args.append("--yes")
-    result = CliRunner().invoke(app, args)
-    assert result.exit_code == 0, result.output
-    assert len(observed) == 1 and observed[0].subscription_file == private
-    assert private.read_text().endswith("SYNTHETIC_PRIVATE_MARKER")
-    assert "SYNTHETIC_PRIVATE_MARKER" not in result.output
-
-
-def test_private_handoff_uses_exact_seven_positions(monkeypatch: pytest.MonkeyPatch) -> None:
-    from setup_system import worker_protocol as entrypoint
-    from setup_system.application import installer
-
-    environment = {
-        f"XDG_{kind.upper()}_HOME": f"/home/alice/{kind}" for kind in entrypoint.XDG_KINDS
-    }
-    private = Path("/home/alice/private input")
-    args = entrypoint.worker_arguments(
-        installer.Operation.NETWORK_STAGE, "alice", environment, subscription_file=private
-    )
-    assert args == [
-        "network-stage",
-        "alice",
-        "/home/alice/config",
-        "/home/alice/data",
-        "/home/alice/state",
-        "/home/alice/cache",
-        str(private),
-    ]
-    observed = []
-    monkeypatch.setattr(
-        installer.InstallationService, "run", lambda self, request: observed.append(request) or 0
-    )
-    assert entrypoint.main(ROOT, args) == 0
-    assert observed[0].subscription_file == private
-
-
-@pytest.mark.parametrize(
-    "args", [[], ["apply"] * 6, ["apply"] * 8, ["apply", "alice", "/a", "/b", "/c", "/d", "-"]]
-)
-def test_malformed_private_handoff_never_calls_service(
-    monkeypatch: pytest.MonkeyPatch, args: list[str]
-) -> None:
-    from setup_system import worker_protocol as entrypoint
-    from setup_system.application import installer
-
-    monkeypatch.setattr(
-        installer.InstallationService,
-        "run",
-        lambda *a: pytest.fail("Malformed private handoff entered the service"),
-    )
-    assert entrypoint.main(ROOT, args) == 2
-
-
-def test_privileged_module_entry_does_not_write_user_bytecode(tmp_path: Path) -> None:
-    import shutil
-    import subprocess
-    import sys
-
-    package = tmp_path / "setup_system"
-    package.mkdir()
-    shutil.copyfile(ROOT / "src/setup_system/__init__.py", package / "__init__.py")
-    (package / "probe.py").write_text("VALUE = 1\n")
-    script = (
-        "import os,sys; os.geteuid=lambda:0; "
-        "sys.path.insert(0,sys.argv[1]); import setup_system.probe; "
-        "assert sys.dont_write_bytecode"
-    )
-    result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(tmp_path)], check=False)
-    assert result.returncode == 0
-    assert not list(package.rglob("*.pyc"))
-
-
-@pytest.mark.parametrize("operation", ["plan", "apply"])
-def test_explicit_timezone_reaches_the_shared_install_request(
-    monkeypatch: pytest.MonkeyPatch, operation: str
-) -> None:
-    from setup_system.application import installer
-
-    requests: list[installer.InstallRequest] = []
-    monkeypatch.setattr(
-        installer.InstallationService, "run", lambda self, request: requests.append(request) or 0
-    )
-    result = CliRunner().invoke(
-        app, ["install", operation, "--timezone", "Europe/Paris", "--user", "alice"]
-    )
-    assert result.exit_code == 0, result.output
-    assert requests[0].timezone == "Europe/Paris" and requests[0].user == "alice"
+def test_bootstrap_does_not_elevate_the_python_ui() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "install.sh").read_text()
+    assert 'exec sudo -- "$executable"' not in source
+    assert 'exec runuser -u "$target"' in source
+    assert 'exec env HOME="$target_home" USER="$target" LOGNAME="$target"' in source

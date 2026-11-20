@@ -1,0 +1,10 @@
+schema_version = 1
+# Candidates are never selected by default. Actual dpkg state and APT closure decide safety.
+[candidates.nano]
+requires_verified_editor = true
+[candidates.vim-tiny]
+requires_verified_editor = true
+[candidates.reportbug]
+[candidates.popularity-contest]
+[candidates.debian-faq]
+[candidates.doc-debian]
