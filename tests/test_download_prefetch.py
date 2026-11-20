@@ -15,8 +15,7 @@ from urllib.error import HTTPError
 import pytest
 
 from setup_system import downloads
-from setup_system.application import happ, workstation
-from setup_system.planning import Platform
+from setup_system.infrastructure import fonts
 
 
 class Response(io.BytesIO):
@@ -69,22 +68,6 @@ def context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path
             f'name = "{name}"\nsha256 = "{hashlib.sha256(value).hexdigest()}"\n'
         )
     (root / "manifests/fonts.toml").write_text(font)
-    package = b"pinned Happ fixture"
-    (root / "manifests/happ.toml").write_text(
-        'version = "4.5.4"\npackageVersion = "4.5.4-333"\n[linux.amd64]\n'
-        'url = "https://github.com/Happ-proxy/happ-desktop/releases/download/4.5.4/Happ.linux.x64.deb"\n'
-        f'sha256 = "{hashlib.sha256(package).hexdigest()}"\npackageArchitecture = "amd64"\n'
-    )
-    monkeypatch.setattr(
-        happ, "detect_platform", lambda: Platform("debian", "13", "x86_64", True, False, "")
-    )
-    monkeypatch.setattr(
-        happ,
-        "_run",
-        lambda argv: subprocess.CompletedProcess(
-            argv, 0, "Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\n", ""
-        ),
-    )
     return root, home, data
 
 
@@ -94,9 +77,8 @@ def test_prefetch_needs_no_graphical_commands_and_offline_reuses_bytes(
     root, home, data = context
     calls: list[object] = []
     mock_open(monkeypatch, lambda *a, **kw: calls.append(a[0]) or Response(data))
-    monkeypatch.setattr(workstation, "_run", lambda *a: pytest.fail("GUI command"))
-    monkeypatch.setattr(workstation, "_required_commands", lambda *a: pytest.fail("GUI stage"))
-    workstation.prefetch_workstation(root)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: pytest.fail("GUI command"))
+    fonts.prefetch_fonts(root)
     archives = list((home / "cache").rglob("*.zip"))
     assert len(archives) == len(calls) == 1 and archives[0].read_bytes() == data
     provenance = json.loads(archives[0].with_suffix(".zip.json").read_text())
@@ -104,8 +86,8 @@ def test_prefetch_needs_no_graphical_commands_and_offline_reuses_bytes(
     assert not (home / "data").exists()
     before = {p: p.read_bytes() for p in (home / "cache").rglob("*") if p.is_file()}
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("offline network"))
-    workstation.prefetch_workstation(root)
-    files = workstation._font_files(root, offline=True)
+    fonts.prefetch_fonts(root)
+    files = fonts.font_files(root, offline=True)
     assert {p.name: value for p, value in files.items()} == {
         "Regular.ttf": b"font fixture",
         "OFL.txt": b"license fixture",
@@ -120,7 +102,7 @@ def test_offline_cache_failure_never_downloads_or_replaces(
     root, home, data = context
     if kind != "missing":
         mock_open(monkeypatch, lambda *a, **kw: Response(data))
-        workstation.prefetch_workstation(root)
+        fonts.prefetch_fonts(root)
         archive = next((home / "cache").rglob("*.zip"))
         archive.unlink()
         if kind == "corrupt":
@@ -132,11 +114,11 @@ def test_offline_cache_failure_never_downloads_or_replaces(
     before = {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("offline network"))
     with pytest.raises((ValueError, RuntimeError)):
-        workstation._font_files(root, offline=True)
+        fonts.font_files(root, offline=True)
     assert {p: p.read_bytes() for p in before} == before
     if kind != "missing":
         with pytest.raises((ValueError, RuntimeError)):
-            workstation.prefetch_workstation(root)
+            fonts.prefetch_fonts(root)
         assert {p: p.read_bytes() for p in before} == before
 
 
@@ -149,65 +131,24 @@ def test_prefetch_rejects_symlinked_cache_before_network(
     (home / "cache").symlink_to(outside, target_is_directory=True)
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises((ValueError, RuntimeError)):
-        workstation.prefetch_workstation(root)
+        fonts.prefetch_fonts(root)
     assert not list(outside.iterdir())
 
 
-@pytest.mark.parametrize("operation", ["font", "happ"])
 def test_download_preparation_refuses_root_before_writes(
-    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch, operation: str
+    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, home, _ = context
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     with pytest.raises((ValueError, RuntimeError)):
-        if operation == "font":
-            workstation.prefetch_workstation(root)
-        else:
-            happ.download_happ(root, home / "happ.deb")
+        fonts.prefetch_fonts(root)
     assert not list(home.iterdir())
 
 
-def test_happ_download_is_verified_nonroot_and_does_not_touch_private_state(
+def test_http_failure_reports_only_status_and_host(
     context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, home, _ = context
-    private = home / "Happ.conf"
-    private.write_bytes(b"private settings stay intact")
-    target = home / "session" / "happ.deb"
-    package = b"pinned Happ fixture"
-    mock_open(monkeypatch, lambda *a, **kw: Response(package))
-    assert happ.download_happ(root, target) == target
-    assert target.read_bytes() == package and target.stat().st_uid == os.getuid()
-    assert target.stat().st_mode & 0o777 == 0o600
-    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("repeat network"))
-    assert happ.download_happ(root, target) == target
-    assert private.read_bytes() == b"private settings stay intact"
-
-
-@pytest.mark.parametrize("kind", ["existing", "symlink"])
-def test_happ_never_overwrites_unknown_destinations(
-    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch, kind: str
-) -> None:
-    root, home, _ = context
-    target = home / "happ.deb"
-    private = home / "private"
-    private.write_bytes(b"keep")
-    if kind == "existing":
-        target.write_bytes(b"user file")
-    else:
-        target.symlink_to(private)
-    mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
-    with pytest.raises((ValueError, RuntimeError)):
-        happ.download_happ(root, target)
-    assert private.read_bytes() == b"keep"
-    assert target.is_symlink() if kind == "symlink" else target.read_bytes() == b"user file"
-
-
-@pytest.mark.parametrize("operation", ["font", "happ"])
-def test_http_failure_reports_only_status_and_host(
-    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch, operation: str
-) -> None:
-    root, home, _ = context
+    root, _, _ = context
     secret = "SYNTHETIC_SECRET_QUERY"
 
     def failure(*args: object, **kwargs: object) -> Response:
@@ -215,10 +156,7 @@ def test_http_failure_reports_only_status_and_host(
 
     mock_open(monkeypatch, failure)
     with pytest.raises((ValueError, RuntimeError)) as problem:
-        if operation == "font":
-            workstation.prefetch_workstation(root)
-        else:
-            happ.download_happ(root, home / "happ.deb")
+        fonts.prefetch_fonts(root)
     assert "403" in str(problem.value) and "github.com" in str(problem.value)
     assert secret not in str(problem.value) and "token=" not in str(problem.value)
 
@@ -233,22 +171,17 @@ def test_installed_matching_fonts_need_no_cache_or_network(
         for name in ("Regular.ttf", "OFL.txt"):
             (destination / name).write_bytes(archive.read(name))
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
-    assert workstation._font_files(root, offline=True) == {}
+    assert fonts.font_files(root, offline=True) == {}
     assert not (home / "cache").exists()
 
 
-@pytest.mark.parametrize("operation", ["font", "happ"])
 def test_download_cache_rejects_foreign_file_owner(
-    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch, operation: str
+    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, home, data = context
-    if operation == "font":
-        mock_open(monkeypatch, lambda *a, **kw: Response(data))
-        workstation.prefetch_workstation(root)
-        target = next((home / "cache").rglob("*.zip"))
-    else:
-        target = home / "happ.deb"
-        target.write_bytes(b"pinned Happ fixture")
+    mock_open(monkeypatch, lambda *a, **kw: Response(data))
+    fonts.prefetch_fonts(root)
+    target = next((home / "cache").rglob("*.zip"))
     original = Path.lstat
 
     def foreign(path: Path) -> os.stat_result:
@@ -262,27 +195,7 @@ def test_download_cache_rejects_foreign_file_owner(
     monkeypatch.setattr(Path, "lstat", foreign)
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match=r"owner|owned"):
-        if operation == "font":
-            workstation.prefetch_workstation(root)
-        else:
-            happ.download_happ(root, target)
-
-
-@pytest.mark.parametrize("kind", ["digest", "metadata"])
-def test_happ_rejects_invalid_package_without_publishing_destination(
-    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch, kind: str
-) -> None:
-    root, home, _ = context
-    package = b"corrupt" if kind == "digest" else b"pinned Happ fixture"
-    mock_open(monkeypatch, lambda *a, **kw: Response(package))
-    if kind == "metadata":
-        monkeypatch.setattr(
-            happ, "_run", lambda argv: subprocess.CompletedProcess(argv, 0, "Package: other\n", "")
-        )
-    target = home / "happ.deb"
-    with pytest.raises(ValueError):
-        happ.download_happ(root, target)
-    assert not target.exists() and not list(home.glob(".happ-*"))
+        fonts.prefetch_fonts(root)
 
 
 def test_oversized_cached_font_archive_fails_without_reading_or_downloading(
@@ -290,54 +203,14 @@ def test_oversized_cached_font_archive_fails_without_reading_or_downloading(
 ) -> None:
     root, home, data = context
     mock_open(monkeypatch, lambda *a, **kw: Response(data))
-    workstation.prefetch_workstation(root)
+    fonts.prefetch_fonts(root)
     target = next((home / "cache").rglob("*.zip"))
     with target.open("wb") as output:
-        output.truncate(workstation.MAX_FONT_ARCHIVE_BYTES + 1)
+        output.truncate(fonts.MAX_FONT_ARCHIVE_BYTES + 1)
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match="bounded"):
-        workstation._font_files(root, offline=True)
-    assert target.stat().st_size == workstation.MAX_FONT_ARCHIVE_BYTES + 1
-
-
-def test_happ_setup_reuses_download_helper_and_preserves_application_api(
-    context: tuple[Path, Path, bytes], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root, home, _ = context
-    observed: list[Path] = []
-    count = 0
-
-    def inspect(platform: Platform) -> happ.HappStatus:
-        nonlocal count
-        count += 1
-        return happ.HappStatus(
-            "absent" if count == 1 else "deb 4.5.4-333 amd64",
-            False,
-            False,
-            "unknown",
-            "unknown",
-            "unknown",
-            "unknown",
-            None,
-        )
-
-    def download(project: Path, destination: Path) -> Path:
-        assert project == root
-        observed.append(destination)
-        return destination
-
-    def run(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
-        assert argv[:4] == ["/fixture/sudo", "-n", "apt-get", "install"]
-        assert argv[-1] == str(observed[-1])
-        return subprocess.CompletedProcess(argv, 0)
-
-    monkeypatch.setattr(happ, "inspect_happ", inspect)
-    monkeypatch.setattr(happ, "download_happ", download)
-    monkeypatch.setattr(happ.shutil, "which", lambda name: "/fixture/sudo")
-    monkeypatch.setattr(happ, "_run", lambda argv: subprocess.CompletedProcess(argv, 0, "", ""))
-    monkeypatch.setattr(happ.subprocess, "run", run)
-    result = happ.setup_happ(root, Platform("debian", "13", "x86_64", True, False, ""))
-    assert result.startswith("changed:") and observed[0].is_relative_to(home)
+        fonts.font_files(root, offline=True)
+    assert target.stat().st_size == fonts.MAX_FONT_ARCHIVE_BYTES + 1
 
 
 @pytest.mark.parametrize("kind", ["corrupt", "symlink"])
@@ -346,7 +219,7 @@ def test_offline_rejects_unknown_cache_provenance_without_rewriting(
 ) -> None:
     root, home, data = context
     mock_open(monkeypatch, lambda *a, **kw: Response(data))
-    workstation.prefetch_workstation(root)
+    fonts.prefetch_fonts(root)
     archive = next((home / "cache").rglob("*.zip"))
     receipt = archive.with_suffix(".zip.json")
     receipt.unlink()
@@ -359,9 +232,9 @@ def test_offline_rejects_unknown_cache_provenance_without_rewriting(
     before = {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError):
-        workstation._font_files(root, offline=True)
+        fonts.font_files(root, offline=True)
     with pytest.raises(ValueError):
-        workstation.prefetch_workstation(root)
+        fonts.prefetch_fonts(root)
     assert {p: p.read_bytes() for p in before} == before
 
 
@@ -374,7 +247,7 @@ def test_cached_font_fifo_is_rejected_without_blocking_or_touching_it(
     before = archive.lstat()
     script = (
         "from pathlib import Path\n"
-        "from setup_system.application.workstation import _font_archive\n"
+        "from setup_system.infrastructure.fonts import _font_archive\n"
         f"path = Path({str(archive)!r})\n"
         "try:\n"
         "    _font_archive(path, '0' * 64)\n"
@@ -385,7 +258,7 @@ def test_cached_font_fifo_is_rejected_without_blocking_or_touching_it(
     )
     result = subprocess.run(
         [sys.executable, "-B", "-c", script],
-        env={**os.environ, "PYTHONPATH": str(Path(workstation.__file__).parents[2])},
+        env={**os.environ, "PYTHONPATH": str(Path(fonts.__file__).parents[2])},
         text=True,
         capture_output=True,
         timeout=3,
@@ -403,12 +276,12 @@ def test_cached_font_fifo_is_rejected_without_blocking_or_touching_it(
 
 def test_pinned_font_release_fits_bounded_archive_limit() -> None:
     # Official v3.4.0 JetBrainsMono.zip asset metadata, checked independently.
-    assert 129115244 <= workstation.MAX_FONT_ARCHIVE_BYTES <= 128 * 1024 * 1024
+    assert 129115244 <= fonts.MAX_FONT_ARCHIVE_BYTES <= 128 * 1024 * 1024
 
 
 def test_download_and_offline_cache_accept_exact_shared_limit(context, monkeypatch) -> None:
     root, home, data = context
-    monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data))
+    monkeypatch.setattr(fonts, "MAX_FONT_ARCHIVE_BYTES", len(data))
 
     class BoundedResponse(Response):
         def read(self, size):
@@ -416,28 +289,28 @@ def test_download_and_offline_cache_accept_exact_shared_limit(context, monkeypat
             return super().read(size)
 
     mock_open(monkeypatch, lambda *a, **kw: BoundedResponse(data))
-    workstation.prefetch_workstation(root)
+    fonts.prefetch_fonts(root)
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("offline network"))
-    assert workstation._font_files(root, offline=True)
+    assert fonts.font_files(root, offline=True)
     assert next((home / "cache").rglob("*.zip")).read_bytes() == data
 
 
 def test_download_above_shared_limit_does_not_publish_cache(context, monkeypatch) -> None:
     root, home, data = context
-    monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
+    monkeypatch.setattr(fonts, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
     mock_open(monkeypatch, lambda *a, **kw: Response(data))
     with pytest.raises(ValueError, match="Font archive exceeds"):
-        workstation.prefetch_workstation(root)
+        fonts.prefetch_fonts(root)
     assert not (home / "cache").exists()
 
 
 def test_cache_above_shared_limit_is_preserved_without_network(context, monkeypatch) -> None:
     root, _home, data = context
-    archive, receipt, _ = workstation._font_cache(workstation._font_manifest(root))
+    archive, receipt, _ = fonts._font_cache(fonts._font_manifest(root))
     archive.parent.mkdir(parents=True)
     archive.write_bytes(data)
-    monkeypatch.setattr(workstation, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
+    monkeypatch.setattr(fonts, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)
     mock_open(monkeypatch, lambda *a, **kw: pytest.fail("network"))
     with pytest.raises(ValueError, match="bounded"):
-        workstation.prefetch_workstation(root)
+        fonts.prefetch_fonts(root)
     assert archive.read_bytes() == data and not receipt.exists()

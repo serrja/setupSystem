@@ -159,7 +159,7 @@ def test_same_form_intentions_survive_repeated_navigation() -> None:
             await pilot.press("ctrl+1")
             await pilot.press("ctrl+2")
             snapshot = app.snapshot(Operation.PLAN)
-            assert snapshot.system.hyprland and snapshot.settings.firefox
+            assert snapshot.system.hyprland and "firefox" in snapshot.settings.apps
 
     asyncio.run(run())
 
@@ -173,5 +173,54 @@ def test_action_buttons_fit_a_standard_terminal() -> None:
                 button = app.query_one("#" + name, Button)
                 assert button.region.x >= 0 and button.region.right <= 80
                 assert button.region.y >= 0 and button.region.bottom <= 25
+
+    asyncio.run(run())
+
+
+def test_recovery_form_previews_and_preserves_conflicting_edits(tmp_path, monkeypatch) -> None:
+    from textual.widgets import Select
+
+    from setup_system.infrastructure.user_files import apply_files
+    from setup_system.tui.tools import ToolsScreen
+
+    home = tmp_path / "private home"
+    home.mkdir()
+    for key, path in (
+        ("HOME", home),
+        ("XDG_STATE_HOME", home / "state"),
+        ("XDG_CONFIG_HOME", home / "config"),
+        ("XDG_CACHE_HOME", home / "cache"),
+    ):
+        monkeypatch.setenv(key, str(path))
+    target = home / "config/created.txt"
+    operation = apply_files({target: b"managed"})
+    target.write_bytes(b"later personal edit")
+
+    async def run():
+        app = app_for(Service())
+        async with app.run_test(size=(110, 48)) as pilot:
+            await pilot.click("#tools")
+            await pilot.pause()
+            assert isinstance(app.screen, ToolsScreen)
+            app.screen.query_one(TabbedContent).active = "recovery-pane"
+            app.screen.query_one("#recovery-operation", Select).value = operation.name
+            await pilot.pause()
+            await pilot.click("#restore-preview")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert any("conflict" in line.lower() for line in app.output_lines)
+
+            await pilot.click("#tools")
+            await pilot.pause()
+            app.screen.query_one(TabbedContent).active = "recovery-pane"
+            app.screen.query_one("#recovery-operation", Select).value = operation.name
+            await pilot.pause()
+            await pilot.click("#restore")
+            await pilot.pause()
+            assert isinstance(app.screen, Prompt)
+            await pilot.click("#confirm")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.last_code != 0 and target.read_bytes() == b"later personal edit"
 
     asyncio.run(run())

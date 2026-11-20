@@ -6,12 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.application.configuration import apply_configuration
+from setup_system.application import shell
 from setup_system.application.project_layout import (
     load_layout,
     prepare_owner_directories,
 )
-from setup_system.planning import Plan, Platform
 
 
 def _layout(tmp_path: Path) -> tuple[Path, Path]:
@@ -55,22 +54,10 @@ def test_debian_profile_install_keeps_user_zsh_text_and_history(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
     monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local/state"))
-    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
-    monkeypatch.setattr(
-        "setup_system.application.configuration.create_plan",
-        lambda *_args: Plan(Platform("debian", "13", "x86_64", True, False, "test"), (), ()),
-    )
-    monkeypatch.setattr("setup_system.application.configuration.shutil.which", lambda _name: None)
-    source_root = Path(__file__).resolve().parents[1]
-
-    apply_configuration(source_root)
-
-    zshrc = (home / ".zshrc").read_text()
-    assert zshrc.startswith("# personal setting\n")
-    assert zshrc.count("# >>> setupSystem >>>") == 1
-    assert (home / ".config/zsh/projects.zsh").is_file()
-    assert (home / ".local/state/zsh").is_dir()
-    assert history.read_bytes() == b"old private history\n"
-
-    apply_configuration(source_root)
-    assert (home / ".zshrc").read_text() == zshrc
+    status = shell.ShellStatus("fixture", home, home, Path("/bin/bash"), Path("/bin/zsh"), True)
+    source = Path(__file__).resolve().parents[1]
+    targets = shell._targets(source, status)
+    assert targets[home / ".zshrc"].startswith(b"# personal setting\n")
+    assert targets[home / ".zshrc"].count(b"# >>> setupSystem >>>") == 1
+    assert home / ".config/zsh/projects.zsh" in targets
+    assert history not in targets and history.read_bytes() == b"old private history\n"

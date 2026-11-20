@@ -24,8 +24,6 @@ class DebianCapabilities:
     codenames: Mapping[str, str]
     apt_architectures: Mapping[str, str]
     status: CapabilityStatus
-    locally_verified: bool
-    terminal_dev_arm64: str
 
 
 @dataclass(frozen=True)
@@ -147,9 +145,6 @@ def parse_policy(document: Mapping[str, object]) -> CapabilityPolicy:
         raise ValueError("Architecture aliases must resolve directly to a supported architecture")
     if any(aliases.get(value, value) != key for key, value in apt_architectures.items()):
         raise ValueError("Debian package architectures and aliases disagree")
-    verified = debian_raw.get("locallyVerified")
-    if not isinstance(verified, bool):
-        raise ValueError("Invalid Debian capability verification state")
     status = _text(debian_raw.get("status"), "debian.status")
     try:
         capability_status = CapabilityStatus(status)
@@ -161,8 +156,6 @@ def parse_policy(document: Mapping[str, object]) -> CapabilityPolicy:
         codenames,
         apt_architectures,
         capability_status,
-        verified,
-        _text(debian_raw.get("terminalDevArm64"), "debian.terminalDevArm64"),
     )
     profile_raw = _mapping(raw.get("hyprland"), "hyprland")
     profile_architectures = _strings(

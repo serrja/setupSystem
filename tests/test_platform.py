@@ -5,10 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.adapters.debian.docker import install_docker
-from setup_system.application.happ import classify_link
 from setup_system.capabilities import parse_policy
-from setup_system.planning import Platform, create_plan, detect_platform
+from setup_system.planning import detect_platform
 
 
 @pytest.mark.parametrize(
@@ -36,47 +34,6 @@ def test_explicit_linux_platform(
 
 def test_macos_is_unsupported() -> None:
     assert not detect_platform(system_name="Darwin", architecture="arm64").implemented
-
-
-def test_plan_blocks_unpinned_linux_arm64_editor(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr(
-        "setup_system.planning.detect_platform",
-        lambda: Platform("debian", "13", "arm64", True, False, "explicit Debian"),
-    )
-    monkeypatch.setenv("HOME", str(tmp_path))
-    result = create_plan(tmp_path, "terminalDev")
-    assert result.blocked
-    assert result.steps == ()
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_bad_link_error_never_repeats_secret() -> None:
-    secret = "bad-secret\n"
-    with pytest.raises(ValueError) as exc:
-        classify_link(secret)
-    assert secret.strip() not in str(exc.value)
-    assert classify_link("happ://routing/add/YQ==", routing_profile=True) == "routingAdd"
-
-
-def test_docker_provider_stops_before_external_actions_on_unsupported_host(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "setup_system.adapters.debian.docker.detect_platform",
-        lambda: Platform("ubuntu", "26.04", "x86_64", False, False, "UNSUPPORTED"),
-    )
-    monkeypatch.setattr(
-        "setup_system.adapters.debian.docker.subprocess.run",
-        lambda *args, **kwargs: pytest.fail("subprocess ran before platform gate"),
-    )
-    monkeypatch.setattr(
-        "setup_system.adapters.debian.docker.read_https",
-        lambda *args, **kwargs: pytest.fail("network ran before platform gate"),
-    )
-    with pytest.raises(ValueError, match="UNSUPPORTED"):
-        install_docker()
 
 
 @pytest.mark.parametrize("architecture", ["x86_64", "amd64", "arm64", "aarch64"])

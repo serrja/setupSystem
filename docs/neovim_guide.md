@@ -1,20 +1,31 @@
-# Neovim
+# Neovim and language profiles
 
-Select Neovim in Textual's Working environment. Existing lazy.nvim, blink.cmp,
-LSP, conform.nvim, Tree-sitter, fzf-lua, oil.nvim, Git navigation and project-root
-selection remain pinned in `manifests/terminalDev.toml` and `assets/nvim/lazy-lock.json`.
-No LazyVim/AstroNvim layer or extra AI plugin is added.
+Under **Working environment**, select **Neovim** to install the pinned upstream editor,
+lazy.nvim, blink.cmp, LSP configuration, conform.nvim, Tree-sitter, fzf-lua, Oil and
+Git navigation. setupSystem takes release digests, plugin revisions and parser selections
+from `manifests/editor.toml`. It generates the native Lazy lock when writing the user's
+configuration. Startup works offline. Changing a profile requires another confirmed Apply.
 
-The maintained Catppuccin plugin is pinned. A native Mocha Green fallback works before
-plugin/network availability; both take colors from the shared palette.
-No startup clone, plugin update or automatic parser installation runs on editor launch.
-Wayland clipboard uses the normal wl-clipboard provider. Other sessions retain a local
-clipboard fallback. Per-project formatters and `.venv` remain authoritative.
+The editor uses the Wayland clipboard in a Wayland session. Open it from the project
+directory to enable language servers and explicit formatting with `<leader>cf`.
+Python projects can provide `.venv/bin/python`. Prettier requires project formatting
+settings. Modelines and project-local Lua configuration are disabled.
 
-Language tool installation is a separate explicit selection; Python uses a hash-locked
-Ruff and one basedpyright LSP in its own user environment. Unverified TS/Vue, Dart/Flutter or C++ delivery must remain blocked,
-not installed as a side effect of opening Neovim. Existing detection can use tools that
-are already present.
+| Selected profile | What Apply uses |
+| --- | --- |
+| Python | A dedicated hash-locked environment for Ruff and basedpyright |
+| TypeScript and Vue | Node from Debian and a release npm lock for TypeScript, the TypeScript and Vue language servers, the Vue TS plugin and Prettier |
+| Dart and Flutter | An existing Flutter SDK selected by an absolute `FLUTTER_ROOT` or found on PATH, or the reviewed official Linux x86_64 Flutter SDK with its bundled Dart language server and formatter. Downloading and unpacking the Flutter distribution requires several GiB of free space. |
+| C++ | Debian clangd and clang-format |
 
-Verify the installed editor, EDITOR/VISUAL and a fallback before selecting Nano removal.
-The cleanup adapter refuses unverified editor replacement and unexpected APT dependencies.
+With both the editor and a language selected, Apply builds missing language parsers at
+the revisions specified by the pinned Tree-sitter plugin. It then starts Neovim from the
+absolute managed init path in a temporary project. Each selected parser has to parse a
+buffer, each LSP has to initialize, and each formatter has to format a sample. A second
+headless run disables parser installation. Without a language selection the editor checks
+the parsers bundled by Neovim. The release contains a Tree-sitter CLI pin for each
+supported architecture.
+
+After verification, setupSystem writes the environment.d settings for `EDITOR`,
+`VISUAL` and `GIT_EDITOR`. The user session picks those up at the next login. Nano
+removal has a separate confirmation and checks the administrative fallback editor.

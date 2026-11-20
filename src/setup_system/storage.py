@@ -12,6 +12,7 @@ import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 
 def state_root() -> Path:
@@ -21,6 +22,8 @@ def state_root() -> Path:
 def _inside_home(path: Path) -> Path:
     home = Path.home().resolve()
     candidate = path.expanduser().absolute()
+    if ".." in candidate.parts:
+        raise ValueError("Managed path must stay inside HOME")
     try:
         candidate.relative_to(home)
     except ValueError as exc:
@@ -40,7 +43,9 @@ def atomic_write(
     if target.exists():
         if not target.is_file():
             raise ValueError(f"Managed target is not a regular file: {target}")
-        if target.read_bytes() == content:
+        if target.read_bytes() == content and (
+            preserve_existing_mode or stat.S_IMODE(target.stat().st_mode) == mode
+        ):
             return "unchanged"
         if preserve_existing_mode:
             mode = stat.S_IMODE(target.stat().st_mode)
@@ -82,7 +87,7 @@ def managed_block(original: str, body: str | None) -> str:
 
 
 def new_backup(paths: list[Path]) -> Path:
-    base = state_root() / "backups"
+    base = _inside_home(state_root() / "backups")
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     folder = base / run_id
     folder.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -118,13 +123,30 @@ def new_backup(paths: list[Path]) -> Path:
     return folder
 
 
-def restore(
-    backup_id: str, *, apply: bool = False, replace_current: bool = False
-) -> list[tuple[str, str]]:
+def restore(backup_id: str, *, apply: bool = False) -> list[tuple[str, str]]:
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
         raise ValueError("Invalid backup ID")
-    folder = state_root() / "backups" / backup_id
-    manifest = json.loads((folder / "manifest.json").read_text())
+    from setup_system.infrastructure.file_receipts import (
+        checked_directory,
+        operation_folder,
+        read_object,
+        receipt_source,
+        restore_operation,
+        target_path,
+    )
+
+    folder = operation_folder(backup_id)
+    if receipt_source(folder) is not None:
+        return restore_operation(folder, apply=apply)
+    manifest_file = _inside_home(folder / "manifest.json")
+    manifest: dict[str, Any] = read_object(manifest_file)
+    if (
+        not set(manifest) <= {"run_id", "items", "moves", "application"}
+        or not isinstance(manifest.get("items"), list)
+        or manifest.get("moves") != []
+        or manifest.get("application") not in {None, "happ"}
+    ):
+        raise ValueError("Unknown backup manifest schema")
     if manifest.get("run_id") != backup_id:
         raise ValueError("Backup manifest ID mismatch")
     if manifest.get("application") == "happ" and apply:
@@ -134,7 +156,7 @@ def restore(
     prepared: list[tuple[Path, bytes, int, str]] = []
     for item in manifest["items"]:
         relative = Path(item.get("home_relative") or Path(item["source"]).relative_to(Path.home()))
-        if relative.is_absolute() or ".." in relative.parts:
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
             raise ValueError("Unsafe backup path")
         recorded_backup = Path(item["backup"])
         source = recorded_backup if recorded_backup.is_absolute() else folder / recorded_backup
@@ -144,31 +166,36 @@ def restore(
             or not source.resolve().is_relative_to(folder.resolve())
         ):
             raise ValueError("Unsafe backup content")
+        checked_directory(source.parent)
         content = source.read_bytes()
         if hashlib.sha256(content).hexdigest() != item["sha256"]:
             raise ValueError("Backup hash mismatch")
-        target = _inside_home(Path.home() / relative)
-        if target.exists() and not target.is_file():
-            raise ValueError(f"Restore target is not a regular file: {target}")
+        target = target_path(relative.as_posix())
+        if Path(item["source"]) != target:
+            raise ValueError("Backup target differs from its recorded path")
         if item.get("kind") == "sqliteSnapshot" and target.is_file():
             status = "database-present; review Happ restore"
         elif target.is_file():
             status = "unchanged" if target.read_bytes() == content else "conflict"
         else:
             status = "would-create"
-        prepared.append((target, content, int(item["mode"]), status))
-    if apply and replace_current:
-        new_backup(
-            [
-                target
-                for target, _, _, status in prepared
-                if status == "conflict" and target.is_file()
-            ]
-        )
+        mode = item["mode"]
+        if type(mode) is not int or mode & ~0o755:
+            raise ValueError("Unsafe mode in backup")
+        prepared.append((target, content, mode, status))
+    if apply and any(status == "conflict" for _, _, _, status in prepared):
+        raise ValueError("A later edit conflicts with this backup; review the preview")
     actions: list[tuple[str, str]] = []
     for target, content, mode, status in prepared:
-        if apply and (status == "would-create" or (status == "conflict" and replace_current)):
-            atomic_write(target, content, mode, preserve_existing_mode=False)
+        if apply and status == "would-create":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=target.parent) as tmp:
+                staged = Path(tmp) / "original"
+                atomic_write(staged, content, mode)
+                try:
+                    os.link(staged, target, follow_symlinks=False)
+                except FileExistsError:
+                    raise ValueError(f"File appeared during restore: {target}") from None
             status = "restored"
         actions.append((str(target), status))
     return actions

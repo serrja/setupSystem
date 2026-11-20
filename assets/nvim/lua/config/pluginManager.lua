@@ -15,5 +15,5 @@ require("lazy").setup({ { import = "plugins" } }, {
   change_detection = { enabled = false },
   pkg = { enabled = false },
   rocks = { enabled = false },
-  lockfile = vim.fn.stdpath("config") .. "/lazy-lock.json",
+  lockfile = vim.g.setup_system_config .. "/lazy-lock.json",
 })

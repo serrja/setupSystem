@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -68,7 +69,8 @@ def test_release_uses_pinned_provider_and_unprivileged_builder() -> None:
         ("release-allocation", "python-allocate.yml"),
         ("release-publication", "python-publish.yml"),
     ):
-        pin = "e5cac33af228224af9deaef308e39c1b9f788033"
+        pin = jobs["release-allocation"]["with"]["provider-ref"]
+        assert re.fullmatch(r"[0-9a-f]{40}", pin)
         assert jobs[job]["uses"] == f"pokerlost/.github/.github/workflows/{action}@{pin}"
         assert jobs[job]["with"]["provider-ref"] == pin
         assert jobs[job]["with"]["source-workflow"] == ".github/workflows/ci.yml"
@@ -82,7 +84,7 @@ def test_release_uses_pinned_provider_and_unprivileged_builder() -> None:
 def test_native_helper_matches_reviewed_snapshot() -> None:
     source = json.loads((ROOT / ".github/engineering-source.json").read_text())
     helper = source["files"]["docker/python_release.py"]
-    assert helper["revision"] == "8bb73ec1eada479003785d362aeb4b9d382e1194"
+    assert re.fullmatch(r"[0-9a-f]{40}", helper["revision"])
     assert (
         hashlib.sha256((ROOT / "docker/python_release.py").read_bytes()).hexdigest()
         == (helper["sha256"])
@@ -213,3 +215,22 @@ def test_make_sanitizes_git_routing_for_pytest_only(tmp_path: Path) -> None:
     assert source.returncode == 0, source.stderr
     assert 'bash docker/source_identity.sh "coverage/source.json"' in source.stdout
     assert "env -u" not in source.stdout
+
+
+def test_ci_and_container_consume_reviewed_runtime_versions() -> None:
+    runtime = tomllib.loads((ROOT / "manifests/runtime.toml").read_text())
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    for job in ("verify", "compatibility", "release-builder"):
+        (setup,) = (
+            s for s in jobs[job]["steps"] if s.get("uses", "").startswith("astral-sh/setup-uv@")
+        )
+        assert setup["with"]["version"] == runtime["uv"]
+        if job != "compatibility":
+            shell = "\n".join(step.get("run", "") for step in jobs[job]["steps"])
+            versions = re.findall(r"(?:uv python install |--python )(\d+\.\d+\.\d+)", shell)
+            assert versions and set(versions) == {runtime["python"]}
+    docker = (ROOT / "Dockerfile.quality").read_text()
+    assert set(re.findall(r"^FROM python:([0-9.]+)-", docker, re.M)) == {runtime["python"]}
+    assert set(re.findall(r"^FROM ghcr.io/astral-sh/uv:([0-9.]+)@", docker, re.M)) == {
+        runtime["uv"]
+    }

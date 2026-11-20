@@ -12,8 +12,8 @@ from urllib.request import Request
 import pytest
 
 from setup_system import downloads
-from setup_system.adapters.debian import docker
-from setup_system.application import rtk, terminal_dev
+from setup_system.application import rtk
+from setup_system.infrastructure import editor_downloads
 from setup_system.planning import Platform
 
 
@@ -52,7 +52,7 @@ def synthetic_https(
     return requested
 
 
-@pytest.mark.parametrize("consumer", ["terminal", "rtk", "docker"])
+@pytest.mark.parametrize("consumer", ["terminal", "rtk"])
 def test_asset_consumers_reject_intermediate_untrusted_redirects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, consumer: str
 ) -> None:
@@ -61,41 +61,37 @@ def test_asset_consumers_reject_intermediate_untrusted_redirects(
     )
     with pytest.raises(RuntimeError) as error:
         if consumer == "terminal":
-            terminal_dev._download_archive(
+            editor_downloads._download_archive(
                 "https://github.com/owner/tool",
                 tmp_path / "asset",
                 64,
                 redirect_error="Unexpected binary release redirect",
                 size_error="Too large",
             )
-        elif consumer == "rtk":
-            rtk._download("https://github.com/rtk-ai/rtk/asset", tmp_path / "asset")
         else:
-            docker._download_signing_key()
+            rtk._download("https://github.com/rtk-ai/rtk/asset", tmp_path / "asset")
     assert len(requested) == 1
     assert "secret-path" not in str(error.value) and "hidden" not in str(error.value)
     assert "unexpected.invalid" not in str(error.value)
 
 
-@pytest.mark.parametrize("consumer", ["terminal", "rtk", "docker"])
+@pytest.mark.parametrize("consumer", ["terminal", "rtk"])
 def test_asset_consumers_enforce_bounded_streams(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, consumer: str
 ) -> None:
-    size = 64 * 1024 if consumer == "docker" else 8
+    size = 8
     synthetic_https(monkeypatch, b"x" * (size + 1))
     with pytest.raises(RuntimeError, match="size limit"):
         if consumer == "terminal":
-            terminal_dev._download_archive(
+            editor_downloads._download_archive(
                 "https://github.com/owner/tool",
                 tmp_path / "asset",
                 size,
                 redirect_error="Unexpected redirect",
                 size_error="Archive exceeds size limit",
             )
-        elif consumer == "rtk":
-            rtk._download("https://github.com/rtk-ai/rtk/asset", tmp_path / "asset", max_bytes=size)
         else:
-            docker._download_signing_key()
+            rtk._download("https://github.com/rtk-ai/rtk/asset", tmp_path / "asset", max_bytes=size)
     if (tmp_path / "asset").exists():
         assert (tmp_path / "asset").stat().st_size <= size
 
@@ -110,7 +106,7 @@ def test_github_release_redirects_keep_approved_bytes_and_digest(
     )
     destination = tmp_path / "asset"
     if consumer == "terminal":
-        result = terminal_dev._download_archive(
+        result = editor_downloads._download_archive(
             "https://github.com/owner/tool",
             destination,
             64,
@@ -138,7 +134,7 @@ def archive(binary: str, *, zipped: bool) -> bytes:
     return data.getvalue()
 
 
-@pytest.mark.parametrize("provider", ["neovim", "user_binary", "archive_tool"])
+@pytest.mark.parametrize("provider", ["neovim", "archive_tool"])
 @pytest.mark.parametrize("valid_digest", [True, False])
 def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, valid_digest: bool
@@ -157,18 +153,12 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
         "linux_x86_64_url": "https://github.com/owner/tool",
         "linux_x86_64_sha256": digest,
     }
-    if provider == "user_binary":
-        entry = {"version": version, "url": "https://github.com/owner/tool", "sha256": digest}
     manifest = (
-        {"neovim": entry}
-        if provider == "neovim"
-        else {
-            "userBinary" if provider == "user_binary" else "archiveTools": {"fixture-tool": entry}
-        }
+        {"neovim": entry} if provider == "neovim" else {"archiveTools": {"fixture-tool": entry}}
     )
-    monkeypatch.setattr(terminal_dev, "_manifest", lambda _: manifest)
+    monkeypatch.setattr(editor_downloads, "_manifest", lambda _: manifest)
     monkeypatch.setattr(
-        terminal_dev,
+        editor_downloads,
         "_run",
         lambda *_a, **_k: "NVIM v1.2.3" if provider == "neovim" else "fixture-tool 1.2.3",
     )
@@ -176,10 +166,8 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
 
     def install() -> str:
         if provider == "neovim":
-            return terminal_dev.install_neovim(tmp_path, platform)
-        if provider == "user_binary":
-            return terminal_dev._verified_user_binary(tmp_path, "fixture-tool")
-        return terminal_dev.install_archive_tool(tmp_path, platform, "fixture-tool")
+            return editor_downloads.install_neovim(tmp_path, platform)
+        return editor_downloads.install_archive_tool(tmp_path, platform, "fixture-tool")
 
     if not valid_digest:
         with pytest.raises(RuntimeError, match="digest mismatch"):
@@ -190,6 +178,17 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
     else:
         assert install().startswith("changed:")
         assert install().startswith("unchanged:")
+        binary = (
+            home / "data/setup-system/neovim" / version / "bin/nvim"
+            if provider == "neovim"
+            else home / "data/setup-system/editor-tools" / digest / "fixture-tool"
+        )
+        binary.write_bytes(b"modified after install")
+        monkeypatch.setattr(
+            editor_downloads, "_run", lambda *_a, **_k: pytest.fail("ran modified binary")
+        )
+        with pytest.raises(ValueError, match="differs"):
+            install()
 
 
 @pytest.mark.parametrize(

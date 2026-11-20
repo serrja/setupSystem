@@ -3,7 +3,10 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+from setup_system.domain.catalog import components
+from setup_system.domain.displays import MonitorLayout
 
 
 class Section(StrEnum):
@@ -26,21 +29,57 @@ class SystemSettings(BaseModel):
     hyprland: bool = False
     graphical_login: bool = False
     timezone: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9_+./-]+$")
-    keyboard: Literal["us", "us,ru"] = "us,ru"
+    locale: str | None = Field(default=None, pattern=r"^(?:C|[a-z]{2}_[A-Z]{2})\.UTF-8$")
+    keyboard: Literal["us", "us,ru"] | None = None
     plymouth: bool = False
+
+
+# Published v0.4.0 keys are an immutable migration boundary.
+V1_APP_KEYS = frozenset({"neovim", "firefox", "codex", "chatgpt", "happ", "developer_tools"})
+V1_USER_KEYS = V1_APP_KEYS | {
+    "schema_version",
+    "theme",
+    "language_profiles",
+    "optional_apps",
+    "cleanup",
+    "cleanup_mode",
+}
 
 
 class UserSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     theme: ThemeSettings = Field(default_factory=ThemeSettings)
-    neovim: bool = False
-    firefox: bool = False
-    codex: bool = False
-    chatgpt: bool = False
-    happ: bool = False
-    developer_tools: bool = False
-    language_profiles: tuple[Literal["python", "typescript_vue", "dart_flutter", "cpp"], ...] = ()
-    optional_apps: tuple[Literal["obsidian", "telegram", "docker", "libreoffice"], ...] = ()
+    desktop_theme: bool = False
+    monitors: tuple[MonitorLayout, ...] = ()
+    apps: tuple[str, ...] = ()
+    language_profiles: tuple[str, ...] = ()
+    optional_apps: tuple[str, ...] = ()
     cleanup: tuple[str, ...] = ()
     cleanup_mode: Literal["remove", "purge", "autoremove"] = "remove"
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        version = data.get("schema_version")
+        if version == 1 or (version is None and V1_APP_KEYS.intersection(data)):
+            values = dict(data)
+            if values.keys() - V1_USER_KEYS or any(
+                type(values[name]) is not bool for name in V1_APP_KEYS.intersection(values)
+            ):
+                raise ValueError("Conflicting or invalid version 1 app selections")
+            values["apps"] = [name for name in sorted(V1_APP_KEYS) if values.pop(name, False)]
+            values["schema_version"] = 2
+            return values
+        return data
+
+    @field_validator("apps", "optional_apps", "language_profiles")
+    @classmethod
+    def catalog_selection(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+        kind = {"apps": "app", "optional_apps": "optional", "language_profiles": "language"}
+        known = {row.id for row in components(kind[str(info.field_name)])}
+        if len(set(value)) != len(value) or not set(value) <= known:
+            raise ValueError("Unknown or repeated catalog selection")
+        return value

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import platform
 import pwd
-import re
 import shlex
 import shutil
 import subprocess
@@ -15,8 +12,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from setup_system.application.interaction import Interaction
-from setup_system.storage import atomic_write, managed_block, new_backup, state_root
+from setup_system.infrastructure.file_receipts import digest, target_path
+from setup_system.infrastructure.user_files import apply_files
+from setup_system.storage import managed_block
 
 
 @dataclass(frozen=True)
@@ -55,11 +53,17 @@ def inspect_shell() -> ShellStatus:
     return ShellStatus(account.pw_name, home, startup_dir, Path(account.pw_shell), zsh, registered)
 
 
-def _targets(root: Path, status: ShellStatus) -> dict[Path, bytes]:
+def _targets(
+    root: Path,
+    status: ShellStatus,
+    *,
+    expected: dict[Path, str | None] | None = None,
+    config_home: Path | None = None,
+) -> dict[Path, bytes]:
     assets = root / "assets/zsh"
     if not (assets / "init.zsh").is_file():
         raise ValueError("Installed setupSystem package has no Zsh assets")
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME", status.home / ".config"))
+    config_home = config_home or Path(os.environ.get("XDG_CONFIG_HOME", status.home / ".config"))
     if not config_home.resolve().is_relative_to(status.home):
         raise ValueError("XDG_CONFIG_HOME outside home requires a scoped install")
     targets = {
@@ -80,8 +84,12 @@ def _targets(root: Path, status: ShellStatus) -> dict[Path, bytes]:
         path = status.startup_dir / name
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError(f"Startup target is not a regular file: {path}")
-        original = path.read_text() if path.exists() else ""
-        targets[path] = managed_block(original, body).encode()
+        if expected is not None:
+            target_path(path.relative_to(status.home).as_posix())
+        original = path.read_bytes() if path.exists() else None
+        if expected is not None:
+            expected[path] = digest(original) if original is not None else None
+        targets[path] = managed_block((original or b"").decode(), body).encode()
     for path in targets:
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError(f"Managed shell target is not a regular file: {path}")
@@ -97,10 +105,6 @@ def plan_shell(root: Path) -> tuple[ShellStatus, list[tuple[Path, str]]]:
         for path, data in sorted(targets.items())
     ]
     return status, changes
-
-
-def _digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def validate_shell(root: Path, zsh: Path) -> None:
@@ -121,7 +125,7 @@ def validate_shell(root: Path, zsh: Path) -> None:
             link.symlink_to(install)
         (home / ".local/state/zsh").mkdir(parents=True)
         isolated = ShellStatus("test", home, home, Path("/bin/sh"), zsh, False)
-        for path, content in _targets(root, isolated).items():
+        for path, content in _targets(root, isolated, config_home=home / ".config").items():
             if path.parent == home:
                 path.write_bytes(content)
         env = os.environ.copy()
@@ -165,121 +169,18 @@ def validate_shell(root: Path, zsh: Path) -> None:
 
 
 def apply_shell(root: Path) -> tuple[Path, list[tuple[Path, str]], ShellStatus]:
-    """Back up and install only the selected user's managed Zsh files."""
+    """Preserve the current shell, history and text outside managed startup blocks."""
     status = inspect_shell()
     if status.zsh is None:
         raise ValueError("Installed Zsh executable is required")
-    targets = _targets(root, status)
     history_dir = Path(os.environ.get("XDG_STATE_HOME", status.home / ".local/state")) / "zsh"
     if not history_dir.resolve().is_relative_to(status.home):
         raise ValueError("XDG_STATE_HOME outside home requires a scoped install")
+    expected: dict[Path, str | None] = {}
+    targets = _targets(root, status, expected=expected)
+    results = [
+        (path, "unchanged" if path.is_file() and path.read_bytes() == content else "changed")
+        for path, content in targets.items()
+    ]
     validate_shell(root, status.zsh)
-    backup = new_backup(list(targets))
-    record = {
-        "backup_id": backup.name,
-        "login_shell_before": str(status.login_shell),
-        "zsh": str(status.zsh),
-        "targets": {
-            str(path): {"existed": path.exists(), "applied_sha256": _digest(data)}
-            for path, data in targets.items()
-        },
-    }
-    state_dir = state_root() / "shell-applies"
-    state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-    state_dir.chmod(0o700)
-    results: list[tuple[Path, str]] = []
-    for path, data in targets.items():
-        results.append((path, atomic_write(path, data, 0o644)))
-    history_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-    history_dir.chmod(0o700)
-    record_path = state_dir / f"{backup.name}.json"
-    atomic_write(record_path, (json.dumps(record, indent=2) + "\n").encode())
-    return backup, results, status
-
-
-def change_login_shell(target: Path) -> tuple[bool, str]:
-    """Use chsh for the current account after checking /etc/shells."""
-    status = inspect_shell()
-    if status.login_shell == target:
-        return True, "unchanged"
-    allowed = {
-        line.strip()
-        for line in Path("/etc/shells").read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    }
-    if str(target) not in allowed:
-        return False, f"{target} is not registered in /etc/shells"
-    result = subprocess.run(
-        ["chsh", "-s", str(target), status.user],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    updated = inspect_shell().login_shell == target
-    return updated, "changed" if updated else (
-        result.stderr.strip() or "chsh did not change account"
-    )
-
-
-def restore_shell(backup_id: str) -> list[tuple[Path, str]]:
-    """Restore only files still identical to this apply's managed output."""
-    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", backup_id):
-        raise ValueError("Invalid shell backup ID")
-    record = json.loads((state_root() / "shell-applies" / f"{backup_id}.json").read_text())
-    if record["backup_id"] != backup_id:
-        raise ValueError("Shell backup ID mismatch")
-    backup = state_root() / "backups" / backup_id
-    manifest = json.loads((backup / "manifest.json").read_text())
-    originals = {entry["source"]: entry for entry in manifest["items"]}
-    prepared: list[tuple[Path, bytes | None, int]] = []
-    home = Path.home().resolve()
-    for name, target_info in record["targets"].items():
-        path = Path(name)
-        if not path.is_absolute() or not path.is_relative_to(home):
-            raise ValueError(f"Shell restore target is outside home: {path}")
-        if path.is_symlink() or not path.is_file():
-            raise ValueError(f"Managed file disappeared or became a symlink: {path}")
-        if _digest(path.read_bytes()) != target_info["applied_sha256"]:
-            raise ValueError(f"User changed file after apply; review before restoring: {path}")
-        if target_info["existed"]:
-            entry = originals[name]
-            saved = backup / entry["backup"]
-            content = saved.read_bytes()
-            if _digest(content) != entry["sha256"]:
-                raise ValueError(f"Backup checksum mismatch: {saved}")
-            prepared.append((path, content, int(entry["mode"])))
-        else:
-            prepared.append((path, None, 0))
-    results: list[tuple[Path, str]] = []
-    for path, content, mode in prepared:
-        if content is None:
-            path.unlink()
-        else:
-            atomic_write(path, content, mode, preserve_existing_mode=False)
-        results.append((path, "restored"))
-    return results
-
-
-def configure_login_shell(root: Path, interaction: Interaction) -> int:
-    """Apply the explicit portable shell profile and report account-change failures."""
-    try:
-        backup, results, status = apply_shell(root)
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
-        interaction.write(f"shell failed: {exc}", error=True)
-        return 5
-    interaction.write(f"shell backup: {backup}")
-    for path, result in results:
-        interaction.write(f"{result}: {path}")
-    if status.zsh is None:
-        return 4
-    if status.login_shell != status.zsh:
-        try:
-            changed, detail = change_login_shell(status.zsh)
-        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            interaction.write(f"login shell blocked: {exc}", error=True)
-            return 4
-        interaction.write(f"login shell: {detail}")
-        if not changed:
-            return 4
-    return 0
+    return apply_files(targets, expected=expected, directories=(history_dir,)), results, status

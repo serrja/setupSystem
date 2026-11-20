@@ -6,11 +6,12 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from setup_system.domain.cleanup import CLEANUP_CANDIDATES, validate_removals
+from setup_system.diagnostics import PartialApplyError, error_text
+from setup_system.domain.cleanup import cleanup_catalog as cleanup_catalog
+from setup_system.domain.cleanup import validate_removals
 
 
 @dataclass(frozen=True)
@@ -32,34 +33,41 @@ def _run(arguments: list[str]) -> str:
     ).stdout
 
 
-def preview(packages: tuple[str, ...], *, editor_verified: bool = False) -> CleanupPlan:
+def preview(
+    packages: tuple[str, ...], *, editor_verified: bool = False, mode: str = "remove"
+) -> CleanupPlan:
     selected = frozenset(packages)
-    if not selected or not selected <= CLEANUP_CANDIDATES:
+    if mode not in {"remove", "purge", "autoremove"}:
+        raise ValueError("Unknown cleanup action")
+    if not selected or not selected <= cleanup_catalog().keys():
         raise ValueError("Only explicit cleanup candidates are accepted")
     data = _run(
         [
             "/usr/bin/dpkg-query",
             "-W",
-            "-f=${binary:Package}\t${db:Status-Status}\t${Essential}\t${Protected}\\n",
+            "-f=${binary:Package}\t${db:Status-Status}\t${db:Status-Want}\t${Essential}\t${Protected}\\n",
         ]
     )
     installed: set[str] = set()
     essential: set[str] = set()
     for line in data.splitlines():
         fields = line.split("\t")
-        if len(fields) != 4:
+        if len(fields) != 5:
             raise ValueError("Unrecognized dpkg package status")
         name = fields[0].split(":")[0]
-        if fields[1] == "installed":
+        if name in selected and name in installed:
+            raise ValueError("Multi-architecture package selection requires explicit review")
+        if fields[1] == "installed" or (mode == "purge" and fields[1] == "config-files"):
             installed.add(name)
-        if "yes" in fields[2:]:
+        if "yes" in fields[3:] or fields[2] == "hold":
             essential.add(name)
     selected = selected & installed
     if not selected:
         return CleanupPlan(
             frozenset(), frozenset(), frozenset(essential), "Selected candidates are already absent"
         )
-    output = _run(["/usr/bin/apt-get", "--simulate", "remove", "--", *sorted(selected)])
+    arguments = [] if mode == "autoremove" else ["--", *sorted(selected)]
+    output = _run(["/usr/bin/apt-get", "--simulate", mode, *arguments])
     removed: set[str] = set()
     for line in output.splitlines():
         if line.startswith(("Remv ", "Purg ")):
@@ -69,7 +77,7 @@ def preview(packages: tuple[str, ...], *, editor_verified: bool = False) -> Clea
             if not match:
                 raise ValueError("Unrecognized APT removal record")
             removed.add(match[1])
-        elif line.startswith("Inst "):
+        elif line.startswith(("Inst ", "Conf ")):
             raise ValueError("Cleanup unexpectedly installs or upgrades dependencies")
     validate_removals(
         selected, frozenset(removed), frozenset(essential), editor_verified=editor_verified
@@ -77,13 +85,36 @@ def preview(packages: tuple[str, ...], *, editor_verified: bool = False) -> Clea
     return CleanupPlan(selected, frozenset(removed), frozenset(essential), output)
 
 
+def inspect_cleanup(packages: tuple[str, ...], mode: str) -> CleanupPlan:
+    from platformdirs import user_config_path
+
+    catalog = cleanup_catalog()
+    if not set(packages) <= catalog.keys():
+        raise ValueError("Unknown cleanup selection")
+    verified = False
+    if any(catalog[p]["requires_verified_editor"] for p in packages):
+        marker = user_config_path("setup-system") / "editor.json"
+        from setup_system.infrastructure.config_store import safe_file
+
+        safe_file(marker, os.getuid())
+        if marker.is_file() and marker.stat().st_size < 4096:
+            saved = json.loads(marker.read_text())
+            verified = (
+                saved.get("EDITOR") == "nvim"
+                and saved.get("VISUAL") == "nvim"
+                and administrative_editor(set(packages))
+            )
+    return preview(packages, editor_verified=verified, mode=mode)
+
+
 def apply_cleanup(settings: dict[str, object]) -> None:
     from setup_system.infrastructure.privileged_bootstrap_helpers import editor_ready
     from setup_system.infrastructure.trusted_bootstrap import caller
 
     account = caller()
-    if settings.get("mode") != "remove":
-        raise ValueError("Purge and autoremove are separate unsupported operations")
+    mode = settings.get("mode")
+    if not isinstance(mode, str) or mode not in {"remove", "purge", "autoremove"}:
+        raise ValueError("Invalid cleanup action")
     packages = settings.get("packages")
     if not isinstance(packages, list) or not all(isinstance(p, str) for p in packages):
         raise ValueError("Invalid cleanup selection")
@@ -92,9 +123,14 @@ def apply_cleanup(settings: dict[str, object]) -> None:
         raise ValueError("Invalid XDG settings")
     config = Path(xdg.get("config", str(Path(account.pw_dir) / ".config")))
     editor_verified = False
-    if {"nano", "vim-tiny"} & set(packages):
-        editor_verified = editor_ready(account.pw_name, config)
-    plan = preview(tuple(packages), editor_verified=editor_verified)
+    catalog = cleanup_catalog()
+    if not set(packages) <= catalog.keys():
+        raise ValueError("Unknown cleanup package")
+    if any(catalog[p]["requires_verified_editor"] for p in packages):
+        editor_verified = editor_ready(account.pw_name, config) and administrative_editor(
+            set(packages)
+        )
+    plan = preview(tuple(packages), editor_verified=editor_verified, mode=mode)
     if settings.get("closure") != sorted(plan.removed):
         raise ValueError("Removal closure changed after confirmation")
     if os.geteuid() != 0:
@@ -106,7 +142,7 @@ def apply_cleanup(settings: dict[str, object]) -> None:
     receipt = Path("/var/lib/setup-system/cleanup.json")
     record = {
         "schema_version": 1,
-        "mode": "remove",
+        "mode": mode,
         "packages": sorted(plan.requested),
         "status": "running",
     }
@@ -115,7 +151,12 @@ def apply_cleanup(settings: dict[str, object]) -> None:
         # dpkg never expands the requested removal set. A new dependency makes it fail.
         # APT has already resolved and validated the complete closure immediately above.
         system.run_command(
-            ["/usr/bin/dpkg", "--remove", "--", *sorted(plan.requested)],
+            [
+                "/usr/bin/dpkg",
+                "--purge" if mode == "purge" else "--remove",
+                "--",
+                *sorted(plan.removed),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -126,30 +167,31 @@ def apply_cleanup(settings: dict[str, object]) -> None:
                 "DEBIAN_FRONTEND": "noninteractive",
             },
         )
-    except (OSError, subprocess.SubprocessError):
+        if preview(tuple(plan.removed), editor_verified=editor_verified, mode=mode).requested:
+            raise RuntimeError("Package database readback disagrees with the approved cleanup")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         record["status"] = "partial/failed"
         system._write_system(receipt, json.dumps(record).encode())
-        raise
+        raise PartialApplyError(error_text(exc)) from exc
     record["status"] = "complete"
     system._write_system(receipt, json.dumps(record).encode())
 
 
-def cleanup_catalog() -> dict[str, dict[str, bool]]:
-    path = Path(__file__).resolve().parents[1] / "resources/catalogs/optional_cleanup.toml"
-    data = tomllib.loads(path.read_text())
-    entries = data.get("candidates")
-    if (
-        data.get("schema_version") != 1
-        or not isinstance(entries, dict)
-        or set(entries) != CLEANUP_CANDIDATES
-    ):
-        raise ValueError("Cleanup catalog does not match the reviewed operation allowlist")
-    result = {}
-    for name, entry in entries.items():
-        if not isinstance(entry, dict) or set(entry) - {"requires_verified_editor"}:
-            raise ValueError("Invalid cleanup candidate metadata")
-        required = entry.get("requires_verified_editor", False)
-        if type(required) is not bool:
-            raise ValueError("Invalid fallback editor requirement")
-        result[name] = {"requires_verified_editor": required}
-    return result
+def administrative_editor(removing: set[str]) -> bool:
+    """Require an executable system editor whose Debian package will survive removal."""
+    for binary in ("/usr/bin/vi", "/usr/bin/nano", "/usr/bin/ed", "/usr/bin/nvim"):
+        path = Path(binary)
+        if not path.is_file() or not os.access(path, os.X_OK):
+            continue
+        try:
+            owner = _run(["/usr/bin/dpkg-query", "-S", str(path.resolve(strict=True))])
+        except (OSError, subprocess.SubprocessError):
+            continue
+        package, separator, owned_path = owner.strip().partition(": ")
+        if (
+            separator
+            and owned_path == str(path.resolve())
+            and package.split(":")[0] not in removing
+        ):
+            return True
+    return False

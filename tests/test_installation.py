@@ -360,7 +360,7 @@ def test_user_runtime_uses_lock_without_checkout_venv(
 
     monkeypatch.setattr(install, "run_command", run)
     assert UserRuntime(ROOT).prepare() == tmp_path / ".local/share/setup-system/runtime"
-    assert calls[0] == ["/fake/uv", "python", "install", "3.14.7"]
+    assert calls[0] == ["/fake/uv", "python", "install", runtime_provider.RUNTIME_PYTHON]
     assert "--locked" in calls[1] and "--no-editable" in calls[1]
     assert calls[1][calls[1].index("--reinstall-package") + 1] == "setup-system"
     assert os.environ["UV_PROJECT_ENVIRONMENT"] == str(
@@ -476,7 +476,9 @@ def test_uv_staging_does_not_follow_predictable_stale_symlink(
     monkeypatch.setattr(
         runtime_provider.subprocess,
         "run",
-        lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "uv 0.12.15", ""),
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, "uv " + runtime_provider.UV_VERSION, ""
+        ),
     )
     monkeypatch.setattr(runtime_provider, "_read_limited", lambda *a: archive)
     assert runtime_provider.managed_uv(("debian", "x86_64")) == destination / "uv"
@@ -536,3 +538,33 @@ def test_privileged_existing_file_requires_controlled_parent(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="privately controlled"):
         install._write_system(path, b"replacement")
     assert path.read_bytes() == b"original"
+
+
+def test_workspace_package_session_preserves_admin_apt_sources(tmp_path):
+    from setup_system.adapters.debian.package_session import AptCommands, AptSources
+
+    paths = install.SystemPaths(
+        backports=tmp_path / "sources/list",
+        journal=tmp_path / "state/install.json",
+        policy=tmp_path / "policy",
+        keyring=tmp_path / "keyring",
+    )
+    paths.backports.parent.mkdir()
+    paths.backports.write_bytes(b"owner's source\n")
+    source = AptSources("trixie", "trixie-backports", paths.keyring)
+
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    session = install._PackageSession(
+        AptCommands(tmp_path, None, ("firefox-esr",)),
+        source,
+        None,
+        paths,
+        run,
+        lambda _: None,
+        persist_backports=False,
+    )
+    session.install()
+    assert paths.backports.read_bytes() == b"owner's source\n"
+    assert session.journal.completed == ("packages",)
