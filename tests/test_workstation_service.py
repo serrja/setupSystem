@@ -219,3 +219,15 @@ def test_confirmed_happ_upgrade_passes_the_observed_package_version(service, mon
     assert result == 0 and calls[0] == "4.0"
     assert calls[1]["expected_happ_version"] == "4.0"
     assert any("4.0 →" in line for line in service.interaction.lines)
+
+
+@pytest.mark.parametrize("record", [b"not json", b"[]", b'{"release":"main"}'])
+def test_invalid_release_record_blocks_only_privileged_operations(tmp_path, monkeypatch, record):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    path = tmp_path / "setup-system/release.json"
+    path.parent.mkdir()
+    path.write_bytes(record)
+    service = InstallationService(Path(__file__).resolve().parents[1])
+    assert service.executor is None
+    assert "release.json" in service.privilege_blocker
+    assert path.read_bytes() == record

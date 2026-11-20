@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import subprocess
@@ -65,11 +64,17 @@ class InstallationService:
         self.status = "Ready"
         self.authorize = authorize
         self.executor = executor
+        self.privilege_blocker = (
+            "System apply requires a published release with native build provenance"
+        )
         if executor is None:
-            marker = self.paths.state / "release.json"
-            if marker.is_file() and not marker.is_symlink() and marker.stat().st_size < 8192:
-                record = json.loads(marker.read_text())
-                self.executor = PrivilegedExecutor(record["release"], record["source_sha"])
+            try:
+                self.executor = PrivilegedExecutor.from_marker(self.paths.state / "release.json")
+            except (OSError, ValueError):
+                self.privilege_blocker = (
+                    "Review the delivery record release.json or relaunch a verified release "
+                    "before applying system changes"
+                )
 
     def plan(self, request: InstallRequest) -> WorkstationPlan:
 
@@ -115,7 +120,7 @@ class InstallationService:
         user_blocked = platform_blocker()
         blocked = user_blocked
         if self.executor is None:
-            blocked += ("System apply requires a published release with native build provenance",)
+            blocked += (self.privilege_blocker,)
         matched = False
         if request.section == Section.BASE:
             actions, matched = regional_actions(request.system, blocked)

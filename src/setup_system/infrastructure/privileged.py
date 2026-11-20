@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+from pathlib import Path
 
 from setup_system.infrastructure import release_loader, trusted_bootstrap
 
@@ -12,6 +14,29 @@ from setup_system.infrastructure import release_loader, trusted_bootstrap
 class PrivilegedExecutor:
     def __init__(self, release: str, source_sha: str) -> None:
         self.release, self.source_sha = release, source_sha
+
+    @classmethod
+    def from_marker(cls, path: Path) -> PrivilegedExecutor | None:
+        """Read the user's delivery hint. Root verifies the published tag independently."""
+        from setup_system.infrastructure.config_store import safe_file
+
+        safe_file(path, os.getuid())
+        if not path.exists():
+            return None
+        if path.stat().st_size > 8192:
+            raise ValueError("Invalid release record size")
+        record = json.loads(path.read_bytes())
+        if not isinstance(record, dict) or record.keys() != {"release", "source_sha"}:
+            raise ValueError("Unknown delivery record")
+        tag, sha = record["release"], record["source_sha"]
+        if (
+            not isinstance(tag, str)
+            or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-dev\.[0-9]+)?", tag)
+            or not isinstance(sha, str)
+            or not re.fullmatch(r"[0-9a-f]{40}", sha)
+        ):
+            raise ValueError("Invalid delivery identity")
+        return cls(tag, sha)
 
     def run(self, action: str, settings: dict[str, object]) -> None:
         if os.geteuid() == 0:
