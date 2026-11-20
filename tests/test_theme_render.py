@@ -33,3 +33,13 @@ def test_panel_dimensions_and_scoped_rounding() -> None:
     assert "0.83)" in decorated and "border-radius: 9px" in decorated
     with pytest.raises(UndefinedError):
         render("@{ undefined_theme_key }@")
+
+
+@pytest.mark.parametrize("layout", [None, "us", "us,ru"])
+def test_desktop_applies_only_selected_keyboard_fields(layout):
+    profile = render((ASSETS / "profile.lua").read_text(), keyboard=layout)
+    if layout is None:
+        assert "kb_layout" not in profile
+    else:
+        assert f'kb_layout = "{layout}"' in profile
+    assert ("kb_options" in profile) == (layout == "us,ru")

@@ -59,7 +59,7 @@ def render(
         opacity=selected.opacity,
         panel_height=30 if selected.compact_panel else 36,
         effects="true" if selected.effects else "false",
-        keyboard=keyboard or "us,ru",
+        keyboard=keyboard,
         monitors=monitors,
         fonts=fonts,
     )

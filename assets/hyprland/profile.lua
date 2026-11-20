@@ -29,7 +29,11 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" 
     shadow = { enabled = @{ effects }@, range = 4, render_power = 3, color = "rgba(@{ crust_hex }@99)" },
   },
   animations = { enabled = @{ effects }@ },
-  input = { kb_layout = "@{ keyboard }@", kb_options = "grp:win_space_toggle", follow_mouse = 1 },
+  input = {
+[% if keyboard %]    kb_layout = "@{ keyboard }@",
+[% endif %][% if keyboard == "us,ru" %]    kb_options = "grp:win_space_toggle",
+[% endif %]    follow_mouse = 1,
+  },
   misc = { disable_hyprland_logo = true, force_default_wallpaper = 0 },
 })
 hl.on("hyprland.start", function()
