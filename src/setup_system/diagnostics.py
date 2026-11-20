@@ -12,7 +12,11 @@ def error_text(error: BaseException | str) -> str:
         return f"Command failed with exit status {error.returncode}"
     if isinstance(error, subprocess.TimeoutExpired):
         return f"Command timed out after {error.timeout} seconds"
-    text = re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[REDACTED]@", str(error))
+    detail = str(error)
+    if type(error).__module__.startswith("pydantic"):
+        # Validation diagnostics must not echo rejected configuration values.
+        detail = "Invalid configuration; review field names and supported values"
+    text = re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[REDACTED]@", detail)
     text = re.sub(
         r"(?im)((?:proxy-)?authorization[ \t]*[:=][ \t]*)[^\r\n]*",
         r"\1[REDACTED]",

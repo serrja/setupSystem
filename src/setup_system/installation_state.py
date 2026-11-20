@@ -20,6 +20,7 @@ class InstallStage(StrEnum):
     USER = "user"
     SYSTEM_DESKTOP = "system-desktop"
     USER_DOWNLOADS = "user-downloads"
+    # Retained only to decode historical receipts; no temporary network worker remains.
     TEMPORARY_NETWORK = "temporary-network"
     PACKAGE_DOWNLOADS = "package-downloads"
     TEMPORARY_NETWORK_CLEANUP = "temporary-network-cleanup"

@@ -1,295 +1,177 @@
-"""Exercise the terminal workflow without APT, credentials or a graphical session."""
-
-from __future__ import annotations
+"""Headless Textual tests preserve navigation, snapshots, consent and safe cancellation."""
 
 import asyncio
-from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 
-import pytest
-from textual.widgets import Input, Label
+from textual.widgets import Button, Checkbox, Input, TabbedContent
 
 from setup_system.application.installer import InstallRequest, Operation
-from setup_system.application.interaction import Interaction
+from setup_system.domain.settings import Section
 from setup_system.tui.installer import InstallationApp, Prompt
 
+ROOT = Path(__file__).resolve().parents[1]
 
-@dataclass
+
 class Service:
-    interaction: Interaction | None = None
-    requests: list[InstallRequest] = field(default_factory=list)
-    applied: bool = False
-    code: int = 0
+    def __init__(self):
+        self.requests = []
+        self.started = Event()
+        self.release = Event()
+        self.block = False
+        self.code = 0
+        self.interaction = None
 
-    def run(self, request: InstallRequest) -> int:
-        assert self.interaction is not None
+    def run(self, request):
         self.requests.append(request)
-        self.interaction.write("Checked complete fixture plan")
-        if request.operation == Operation.PLAN:
-            return 0
-        if not self.interaction.confirm("Apply complete fixture plan?"):
+        self.started.set()
+        if request.operation == Operation.APPLY and not self.interaction.confirm(
+            "Apply synthetic fixture?"
+        ):
             return 2
-        secret = self.interaction.subscription()
-        assert secret == "https://fixture.invalid/q-subscription"
-        self.applied = True
-        self.interaction.write("Stage: fixture configuration")
+        while self.block and not self.release.wait(0.01):
+            if self.interaction.cancelled:
+                return 3
+        self.interaction.write("Synthetic operation complete")
         return self.code
 
 
-def application(tmp_path: Path, service: Service) -> InstallationApp:
-    app = InstallationApp(tmp_path, InstallRequest(Operation.PLAN), service=service)
+def app_for(service):
+    app = InstallationApp(ROOT, InstallRequest(Operation.PLAN), service=service)
     service.interaction = app.interaction
     return app
 
 
-def test_open_and_plan_are_read_only_and_remain_responsive(tmp_path: Path) -> None:
-    async def exercise() -> None:
+def test_open_and_navigation_have_no_execution_or_side_effects() -> None:
+    async def run():
         service = Service()
-        app = application(tmp_path, service)
-        async with app.run_test(size=(100, 40)) as pilot:
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
             assert not service.requests
+            await pilot.press("ctrl+2")
+            assert app.query_one("#sections", TabbedContent).active == "workspace"
+            await pilot.press("ctrl+1")
+            assert app.query_one("#sections", TabbedContent).active == "base"
+            assert not service.requests
+
+    asyncio.run(run())
+
+
+def test_headless_plan_does_not_confirm_or_apply() -> None:
+    async def run():
+        service = Service()
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
             await pilot.click("#plan")
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert [r.operation for r in service.requests] == [Operation.PLAN]
+            assert [request.operation for request in service.requests] == [Operation.PLAN]
+            assert not isinstance(app.screen, Prompt)
+            assert app.last_code == 0 and not app.busy
+
+    asyncio.run(run())
+
+
+def test_screen_switch_keeps_active_plan_and_future_intentions_separate() -> None:
+    async def run():
+        service = Service()
+        service.block = True
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await pilot.click("#apply")
+            await pilot.pause()
+            assert isinstance(app.screen, Prompt)
+            await pilot.click("#confirm")
+            await pilot.pause()
+            assert app.busy
+            await pilot.press("ctrl+2")
+            assert app.query_one("#sections", TabbedContent).active == "workspace"
+            app.query_one("#opacity", Input).value = "0.80"
+            assert app.running_request.settings.theme.opacity == 0.96
+            assert service.requests[0].section == Section.BASE
+            assert app.snapshot(Operation.PLAN).settings.theme.opacity == 0.80
+            assert app.query_one("#apply", Button).disabled
+            service.release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
             assert not app.busy and app.last_code == 0
-            assert not service.applied and not list(tmp_path.iterdir())
 
-    asyncio.run(exercise())
+    asyncio.run(run())
 
 
-def test_cancelled_confirmation_never_applies(tmp_path: Path) -> None:
-    async def exercise() -> None:
+def test_cancel_and_quit_wait_for_safe_boundary() -> None:
+    async def run():
         service = Service()
-        app = application(tmp_path, service)
-        async with app.run_test(size=(100, 40)) as pilot:
-            app.query_one("#user", Input).value = "alice"
-            await pilot.click("#apply")
-            await pilot.pause()
-            assert isinstance(app.screen, Prompt)
-            await pilot.click("#cancel")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            assert not service.applied and app.last_code == 2
-            assert service.requests[0].user == "alice"
-            assert not service.requests[0].yes
-
-    asyncio.run(exercise())
-
-
-def test_secret_input_and_failed_stage_do_not_report_success(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        service = Service(code=5)
-        app = application(tmp_path, service)
-        async with app.run_test(size=(100, 40)) as pilot:
+        service.block = True
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
             await pilot.click("#apply")
             await pilot.pause()
             await pilot.click("#confirm")
             await pilot.pause()
-            secret = app.screen.query_one("#secret", Input)
-            assert secret.password
-            secret.value = "https://fixture.invalid/"
-            secret.focus()
-            await pilot.press("q")
-            secret.value += "-subscription"
-            await pilot.click("#confirm")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            assert service.applied and app.last_code == 5
-            assert "Stopped" in str(app.query_one("#status", Label).render())
-            assert secret.value == ""
-            assert not app.busy
+            await app.action_quit()
+            async with asyncio.timeout(5):
+                while app.busy:
+                    await asyncio.sleep(0.01)
+            assert app.quit_pending and app.last_code == 3
 
-    asyncio.run(exercise())
+    asyncio.run(run())
 
 
-@pytest.mark.parametrize("size", [(80, 25), (100, 40)])
-def test_keyboard_only_plan_confirmation_and_secret_submission(
-    tmp_path: Path, size: tuple[int, int]
-) -> None:
-    async def exercise() -> None:
-        service = Service(code=5)
-        app = application(tmp_path, service)
-        async with app.run_test(size=size) as pilot:
-            assert app.focused is app.query_one("#user", Input)
-            await pilot.press(*"alice", "enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            assert [(r.operation, r.user) for r in service.requests] == [(Operation.PLAN, "alice")]
-            assert not service.applied
-            assert app.focused is app.query_one("#plan")
-            await pilot.press("tab", "enter")
-            await pilot.pause()
-            assert isinstance(app.screen, Prompt)
-            assert app.focused is app.screen.query_one("#confirm")
-            assert not service.applied
-            assert "Checked complete fixture plan" in app.screen.plan
-            await pilot.press("enter")
-            await pilot.pause()
-            assert isinstance(app.screen, Prompt) and app.screen.secret
-            secret = app.screen.query_one("#secret", Input)
-            assert app.focused is secret and secret.password
-            await pilot.press(*"https://fixture.invalid/q-subscription", "enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            assert service.applied and app.last_code == 5 and not app.busy
-            assert secret.value == ""
-            assert all("https://fixture.invalid" not in line for line in app.output_lines)
-            assert app.focused is app.query_one("#plan")
-            assert not list(tmp_path.iterdir())
-
-    asyncio.run(exercise())
-
-
-def test_keyboard_can_cancel_confirmation_without_applying(tmp_path: Path) -> None:
-    async def exercise() -> None:
+def test_confirmation_cancel_never_reaches_mutation() -> None:
+    async def run():
         service = Service()
-        app = application(tmp_path, service)
-        async with app.run_test(size=(80, 25)) as pilot:
-            await pilot.press("tab", "tab", "tab", "enter")
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await pilot.click("#apply")
             await pilot.pause()
-            assert isinstance(app.screen, Prompt)
-            await pilot.press("tab")
-            assert app.focused is app.screen.query_one("#cancel")
-            await pilot.press("enter")
+            await pilot.press("escape")
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert not service.applied and app.last_code == 2
-            assert app.focused is app.query_one("#plan")
-            assert not list(tmp_path.iterdir())
+            assert app.last_code == 2
 
-    asyncio.run(exercise())
+    asyncio.run(run())
 
 
-def test_real_process_boundary_can_plan_from_a_worker_thread(tmp_path: Path) -> None:
-    from concurrent.futures import ThreadPoolExecutor
-
-    from setup_system.application.interaction import ConsoleInteraction
-    from setup_system.tui.process import ProcessInstallation
-
-    class ReadOnlyInteraction(ConsoleInteraction):
-        def __init__(self) -> None:
-            self.output: list[str] = []
-
-        def write(
-            self, text: str, *, end: str = "\n", error: bool = False, flush: bool = False
-        ) -> None:
-            self.output.append(text)
-
-        def confirm(self, prompt: str) -> bool:
-            raise AssertionError("Read-only plan requested consent")
-
-        def subscription(self) -> str:
-            raise AssertionError("Read-only plan requested a secret")
-
-    interaction = ReadOnlyInteraction()
-    service = ProcessInstallation(tmp_path, interaction)
-    with ThreadPoolExecutor(max_workers=1) as worker:
-        code = worker.submit(service.run, InstallRequest(Operation.PLAN)).result(timeout=30)
-    assert code == 4
-    assert any("UNSUPPORTED" in line for line in interaction.output)
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_fresh_textual_process_can_start_real_plan_worker(tmp_path: Path) -> None:
-    import subprocess
-    import sys
-
-    code = """import asyncio,sys
-from pathlib import Path
-from setup_system.application.installer import InstallRequest,Operation
-from setup_system.tui.installer import InstallationApp
-async def exercise():
- app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN))
- async with app.run_test(size=(100,40)) as pilot:
-  await pilot.click('#plan')
-  await app.workers.wait_for_complete()
-  await pilot.pause()
-  assert app.last_code==4 and not app.busy,app.output_lines
-asyncio.run(exercise())
-"""
-    result = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", code, str(tmp_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_process_protocol_roundtrips_and_rejects_unknown_messages() -> None:
-    import pytest
-
-    from setup_system.application.installation_host import (
-        Answer,
-        Progress,
-        Question,
-        Result,
-        decode_message,
-        encode_message,
-    )
-
-    for message in (Progress("stage"), Question("confirm"), Answer(None), Result(5)):
-        assert decode_message(encode_message(message)) == message
-    for raw in ('{"kind":"result","code":true}', '{"kind":"exec","command":"false"}', "{}"):
-        with pytest.raises(ValueError):
-            decode_message(raw)
-
-
-def test_process_protocol_refuses_worker_and_unknown_operations_before_apply() -> None:
-    import io
-    import json
-
-    import pytest
-
-    from setup_system.application.installation_host import read_request
-
-    for operation in ("network-stage", "unknown", [], {}):
-        payload = {
-            "root": "/fixture",
-            "operation": operation,
-            "user": None,
-            "yes": False,
-            "overrides": {},
-            "subscription_file": None,
-        }
-        with pytest.raises(ValueError):
-            read_request(io.StringIO(json.dumps(payload)))
-
-
-def test_timezone_is_editable_and_enter_only_requests_a_plan(tmp_path: Path) -> None:
-    async def exercise() -> None:
+def test_failed_worker_keeps_diagnostics_and_navigation_available() -> None:
+    async def run():
         service = Service()
-        app = application(tmp_path, service)
-        async with app.run_test(size=(80, 25)) as pilot:
-            timezone = app.query_one("#timezone", Input)
-            timezone.value = "Europe/Paris"
-            timezone.focus()
-            await pilot.press("enter")
+        service.code = 5
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await pilot.click("#plan")
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert len(service.requests) == 1
-            assert service.requests[0].timezone == "Europe/Paris"
-            assert service.requests[0].operation == Operation.PLAN and not service.applied
+            assert app.last_code == 5 and not app.busy
+            await pilot.press("ctrl+2")
+            assert app.query_one("#sections", TabbedContent).active == "workspace"
 
-    asyncio.run(exercise())
+    asyncio.run(run())
 
 
-def test_timezone_protocol_accepts_older_request_and_rejects_wrong_type(tmp_path: Path) -> None:
-    import io
-    import json
+def test_same_form_intentions_survive_repeated_navigation() -> None:
+    async def run():
+        app = app_for(Service())
+        async with app.run_test(size=(110, 42)) as pilot:
+            app.query_one("#hyprland", Checkbox).value = True
+            await pilot.press("ctrl+2")
+            app.query_one("#firefox", Checkbox).value = True
+            await pilot.press("ctrl+1")
+            await pilot.press("ctrl+2")
+            snapshot = app.snapshot(Operation.PLAN)
+            assert snapshot.system.hyprland and snapshot.settings.firefox
 
-    from setup_system.application.installation_host import encode_request, read_request
+    asyncio.run(run())
 
-    request = InstallRequest(Operation.PLAN, timezone="Europe/Paris")
-    payload = json.loads(encode_request(tmp_path, request))
-    _, decoded = read_request(io.StringIO(json.dumps(payload) + "\n"))
-    assert decoded.timezone == "Europe/Paris"
-    del payload["timezone"]
-    _, older = read_request(io.StringIO(json.dumps(payload) + "\n"))
-    assert older.timezone is None
-    payload["timezone"] = True
-    with pytest.raises(ValueError, match="request values"):
-        read_request(io.StringIO(json.dumps(payload) + "\n"))
+
+def test_action_buttons_fit_a_standard_terminal() -> None:
+    async def run():
+        app = app_for(Service())
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.pause()
+            for name in ("plan", "apply", "stop", "save", "tools", "quit"):
+                button = app.query_one("#" + name, Button)
+                assert button.region.x >= 0 and button.region.right <= 80
+                assert button.region.y >= 0 and button.region.bottom <= 25
+
+    asyncio.run(run())

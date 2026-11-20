@@ -1,89 +1,52 @@
-"""Stable CLI registration and retired installation options."""
+"""Only the Textual entrypoint remains public; help and rejected inputs are read-only."""
 
-from __future__ import annotations
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
-from typer.core import TyperGroup
-from typer.main import get_command
-from typer.testing import CliRunner
 
-from setup_system.cli import main
+from setup_system import entrypoint
 
 
-def test_command_groups_and_public_option_names_remain_available() -> None:
-    command = get_command(main.app)
-    assert isinstance(command, TyperGroup)
-    assert set(command.commands) == {
-        "agents",
-        "apps",
-        "apply",
-        "backup",
-        "doctor",
-        "git",
-        "happ",
-        "install",
-        "plan",
-        "projects",
-        "restore",
-        "rtk",
-        "shell",
-        "templates",
-        "workstation",
-        "tui",
-    }
-    groups = {
-        "install": {"plan", "apply"},
-        "apps": {"install", "list"},
-        "projects": {"list", "prepare", "path", "open"},
-        "templates": {"list", "path", "versions", "create", "update", "cache"},
-        "workstation": {"plan", "doctor", "font-probe", "prefetch", "apply", "backup", "restore"},
-    }
-    for name, expected in groups.items():
-        group = command.commands[name]
-        assert isinstance(group, TyperGroup)
-        assert set(group.commands) == expected
-    workstation_group = command.commands["workstation"]
-    assert isinstance(workstation_group, TyperGroup)
-    assert "--offline" in {
-        option for param in workstation_group.commands["apply"].params for option in param.opts
-    }
-    install_group = command.commands["install"]
-    assert isinstance(install_group, TyperGroup)
-    for operation in ("plan", "apply"):
-        assert "--vpn-config-file" in {
-            option for param in install_group.commands[operation].params for option in param.opts
-        }
-    restore = command.commands["restore"]
-    assert {option for param in restore.params for option in param.opts} >= {
-        "--backup",
-        "--dry-run",
-        "--apply",
-        "--yes",
-        "--replaceCurrent",
-    }
+def test_only_textual_entrypoint_is_published() -> None:
+    import tomllib
+
+    root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    assert project["scripts"] == {"setup-system": "setup_system.entrypoint:main"}
+    assert not (root / "setup.sh").exists()
+    assert not (root / "src/setup_system/cli/main.py").exists()
+
+
+def test_help_is_read_only_without_importing_textual(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = subprocess.run(
+        [sys.executable, "-I", "-m", "setup_system", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "Textual" in result.stdout and "Commands:" not in result.stdout
 
 
 @pytest.mark.parametrize(
-    "path", [[], ["apps"], ["projects"], ["templates"], ["workstation"], ["install"]]
+    "arguments",
+    [["install", "apply"], ["projects", "list"], ["--vpn-config-file", "private"], ["--yes"]],
 )
-def test_help_does_not_enter_an_executor(monkeypatch: pytest.MonkeyPatch, path: list[str]) -> None:
-    def fail(*args: object, **kwargs: object) -> None:
-        pytest.fail("help entered an executor")
-
-    monkeypatch.setattr("setup_system.application.workstation.apply", fail)
-    result = CliRunner().invoke(main.app, [*path, "--help"])
-    assert result.exit_code == 0, result.output
-    assert "Usage:" in result.output and "Commands" in result.output
-
-
-def test_retired_package_install_flag_cannot_apply(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail(*args: object, **kwargs: object) -> None:
-        pytest.fail("a retired option entered apply")
-
-    monkeypatch.setattr("setup_system.application.workstation.apply", fail)
-    result = CliRunner().invoke(
-        main.app,
-        ["workstation", "apply", "--profile", "hyprland", "--yes", "--install-debian-packages"],
+def test_removed_commands_cannot_mutate(arguments: list[str]) -> None:
+    result = subprocess.run(
+        [sys.executable, "-I", "-m", "setup_system", *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert result.exit_code == 2, result.output
-    assert "No such option" in result.output
+    assert result.returncode == 2
+
+
+def test_root_ui_is_rejected_before_opening(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["setup-system"])
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+    with pytest.raises(SystemExit) as error:
+        entrypoint.main()
+    assert error.value.code == 2

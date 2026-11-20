@@ -63,9 +63,9 @@ def test_sources_use_one_official_origin_and_explicit_keyring(tmp_path: Path) ->
     assert "Suites: trixie-backports\n" in managed
     assert "Suites: trixie trixie-updates trixie-backports\n" in staged
     assert "Suites: trixie-security\n" in staged
-    assert "URIs: http://deb.debian.org/debian\n" in managed
-    assert "URIs: http://deb.debian.org/debian\n" in staged
-    assert "URIs: http://security.debian.org/debian-security\n" in staged
+    assert "URIs: https://deb.debian.org/debian\n" in managed
+    assert "URIs: https://deb.debian.org/debian\n" in staged
+    assert "URIs: https://security.debian.org/debian-security\n" in staged
     assert managed.count(f"Signed-By: {keyring}") == 1
     assert staged.count(f"Signed-By: {keyring}") == 2
     assert not list(tmp_path.iterdir())

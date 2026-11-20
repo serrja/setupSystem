@@ -1,0 +1,10 @@
+---
+- name: Validate the local user configuration role
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    user_files_managed_files: []
+  roles:
+    - user_files

@@ -22,6 +22,7 @@ def package_arguments(
     os_release: dict[str, str] | None = None,
     architecture: str | None = None,
     root: Path | None = None,
+    graphical_login: bool = True,
 ) -> list[str]:
     """Select one compatible package set; the privileged system adapter owns execution."""
     capabilities = load_policy(root)
@@ -43,6 +44,10 @@ def package_arguments(
     backports = profile.backport_packages
     return [
         f"hyprland={profile.version_pin}",
-        *profile.base_packages,
+        *(
+            package
+            for package in profile.base_packages
+            if graphical_login or package not in {"greetd", "gtkgreet", "cage"}
+        ),
         *(f"{name}={version}" for name, version in backports.items()),
     ]
