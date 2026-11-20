@@ -54,6 +54,7 @@ class FileChange(Record):
     after: FileState
     verified: bool = False
     restore_directory: CreatedDirectory | None = None
+    retained_after: CreatedDirectory | None = None
     apply_directory: CreatedDirectory | None = None
     prepared_inode: int | None = None
 
@@ -472,12 +473,23 @@ def _interrupted_apply(row: FileChange, path: Path) -> tuple[Path, str] | None:
     return None
 
 
-def _holding(row: FileChange, target: Path) -> Path | None:
-    record = row.restore_directory
+def same_filesystem(first: Path, second: Path) -> bool:
+    return first.stat().st_dev == second.stat().st_dev
+
+
+def _holding(record: CreatedDirectory | None, target: Path) -> Path | None:
     if record is None:
         return None
     folder = checked_directory(Path.home().resolve() / record.relative)
-    if folder.parent != target.parent or not folder.name.startswith(".setup-system-restore-"):
+    root = folder.parent
+    private = (
+        root.name == "restored"
+        and root.parent.parent == state_root() / "backups"
+        and RUN_ID.fullmatch(root.parent.name)
+    )
+    if not folder.name.startswith(".setup-system-restore-") or not (
+        private or root in target.parents
+    ):
         raise ValueError("Invalid restore staging directory")
     if not folder.exists():
         return None
@@ -493,14 +505,13 @@ def _status(row: FileChange, path: Path) -> str:
         return interrupted[1]
     if prepared_target(row, path) and observe(path) == row.after:
         row.verified = True
-    holding = _holding(row, path)
+    holding = _holding(row.restore_directory, path)
     if holding is not None and (holding / "after").exists():
         if observe(holding / "after") != row.after:
             return "conflict"
         if not path.exists():
             return "would-remove" if row.before is None else "would-restore"
-        # Publication uses a no-replace hard link. A process interruption between
-        # linking and unlinking the staged original can leave both names.
+        # Older receipts can have both names after an interrupted link-based restore.
         staged = holding / "before"
         if (
             staged.is_file()
@@ -520,7 +531,7 @@ def _publish_original(path: Path, staged: Path, content: bytes, state: FileState
         if staged.stat().st_gid != state.gid:
             os.chown(staged, -1, state.gid)
         try:
-            os.link(staged, path, follow_symlinks=False)
+            _move_new(staged, path)
         except FileExistsError:
             raise ValueError(f"File appeared during restore: {path}") from None
     if (
@@ -538,11 +549,20 @@ def _restore_file(
     status = _status(row, path)
     if status == "conflict":
         raise ValueError(f"Rollback conflicts with a later edit: {path}")
-    holding = _holding(row, path)
+    holding = _holding(row.restore_directory, path)
     if status == "unchanged" and holding is None:
         return status
     if holding is None:
-        holding = Path(tempfile.mkdtemp(prefix=".setup-system-restore-", dir=path.parent))
+        if same_filesystem(path.parent, folder):
+            stable = folder / "restored"
+            checked_directory(stable).mkdir(mode=0o700, exist_ok=True)
+        else:
+            created = {Path.home().resolve() / d.relative for d in operation.directories}
+            stable = next(p for p in path.parents if p not in created)
+            checked_directory(stable)
+            if not same_filesystem(stable, path.parent):
+                raise ValueError(f"Missing stable same-filesystem recovery directory for {path}")
+        holding = Path(tempfile.mkdtemp(prefix=".setup-system-restore-", dir=stable))
         info = holding.stat()
         row.restore_directory = CreatedDirectory(
             relative=holding.relative_to(Path.home().resolve()).as_posix(),
@@ -554,17 +574,16 @@ def _restore_file(
     if status != "unchanged" and not displaced.exists():
         # Move the actual incumbent aside before deciding whether it can be
         # replaced. A concurrent editor's version is never overwritten.
-        os.rename(path, displaced)
+        _move_new(path, displaced)
         try:
             matches = observe(displaced) == row.after
         except (ValueError, OSError):
             matches = False
         if not matches:
             try:
-                os.link(displaced, path, follow_symlinks=False)
+                _move_new(displaced, path)
             except FileExistsError:
                 raise ValueError(f"Concurrent edit retained at {displaced}") from None
-            displaced.unlink()
             raise ValueError(f"Rollback conflicts with a later edit: {path}")
     if row.before is not None and status != "unchanged":
         assert content is not None
@@ -572,10 +591,11 @@ def _restore_file(
     if observe(path) != row.before:
         raise ValueError(f"Restore readback failed: {path}")
     if displaced.exists():
-        if observe(displaced) != row.after:
-            raise ValueError(f"Concurrent edit retained at {displaced}")
-        displaced.unlink()
-    holding.rmdir()
+        # An editor may still hold this inode. Keep its name under the owner's
+        # private recovery directory even after restoring the public path.
+        row.retained_after = row.restore_directory
+    else:
+        holding.rmdir()
     row.restore_directory = None
     operation.save(folder)
     return "removed" if row.before is None else "restored"
@@ -591,10 +611,15 @@ def restore_operation(folder: Path, *, apply: bool) -> list[tuple[str, str]]:
 def _restore_operation(folder: Path, *, apply: bool) -> list[tuple[str, str]]:
     operation = load_operation(folder)
     if operation.status == "restored":
-        return [
-            (str(target_path(row.relative, validate_file=False)), "already restored")
-            for row in operation.files
-        ]
+        previous = []
+        for row in operation.files:
+            path = target_path(row.relative, validate_file=False)
+            retained_area = _holding(row.retained_after, path)
+            status = "already restored"
+            if retained_area is not None:
+                status += f"; displaced file retained at {retained_area / 'after'}"
+            previous.append((str(path), status))
+        return previous
     rows = []
     for row in operation.files:
         path = target_path(row.relative, validate_file=False)

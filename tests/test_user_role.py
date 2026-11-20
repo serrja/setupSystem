@@ -199,20 +199,21 @@ def test_restore_refuses_later_mode_change_without_touching_a_sibling(home: Path
 def test_concurrent_restore_edit_is_returned_without_overwriting(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import os
 
     from setup_system.storage import restore
 
     target = home / "tool"
     op = apply_files({target: b"managed"})
-    original = os.rename
+    from setup_system.infrastructure import file_receipts
+
+    original = file_receipts._move_new
 
     def concurrent_edit(source, destination):
         if source == target:
             target.write_bytes(b"owner edited during restore")
         return original(source, destination)
 
-    monkeypatch.setattr(os, "rename", concurrent_edit)
+    monkeypatch.setattr(file_receipts, "_move_new", concurrent_edit)
     with pytest.raises(ValueError, match="later edit"):
         restore(op.name, apply=True)
     assert target.read_bytes() == b"owner edited during restore"
@@ -426,14 +427,41 @@ def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
     assert retained.read_bytes() == b"editor saved later"
 
 
-def test_restore_retires_target_filesystem_staging_and_new_parent(
-    home: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("separate", [False, True])
+@pytest.mark.parametrize("existed", [False, True])
+def test_restore_keeps_open_writer_on_the_removed_installation(
+    home: Path, monkeypatch: pytest.MonkeyPatch, separate: bool, existed: bool
 ) -> None:
-    from setup_system.infrastructure import user_files
+    from setup_system.infrastructure import file_receipts, user_files
     from setup_system.storage import restore
 
-    monkeypatch.setattr(user_files, "_same_filesystem", lambda _target, _backup: False)
-    target = home / "new directory" / "file"
-    operation = apply_files({target: b"managed"})
-    restore(operation.name, apply=True)
-    assert not target.parent.exists()
+    if separate:
+
+        def separate_filesystems(left, right):
+            return left.is_relative_to(home / "state") == right.is_relative_to(home / "state")
+
+        monkeypatch.setattr(user_files, "same_filesystem", separate_filesystems)
+        monkeypatch.setattr(file_receipts, "same_filesystem", separate_filesystems)
+    target = home / "new directory" / "managed"
+    if existed:
+        target.parent.mkdir()
+        target.write_bytes(b"original")
+    operation = apply_files(
+        {target: b"managed"},
+        expected={target: file_receipts.digest(b"original") if existed else None},
+    )
+    with target.open("r+b") as editor:
+        restore(operation.name, apply=True)
+        editor.seek(0)
+        editor.write(b"saved after restore")
+    if existed:
+        assert target.read_bytes() == b"original"
+    else:
+        assert not target.parent.exists()
+    row = file_receipts.load_operation(operation).files[0]
+    assert row.retained_after is not None
+    retained = home / row.retained_after.relative / "after"
+    if separate:
+        assert not retained.is_relative_to(home / "state")
+    assert retained.read_bytes() == b"saved after restore"
+    assert str(retained) in restore(operation.name)[0][1]

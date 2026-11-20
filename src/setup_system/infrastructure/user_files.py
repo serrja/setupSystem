@@ -26,6 +26,7 @@ from setup_system.infrastructure.file_receipts import (
     ownership,
     prepared_target,
     require_recovered,
+    same_filesystem,
     target_path,
     writer,
 )
@@ -117,14 +118,10 @@ def _create_parents(path: Path, operation: Operation, folder: Path) -> None:
         operation.save(folder)
 
 
-def _same_filesystem(first: Path, second: Path) -> bool:
-    return first.stat().st_dev == second.stat().st_dev
-
-
 def _prepare_publication(
     row: FileChange, path: Path, content: bytes, folder: Path, number: int
 ) -> None:
-    if _same_filesystem(path.parent, folder):
+    if same_filesystem(path.parent, folder):
         root = folder / "publication"
         root.mkdir(mode=0o700, exist_ok=True)
         area = root / str(number)
