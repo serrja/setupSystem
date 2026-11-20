@@ -3,7 +3,7 @@
   <defs>
     <linearGradient id="night" x2="1" y2="1"><stop stop-color="@{ crust }@"/><stop offset=".55" stop-color="@{ base }@"/><stop offset="1" stop-color="@{ surface0 }@"/></linearGradient>
     <radialGradient id="glow"><stop stop-color="@{ green }@" stop-opacity=".3"/><stop offset="1" stop-color="@{ green }@" stop-opacity="0"/></radialGradient>
-    <linearGradient id="ridge" x2="1" y2=".4"><stop stop-color="#45475a"/><stop offset="1" stop-color="#585b70"/></linearGradient>
+    <linearGradient id="ridge" x2="1" y2=".4"><stop stop-color="@{ surface1 }@"/><stop offset="1" stop-color="@{ surface2 }@"/></linearGradient>
   </defs>
   <rect width="1920" height="1080" fill="url(#night)"/>
   <ellipse cx="1400" cy="270" rx="650" ry="650" fill="url(#glow)"/>

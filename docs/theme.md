@@ -14,7 +14,7 @@ syntax. Debian 13 ships Waybar 0.12.0, whose native workspace button still sends
 `dispatch workspace <id>`. The pinned Hyprland Lua parser expects a dispatcher
 expression. Recheck the native button on a disposable graphical session when either
 package changes. [Waybar workspace button](https://github.com/Alexays/Waybar/blob/8490a1d9b9a5c8770dd63e9faca0a5e01acedcae/src/modules/hyprland/workspace.cpp#L60-L70)
-and [Hyprland dispatch implementation](https://github.com/hyprwm/Hyprland/blob/v0.55.2/src/debug/HyprCtl.cpp#L1102-L1118).
+and [Hyprland dispatch implementation](https://github.com/hyprwm/Hyprland/blob/39d7e209c79d451efab1b21151d5938289da838d/src/debug/HyprCtl.cpp#L1102-L1118).
 
 Use the display form in a running Hyprland session to select an output, an advertised
 mode, scale and position. Preview applies temporary compositor rules. After twelve seconds

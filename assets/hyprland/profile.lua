@@ -26,7 +26,7 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" 
   decoration = {
     rounding = @{ rounding }@,
     blur = { enabled = @{ effects }@, size = 3, passes = 1 },
-    shadow = { enabled = true, range = 4, render_power = 3, color = "rgba(@{ crust_hex }@99)" },
+    shadow = { enabled = @{ effects }@, range = 4, render_power = 3, color = "rgba(@{ crust_hex }@99)" },
   },
   animations = { enabled = @{ effects }@ },
   input = { kb_layout = "@{ keyboard }@", kb_options = "grp:win_space_toggle", follow_mouse = 1 },
