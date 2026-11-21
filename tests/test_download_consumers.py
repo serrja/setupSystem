@@ -141,6 +141,9 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(home / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / "cache"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "config"))
     version = "1.2.3"
     path = "nvim-linux-x86_64/bin/nvim" if provider == "neovim" else "fixture-tool"
     content = archive(path, zipped=provider == "archive_tool")
@@ -190,6 +193,8 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
     else:
         assert install().startswith("changed:")
         assert install().startswith("unchanged:")
+        cached_archive = home / "cache/setup-system/downloads" / digest
+        assert cached_archive.read_bytes() == content
         binary = (
             home / "data/setup-system/neovim" / version / "bin/nvim"
             if provider == "neovim"
