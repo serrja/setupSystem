@@ -11,12 +11,14 @@ import pytest
 import yaml
 
 from setup_system.application import templates
-from setup_system.application.project_catalog import (
+from setup_system.domain.projects import (
     TemplateMetadata,
     TemplateVersion,
     git_tag_for_python_version,
     python_version_for_git_tag,
 )
+from setup_system.domain.templates import TemplatePlan, TemplateSource
+from setup_system.infrastructure import copier_templates
 
 
 @pytest.mark.parametrize(
@@ -81,7 +83,7 @@ def tag(path: Path, name: str) -> None:
 
 
 @pytest.fixture
-def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> templates.TemplateSource:
+def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TemplateSource:
     repository = tmp_path / "source"
     repository.mkdir()
     git(repository, "init", "--quiet")
@@ -112,14 +114,14 @@ def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> templates.Templat
     (repository / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="0.2.0"\n')
     second = commit(repository, "version two")
     tag(repository, "v0.2.0")
-    original_fetch = templates._fetch_ref
+    original_fetch = copier_templates._fetch_ref
     monkeypatch.setattr(
-        templates,
+        copier_templates,
         "_fetch_ref",
         lambda target, url, ref: original_fetch(target, str(repository), ref),
     )
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    return templates.TemplateSource(
+    return TemplateSource(
         project="fixture/template",
         url="https://github.com/fixture/template.git",
         metadata=TemplateMetadata(
@@ -133,9 +135,7 @@ def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> templates.Templat
     )
 
 
-def plan(
-    source: templates.TemplateSource, destination: Path, **options: object
-) -> templates.TemplatePlan:
+def plan(source: TemplateSource, destination: Path, **options: object) -> TemplatePlan:
     values = {"template": source.metadata.alias, "version": "0.1.0", "defaults": True, **options}
     return templates.plan_template(
         {source.metadata.alias: source}, destination=destination, **values
@@ -143,11 +143,11 @@ def plan(
 
 
 def test_real_copy_and_offline_update_preserve_project_files_and_refs(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     destination = tmp_path / "generated"
     environment = dict(os.environ)
-    result = templates.execute_template(plan(source, destination))
+    result = copier_templates.execute_template(plan(source, destination))
     assert result.status == "created" and not (destination / ".git").exists()
     assert not (destination / ".venv").exists() and not (destination / "TASK_MUST_NOT_RUN").exists()
     answers = yaml.safe_load((destination / ".copier-answers.yml").read_text())
@@ -170,8 +170,8 @@ def test_real_copy_and_offline_update_preserve_project_files_and_refs(
         (destination / name).write_text(content)
     head = commit(destination, "user changes")
     refs = git(destination, "show-ref")
-    monkeypatch.setattr(templates, "_fetch_ref", lambda *args: pytest.fail("offline fetch"))
-    result = templates.execute_template(
+    monkeypatch.setattr(copier_templates, "_fetch_ref", lambda *args: pytest.fail("offline fetch"))
+    result = copier_templates.execute_template(
         plan(source, destination, operation="update", version="0.2.0", offline=True)
     )
     assert result.status == "updated"
@@ -186,31 +186,29 @@ def test_real_copy_and_offline_update_preserve_project_files_and_refs(
 
 
 def test_destination_and_missing_offline_cache_fail_before_writes(
-    tmp_path: Path, source: templates.TemplateSource
+    tmp_path: Path, source: TemplateSource
 ) -> None:
     destination = tmp_path / "owned"
     destination.mkdir()
     (destination / "keep.txt").write_text("user data")
     with pytest.raises(ValueError, match="empty"):
-        templates.execute_template(plan(source, destination))
+        copier_templates.execute_template(plan(source, destination))
     assert list(destination.iterdir()) == [destination / "keep.txt"]
     absent = tmp_path / "absent"
     with pytest.raises(ValueError, match=r"Offline.*missing"):
-        templates.execute_template(plan(source, absent, offline=True))
+        copier_templates.execute_template(plan(source, absent, offline=True))
     assert not absent.exists() and not (tmp_path / "cache").exists()
 
 
 @pytest.mark.parametrize("version", ["", "main", "latest", "v0.1.0", "0.99.0"])
 def test_only_catalog_versions_are_accepted(
-    source: templates.TemplateSource, tmp_path: Path, version: str
+    source: TemplateSource, tmp_path: Path, version: str
 ) -> None:
     with pytest.raises(ValueError, match="reviewed version"):
         plan(source, tmp_path / "absent", version=version)
 
 
-def test_bad_tag_and_corrupt_cache_fail_closed(
-    tmp_path: Path, source: templates.TemplateSource
-) -> None:
+def test_bad_tag_and_corrupt_cache_fail_closed(tmp_path: Path, source: TemplateSource) -> None:
     bad = source.model_copy(
         update={
             "metadata": source.metadata.model_copy(
@@ -224,44 +222,42 @@ def test_bad_tag_and_corrupt_cache_fail_closed(
         }
     )
     with pytest.raises(ValueError, match="mismatch"):
-        templates.prepare_cache(plan(bad, tmp_path / "absent"))
+        copier_templates.prepare_cache(plan(bad, tmp_path / "absent"))
     correct = plan(source, tmp_path / "absent")
-    cached = templates.prepare_cache(correct)
+    cached = copier_templates.prepare_cache(correct)
     (cached.parent / "catalog.json").write_text("corrupt")
     with pytest.raises(ValueError, match="corrupt"):
-        templates.execute_template(correct)
+        copier_templates.execute_template(correct)
     assert not correct.destination.exists()
 
 
 def test_update_rejects_dirty_project_and_untrusted_answers(
-    tmp_path: Path, source: templates.TemplateSource
+    tmp_path: Path, source: TemplateSource
 ) -> None:
     destination = tmp_path / "project"
-    templates.execute_template(plan(source, destination))
+    copier_templates.execute_template(plan(source, destination))
     git(destination, "init", "--quiet")
     with pytest.raises(ValueError, match="preserve project changes"):
-        templates.execute_template(plan(source, destination, operation="update"))
+        copier_templates.execute_template(plan(source, destination, operation="update"))
     answers = destination / ".copier-answers.yml"
     answers.write_text(
         answers.read_text().replace(source.url, "https://untrusted.invalid/template")
     )
     commit(destination, "untrusted answers")
     with pytest.raises(ValueError, match="reviewed template source"):
-        templates.execute_template(plan(source, destination, operation="update"))
+        copier_templates.execute_template(plan(source, destination, operation="update"))
 
 
-def test_lightweight_tag_is_rejected(tmp_path: Path, source: templates.TemplateSource) -> None:
+def test_lightweight_tag_is_rejected(tmp_path: Path, source: TemplateSource) -> None:
     repository = tmp_path / "source"
     git(repository, "tag", "-d", "v0.1.0")
     git(repository, "tag", "v0.1.0", source.metadata.versions[0].commit)
     with pytest.raises(ValueError, match="annotated tag"):
-        templates.execute_template(plan(source, tmp_path / "absent"))
+        copier_templates.execute_template(plan(source, tmp_path / "absent"))
     assert not (tmp_path / "absent").exists()
 
 
-def test_create_does_not_execute_template_tasks(
-    tmp_path: Path, source: templates.TemplateSource
-) -> None:
+def test_create_does_not_execute_template_tasks(tmp_path: Path, source: TemplateSource) -> None:
     repository = tmp_path / "source"
     config = repository / "copier.yml"
     config.write_text(
@@ -277,21 +273,21 @@ def test_create_does_not_execute_template_tasks(
     )
     with_task = source.model_copy(update={"metadata": metadata})
     destination = tmp_path / "task-project"
-    templates.execute_template(plan(with_task, destination, version=None))
+    copier_templates.execute_template(plan(with_task, destination, version=None))
     assert not (destination / "TASK_MUST_NOT_RUN").exists()
     assert not (destination / ".git").exists()
 
 
 def test_copier_merge_conflict_is_not_reported_as_success(
-    tmp_path: Path, source: templates.TemplateSource
+    tmp_path: Path, source: TemplateSource
 ) -> None:
     destination = tmp_path / "conflict"
-    templates.execute_template(plan(source, destination))
+    copier_templates.execute_template(plan(source, destination))
     git(destination, "init", "--quiet")
     commit(destination, "generated")
     (destination / "README.md").write_text("# example\n\nUser documentation.\n")
     before = commit(destination, "user documentation")
-    result = templates.execute_template(
+    result = copier_templates.execute_template(
         plan(source, destination, operation="update", version="0.2.0")
     )
     assert result.status == "conflicts"
@@ -300,7 +296,7 @@ def test_copier_merge_conflict_is_not_reported_as_success(
 
 
 def test_internal_answers_and_symlink_destinations_are_rejected(
-    tmp_path: Path, source: templates.TemplateSource
+    tmp_path: Path, source: TemplateSource
 ) -> None:
     with pytest.raises(ValueError, match="Internal Copier"):
         plan(source, tmp_path / "absent", data={"_src_path": "https://untrusted.invalid"})
@@ -309,7 +305,7 @@ def test_internal_answers_and_symlink_destinations_are_rejected(
     linked = tmp_path / "linked"
     linked.symlink_to(target, target_is_directory=True)
     with pytest.raises(ValueError, match="symlinks"):
-        templates.execute_template(plan(source, linked / "project"))
+        copier_templates.execute_template(plan(source, linked / "project"))
     assert list(target.iterdir()) == []
 
 
@@ -326,22 +322,20 @@ def test_catalog_rejects_source_substitution(tmp_path: Path) -> None:
         templates.load_templates(tmp_path)
 
 
-def test_cache_rejects_symlinked_repository(
-    tmp_path: Path, source: templates.TemplateSource
-) -> None:
+def test_cache_rejects_symlinked_repository(tmp_path: Path, source: TemplateSource) -> None:
     selected = plan(source, tmp_path / "absent")
-    repository = templates.prepare_cache(selected)
+    repository = copier_templates.prepare_cache(selected)
     outside = tmp_path / "outside.git"
     repository.rename(outside)
     repository.symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError, match="symlinks"):
-        templates.execute_template(selected)
+        copier_templates.execute_template(selected)
     assert not selected.destination.exists()
 
 
-def test_update_rejects_symlinked_answers(tmp_path: Path, source: templates.TemplateSource) -> None:
+def test_update_rejects_symlinked_answers(tmp_path: Path, source: TemplateSource) -> None:
     destination = tmp_path / "project"
-    templates.execute_template(plan(source, destination))
+    copier_templates.execute_template(plan(source, destination))
     answers = destination / ".copier-answers.yml"
     external = tmp_path / "external-answers.yml"
     answers.rename(external)
@@ -350,12 +344,14 @@ def test_update_rejects_symlinked_answers(tmp_path: Path, source: templates.Temp
     git(destination, "init", "--quiet")
     commit(destination, "linked answers")
     with pytest.raises(ValueError, match="Valid Copier answers"):
-        templates.execute_template(plan(source, destination, operation="update", version="0.2.0"))
+        copier_templates.execute_template(
+            plan(source, destination, operation="update", version="0.2.0")
+        )
     assert external.read_bytes() == original and not git(destination, "status", "--porcelain")
 
 
 def test_service_uses_recorded_identity_without_hidden_copier_default(
-    tmp_path: Path, source: templates.TemplateSource
+    tmp_path: Path, source: TemplateSource
 ) -> None:
     repository = tmp_path / "source"
     config = repository / "copier.yml"
@@ -379,7 +375,7 @@ def test_service_uses_recorded_identity_without_hidden_copier_default(
         }
     )
     destination = tmp_path / "service-project"
-    result = templates.execute_template(plan(service, destination, version=None))
+    result = copier_templates.execute_template(plan(service, destination, version=None))
     answers = yaml.safe_load((destination / ".copier-answers.yml").read_text())
     assert "projectName" not in answers and answers["service_name"] == "exampleService"
     assert result.project_name == "exampleService" and result.status == "created"
@@ -387,7 +383,7 @@ def test_service_uses_recorded_identity_without_hidden_copier_default(
 
 
 def test_current_github_dev_tag_verifies_native_metadata_and_copier_answers(
-    tmp_path: Path, source: templates.TemplateSource
+    tmp_path: Path, source: TemplateSource
 ) -> None:
     repository = tmp_path / "source"
     (repository / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="0.3.0.dev2"\n')
@@ -403,35 +399,34 @@ def test_current_github_dev_tag_verifies_native_metadata_and_copier_answers(
         }
     )
     destination = tmp_path / "dev tag with spaces"
-    result = templates.execute_template(plan(current, destination, version=None))
+    result = copier_templates.execute_template(plan(current, destination, version=None))
     assert result.source_commit == head and result.version == "0.3.0.dev2"
     answers = yaml.safe_load((destination / ".copier-answers.yml").read_text())
     assert answers["_commit"] == "v0.3.0-dev.2"
 
 
 def test_workspace_tool_update_accepts_parent_relative_destination(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.application.tools import ToolRequest, execute
+    from setup_system.composition import build_tools
+    from setup_system.domain.tool_requests import WriteTemplate
 
     caller = tmp_path / "caller"
     caller.mkdir()
     monkeypatch.chdir(caller)
     monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
-    execute(
-        tmp_path,
-        ToolRequest(
-            "create_template", name="python", destination=Path("../project"), version="0.1.0"
+    build_tools(tmp_path).execute(
+        WriteTemplate(
+            action="create_template", name="python", destination=Path("../project"), version="0.1.0"
         ),
         confirmed=True,
     )
     destination = tmp_path / "project"
     git(destination, "init", "--quiet")
     head = commit(destination, "generated project")
-    execute(
-        tmp_path,
-        ToolRequest(
-            "update_template", name="python", destination=Path("../project"), version="0.2.0"
+    build_tools(tmp_path).execute(
+        WriteTemplate(
+            action="update_template", name="python", destination=Path("../project"), version="0.2.0"
         ),
         confirmed=True,
     )
@@ -440,39 +435,42 @@ def test_workspace_tool_update_accepts_parent_relative_destination(
 
 
 def test_workspace_tool_lists_reviewed_versions_and_creates_recommendation(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.application.tools import ToolRequest, execute
+    from setup_system.composition import build_tools
+    from setup_system.domain.tool_requests import SimpleTool, WriteTemplate
 
     monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
-    assert "python: 0.1.0, 0.2.0" in execute(tmp_path, ToolRequest("templates"))
+    assert "python: 0.1.0, 0.2.0" in build_tools(tmp_path).execute(SimpleTool(action="templates"))
     destination = tmp_path / "selected"
-    result = execute(
-        tmp_path,
-        ToolRequest("create_template", name="python", destination=destination),
+    result = build_tools(tmp_path).execute(
+        WriteTemplate(action="create_template", name="python", destination=destination),
         confirmed=True,
     )
     assert f"python 0.2.0 · {source.metadata.versions[-1].commit}" in result
     assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
     with pytest.raises(ValueError, match="destination"):
-        execute(tmp_path, ToolRequest("create_template", name="python"), confirmed=True)
+        build_tools(tmp_path).execute(
+            WriteTemplate(action="create_template", name="python"), confirmed=True
+        )
 
 
 def test_workspace_tool_preserves_explicit_answers_and_requires_confirmation(
-    tmp_path: Path, source: templates.TemplateSource, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.application.tools import ToolRequest, execute
+    from setup_system.composition import build_tools
+    from setup_system.domain.tool_requests import WriteTemplate
 
     monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
     destination = tmp_path / "interactive"
-    request = ToolRequest(
-        "create_template",
+    request = WriteTemplate(
+        action="create_template",
         name="python",
         destination=destination,
         answers={"projectName": "interactiveProject"},
     )
     with pytest.raises(ValueError, match="confirmation"):
-        execute(tmp_path, request)
+        build_tools(tmp_path).execute(request)
     assert not destination.exists()
-    execute(tmp_path, request, confirmed=True)
+    build_tools(tmp_path).execute(request, confirmed=True)
     assert "interactiveProject" in (destination / "README.md").read_text()

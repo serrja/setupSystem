@@ -5,15 +5,25 @@ from __future__ import annotations
 import platform
 from pathlib import Path
 
-from setup_system.capabilities import load_policy
-from setup_system.domain.operations import Action
+from setup_system.domain.catalog import ComponentCatalog
+from setup_system.domain.operations import (
+    Action,
+    ApplicationAction,
+    BlockedAction,
+    CleanupAction,
+    DesktopAction,
+    LanguageAction,
+    PackageAction,
+    RegionAction,
+)
+from setup_system.domain.platforms import CapabilityPolicy
 from setup_system.domain.settings import SystemSettings, UserSettings
+from setup_system.domain.system_commands import RegionalKind
 from setup_system.infrastructure import regional
 
 
-def platform_blocker() -> tuple[str, ...]:
+def platform_blocker(policy: CapabilityPolicy) -> tuple[str, ...]:
     release = platform.freedesktop_os_release()
-    policy = load_policy()
     profile = policy.hyprland
     if (
         release.get("ID") == profile.distribution
@@ -29,15 +39,16 @@ def platform_blocker() -> tuple[str, ...]:
 
 
 def regional_actions(
-    settings: SystemSettings, blocked: tuple[str, ...]
+    settings: SystemSettings, blocked: tuple[str, ...], *, supported: bool
 ) -> tuple[list[Action], bool]:
     stages: list[Action] = []
     matched = False
-    for key, desired in (
+    selections: tuple[tuple[RegionalKind, str | None], ...] = (
         ("timezone", settings.timezone),
         ("locale", settings.locale),
         ("keyboard", settings.keyboard),
-    ):
+    )
+    for key, desired in selections:
         if desired is None:
             continue
         before = regional.actual(key)
@@ -46,22 +57,16 @@ def regional_actions(
             reasons = blocked
         except ValueError as exc:
             reasons = (*blocked, str(exc))
-        if (
-            regional.equivalent(key, before, desired)
-            and not platform_blocker()
-            and reasons == blocked
-        ):
+        if regional.equivalent(key, before, desired) and supported and reasons == blocked:
             matched = True
             continue
         packages = regional.prerequisites(key)
         dependencies = " (requires " + ", ".join(packages) + ")" if packages else ""
         stages.append(
-            Action(
-                key,
-                f"Set system {key} to {desired}" + dependencies,
-                True,
-                reasons,
-                handler="region",
+            RegionAction(
+                id=key,
+                description=f"Set system {key} to {desired}" + dependencies,
+                blockers=reasons,
                 before=before,
                 value=desired,
                 packages=packages,
@@ -80,10 +85,12 @@ def desktop_changes(
 ) -> Action | None:
     from setup_system.application.workstation import desktop_drift, theme_files
     from setup_system.infrastructure.displays import validate_layouts
+    from setup_system.infrastructure.managed_files import changed_files
     from setup_system.infrastructure.theme import preview
-    from setup_system.infrastructure.user_files import changed_files
 
-    description = "User session, portals, fonts and theme" if full else preview(settings.theme)
+    description = (
+        "User session, portals, fonts and theme" if full else preview(settings.theme, root=root)
+    )
     if not blockers:
         try:
             if settings.monitors:
@@ -106,23 +113,23 @@ def desktop_changes(
             description += "\n" + "\n".join(str(path) for path in paths)
         except (OSError, ValueError, RuntimeError) as exc:
             blockers = (str(exc),)
-    return Action(
-        "desktop_files" if full else "theme",
-        description,
+    return DesktopAction(
+        id="desktop_files" if full else "theme",
+        description=description,
         blockers=blockers,
-        handler="desktop",
         requires=("base",) if full else (),
     )
 
 
 def workspace_actions(
     root: Path,
+    catalog: ComponentCatalog,
+    policy: CapabilityPolicy,
     system: SystemSettings,
     settings: UserSettings,
     system_blocked: tuple[str, ...],
     user_blocked: tuple[str, ...],
 ) -> tuple[list[Action], bool]:
-    from setup_system.domain.catalog import selected_components
 
     stages: list[Action] = []
     matched = False
@@ -132,21 +139,19 @@ def workspace_actions(
             stages.append(theme)
         else:
             matched = True
-    components = selected_components(settings)
+    components = catalog.selected(settings)
     packages = tuple(dict.fromkeys(p for c in components for p in c.packages))
     external = tuple(c.id for c in components if c.handler == "catalog_deb")
     if packages or ("happ" in settings.apps) or external:
         version = None
         description = "Install verified packages: " + " ".join((*packages, *external))
         if "happ" in settings.apps and not user_blocked:
-            from setup_system import installation
-            from setup_system.adapters.debian.package_session import HappPin
+            from setup_system.adapters.debian import happ_service
             from setup_system.adapters.debian.packages import installed_version
-            from setup_system.entrypoint import resource_root
+            from setup_system.infrastructure.catalog_repository import load_happ_pin
 
-            policy = load_policy()
-            pin = HappPin.load(
-                resource_root() / "manifests/happ.toml",
+            pin = load_happ_pin(
+                root,
                 policy.debian_architecture(platform.machine()),
             )
             version = installed_version("happ")
@@ -154,15 +159,13 @@ def workspace_actions(
                 f" Happ {version or 'absent'} → {pin.version}; activate its vendor helper"
             )
             try:
-                installation._check_existing_happ(pin.version, expected_happ_version=version)
+                happ_service.check_existing_happ(pin.version, expected_happ_version=version)
             except ValueError as exc:
                 system_blocked = (*system_blocked, str(exc))
         stages.append(
-            Action(
-                "workspace_packages",
-                description,
-                True,
-                system_blocked,
+            PackageAction(
+                description=description,
+                blockers=system_blocked,
                 packages=packages,
                 external=external,
                 before=version,
@@ -173,7 +176,7 @@ def workspace_actions(
         if component.kind == "language" and not blockers:
             from setup_system.infrastructure.language_tools import language_blocker
 
-            reason = language_blocker(root, component.id)
+            reason = language_blocker(root, component.id, policy=policy)
             if reason:
                 blockers += (reason,)
         if component.handler in {"apt", "happ", "catalog_deb"} and not blockers:
@@ -181,28 +184,52 @@ def workspace_actions(
         requires: tuple[str, ...] = ("workspace_packages",) if component.packages else ()
         if component.handler == "neovim":
             requires += tuple(item.id for item in components if item.kind == "language")
-        stages.append(
-            Action(
-                component.id,
-                component.title,
-                blockers=blockers,
-                handler=component.handler,
-                requires=requires,
+        if component.handler in {"neovim", "firefox", "codex"}:
+            stages.append(
+                ApplicationAction(
+                    id=component.handler,
+                    description=component.title,
+                    blockers=blockers,
+                    requires=requires,
+                )
             )
-        )
+        elif component.handler in {"language", "python_tools"}:
+            stages.append(
+                LanguageAction.model_validate(
+                    {
+                        "id": component.id,
+                        "description": component.title,
+                        "blockers": blockers,
+                        "requires": requires,
+                    }
+                )
+            )
+        else:
+            stages.append(
+                BlockedAction(
+                    id=component.id,
+                    description=component.title,
+                    blockers=blockers,
+                    requires=requires,
+                )
+            )
     if settings.cleanup:
         from setup_system.infrastructure.cleanup import inspect_cleanup
 
         if system_blocked:
             stages.append(
-                Action("cleanup", "Preview optional package cleanup", True, system_blocked)
+                BlockedAction(
+                    id="cleanup",
+                    description="Preview optional package cleanup",
+                    blockers=system_blocked,
+                )
             )
         else:
-            report = inspect_cleanup(settings.cleanup, settings.cleanup_mode)
+            report = inspect_cleanup(settings.cleanup, settings.cleanup_mode, root=root)
             if report.requested:
                 stages.append(
-                    Action(
-                        "cleanup", report.simulation, True, packages=tuple(sorted(report.removed))
+                    CleanupAction(
+                        description=report.simulation, packages=tuple(sorted(report.removed))
                     )
                 )
             else:

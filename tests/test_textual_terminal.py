@@ -11,17 +11,17 @@ import time
 
 CHILD = """import fcntl,termios,sys
 from pathlib import Path
-from setup_system.application.installer import InstallRequest,Operation
-from setup_system.tui.installer import InstallationApp
+from setup_system.composition import build_app
 fcntl.ioctl(0,termios.TIOCSCTTY,0)
-class Service:
- def run(self,request): raise AssertionError('Opening a terminal must not run an executor')
-app=InstallationApp(Path.cwd(),InstallRequest(Operation.PLAN),service=Service())
+app=build_app(Path.cwd())
 app.run()
 """
 
 
-def test_real_terminal_open_and_keyboard_quit() -> None:
+def test_real_terminal_open_and_keyboard_quit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for scope in ("config", "data", "state", "cache"):
+        monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(tmp_path / scope))
     master, slave = pty.openpty()
     process = subprocess.Popen(
         [sys.executable, "-c", CHILD],

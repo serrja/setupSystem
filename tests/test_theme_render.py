@@ -43,3 +43,27 @@ def test_desktop_applies_only_selected_keyboard_fields(layout):
     else:
         assert f'kb_layout = "{layout}"' in profile
     assert ("kb_options" in profile) == (layout == "us,ru")
+
+
+def test_launcher_passes_quoted_xdg_paths_literally(tmp_path):
+    import subprocess
+
+    from setup_system.domain.paths import XdgPaths
+    from setup_system.infrastructure.theme import render_launcher
+
+    owner = tmp_path / "developer's desk $USER"
+    paths = XdgPaths(
+        config=owner, data=owner / "data", state=owner / "state", cache=owner / "cache"
+    )
+    exports = [
+        line
+        for line in (ASSETS / "start-hyprland").read_text().splitlines()
+        if line.startswith("export XDG_") and "@{" in line
+    ]
+    assert len(exports) == 4
+    script = render_launcher("\n".join(exports), paths)
+    for name, expected in paths.overrides().items():
+        actual = subprocess.check_output(
+            ["sh", "-c", script + f'\nprintf %s "$XDG_{name.upper()}_HOME"']
+        )
+        assert actual.decode() == str(expected)

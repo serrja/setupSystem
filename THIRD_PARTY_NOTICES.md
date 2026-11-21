@@ -30,3 +30,10 @@ Textual source is vendored in setupSystem. See https://github.com/Textualize/tex
 The optional Neovim setup fetches `catppuccin/nvim` at the revision in
 [the editor manifest](manifests/editor.toml) under its upstream MIT license.
 The checkout retains its upstream license. No theme plugin implementation is vendored.
+
+## Privileged validation runtime
+
+The release includes the upstream wheels of Pydantic, Pydantic Core, annotated-types,
+typing-extensions and typing-inspection for the isolated system command validator.
+Each unmodified distribution contains its original license under
+`*.dist-info/licenses/LICENSE`. Versions and SHA-256 digests come from [uv.lock](uv.lock).

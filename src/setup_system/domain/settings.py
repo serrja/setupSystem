@@ -3,9 +3,10 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import Field, StrictBool, StrictFloat, StrictInt, field_validator, model_validator
 
-from setup_system.domain.catalog import components
+from setup_system.domain.catalog import ComponentID
+from setup_system.domain.contracts import ContractModel
 from setup_system.domain.displays import MonitorLayout
 
 
@@ -14,24 +15,32 @@ class Section(StrEnum):
     WORKSPACE = "workspace"
 
 
-class ThemeSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class ThemeSettings(ContractModel):
     name: Literal["catppuccin_mocha_green"] = "catppuccin_mocha_green"
-    compact_panel: bool = False
-    opacity: float = Field(default=0.96, ge=0.75, le=1, allow_inf_nan=False)
-    rounding: int = Field(default=12, ge=0, le=24)
-    effects: bool = False
+    compact_panel: StrictBool = False
+    opacity: StrictFloat = Field(default=0.96, ge=0.75, le=1, allow_inf_nan=False)
+    rounding: StrictInt = Field(default=12, ge=0, le=24)
+    effects: StrictBool = False
 
 
-class SystemSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class SystemSettings(ContractModel):
     schema_version: Literal[1] = 1
-    hyprland: bool = False
-    graphical_login: bool = False
-    timezone: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9_+./-]+$")
+
+    hyprland: StrictBool = False
+    graphical_login: StrictBool = False
+    timezone: str | None = Field(
+        default=None, max_length=100, pattern=r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$"
+    )
     locale: str | None = Field(default=None, pattern=r"^(?:C|[a-z]{2}_[A-Z]{2})\.UTF-8$")
     keyboard: Literal["us", "us,ru"] | None = None
-    plymouth: bool = False
+    plymouth: StrictBool = False
+
+    @field_validator("timezone")
+    @classmethod
+    def canonical_zone(cls, value: str | None) -> str | None:
+        if value and value.partition("/")[0] in {"posix", "right"}:
+            raise ValueError("Choose a canonical IANA timezone")
+        return value
 
 
 # Published v0.4.0 keys are an immutable migration boundary.
@@ -46,15 +55,14 @@ V1_USER_KEYS = V1_APP_KEYS | {
 }
 
 
-class UserSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class UserSettings(ContractModel):
     schema_version: Literal[2] = 2
     theme: ThemeSettings = Field(default_factory=ThemeSettings)
-    desktop_theme: bool = False
+    desktop_theme: StrictBool = False
     monitors: tuple[MonitorLayout, ...] = ()
-    apps: tuple[str, ...] = ()
-    language_profiles: tuple[str, ...] = ()
-    optional_apps: tuple[str, ...] = ()
+    apps: tuple[ComponentID, ...] = ()
+    language_profiles: tuple[ComponentID, ...] = ()
+    optional_apps: tuple[ComponentID, ...] = ()
     cleanup: tuple[str, ...] = ()
     cleanup_mode: Literal["remove", "purge", "autoremove"] = "remove"
 
@@ -64,6 +72,8 @@ class UserSettings(BaseModel):
         if not isinstance(data, dict):
             return data
         version = data.get("schema_version")
+        if version is not None and type(version) is not int:
+            raise ValueError("Invalid settings schema version")
         if version == 1 or (version is None and V1_APP_KEYS.intersection(data)):
             values = dict(data)
             if values.keys() - V1_USER_KEYS or any(
@@ -75,11 +85,9 @@ class UserSettings(BaseModel):
             return values
         return data
 
-    @field_validator("apps", "optional_apps", "language_profiles")
+    @field_validator("apps", "optional_apps", "language_profiles", "cleanup")
     @classmethod
-    def catalog_selection(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
-        kind = {"apps": "app", "optional_apps": "optional", "language_profiles": "language"}
-        known = {row.id for row in components(kind[str(info.field_name)])}
-        if len(set(value)) != len(value) or not set(value) <= known:
-            raise ValueError("Unknown or repeated catalog selection")
+    def unique_selection(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("Repeated catalog selection")
         return value

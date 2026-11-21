@@ -14,8 +14,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from setup_system import downloads
-from setup_system.infrastructure import fonts
+from setup_system.infrastructure import downloads, fonts
 
 
 class Response(io.BytesIO):
@@ -58,7 +57,9 @@ def context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path
             archive.writestr(name, data)
     data = stream.getvalue()
     font = (
-        '[jetbrains_mono_nerd_font]\nversion = "3.4.0"\n'
+        "[profile]\nui_size=11\nterminal_size=12\npanel_size=14\n"
+        '[jetbrains_mono_nerd_font]\nfamily="Fixture"\nemoji_fallback="Emoji"\n'
+        'license="SIL-OFL-1.1"\nlicense_file="OFL.txt"\nversion = "3.4.0"\n'
         'url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip"\n'
         f'sha256 = "{hashlib.sha256(data).hexdigest()}"\n'
     )
@@ -306,7 +307,7 @@ def test_download_above_shared_limit_does_not_publish_cache(context, monkeypatch
 
 def test_cache_above_shared_limit_is_preserved_without_network(context, monkeypatch) -> None:
     root, _home, data = context
-    archive, receipt, _ = fonts._font_cache(fonts._font_manifest(root))
+    archive, receipt, _ = fonts._font_cache(fonts.font_manifest(root).jetbrains_mono_nerd_font)
     archive.parent.mkdir(parents=True)
     archive.write_bytes(data)
     monkeypatch.setattr(fonts, "MAX_FONT_ARCHIVE_BYTES", len(data) - 1)

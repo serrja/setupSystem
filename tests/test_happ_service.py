@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from setup_system import installation
+from setup_system.adapters.debian import apt_paths, apt_transaction, service_policy
+from setup_system.domain import identity as account_identity
 
-PackageFixture = tuple[Path, installation.TargetUser, Path, installation.SystemPaths]
+PackageFixture = tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths]
 RELEASE = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
 
 
@@ -32,7 +33,7 @@ def read_only_reply(argv: list[str]) -> subprocess.CompletedProcess[str]:
 def test_offline_apt_defers_direct_vendor_systemctl_commands(
     package_fixture: PackageFixture,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     observed: list[str] = []
 
     def execute(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
@@ -40,17 +41,16 @@ def test_offline_apt_defers_direct_vendor_systemctl_commands(
         assert isinstance(environment, dict)
         if "--no-download" in argv:
             assert environment.get("SYSTEMD_OFFLINE") == "1"
-            assert paths.policy.read_bytes() == installation.DEFER_POLICY
+            assert paths.policy.read_bytes() == service_policy.DEFER_POLICY
             observed.append("offline-package-apply")
         else:
             assert "SYSTEMD_OFFLINE" not in environment
         return read_only_reply(argv)
 
-    with installation.prepare_packages(
+    with apt_transaction.prepare_packages(
         root,
-        target=target,
-        happ=happ,
-        proxy=None,
+        packages=("foot",),
+        happ=True,
         paths=paths,
         run=execute,
         release=RELEASE,
@@ -62,25 +62,25 @@ def test_offline_apt_defers_direct_vendor_systemctl_commands(
 
 
 @pytest.mark.parametrize("already_active", [False, True], ids=["first-start", "preserve-active"])
-def test_vendor_happ_activation_occurs_after_packages_and_temporary_network_close(
+def test_vendor_happ_activation_occurs_after_the_confirmed_offline_install(
     package_fixture: PackageFixture,
     already_active: bool,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     active = already_active
     installed = False
-    network_closed = False
+    download_complete = False
     manager_calls: list[list[str]] = []
 
     def execute(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
         nonlocal installed, active
         if "--no-download" in argv:
-            assert network_closed
+            assert download_complete
             installed = True
         if argv[0] == "/usr/bin/systemctl" and not (
             "--version" in argv or "--property=Version" in argv
         ):
-            assert installed and network_closed
+            assert installed and download_complete
             environment = options["env"]
             assert isinstance(environment, dict) and "SYSTEMD_OFFLINE" not in environment
             manager_calls.append(argv)
@@ -92,11 +92,10 @@ def test_vendor_happ_activation_occurs_after_packages_and_temporary_network_clos
                 active = True
         return read_only_reply(argv)
 
-    with installation.prepare_packages(
+    with apt_transaction.prepare_packages(
         root,
-        target=target,
-        happ=happ,
-        proxy=None,
+        packages=("foot",),
+        happ=True,
         paths=paths,
         run=execute,
         release=RELEASE,
@@ -104,7 +103,7 @@ def test_vendor_happ_activation_occurs_after_packages_and_temporary_network_clos
     ) as prepared:
         with pytest.raises(RuntimeError, match=r"install|package"):
             prepared.activate_happ()
-        network_closed = True
+        download_complete = True
         prepared.install()
         prepared.activate_happ()
         before = list(manager_calls)
@@ -126,7 +125,7 @@ def test_administrator_masks_are_never_overwritten_or_unmasked(
     tmp_path: Path,
     when: str,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     mask = tmp_path / "admin-systemd/happd.service"
     mask.parent.mkdir(mode=0o700)
     paths = replace(paths, happ_unit=mask)
@@ -145,11 +144,10 @@ def test_administrator_masks_are_never_overwritten_or_unmasked(
     if when == "prepare":
         mask.symlink_to("/dev/null")
     with pytest.raises(ValueError, match=r"masked|administrator"):
-        with installation.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
+            packages=("foot",),
+            happ=True,
             paths=paths,
             run=execute,
             release=RELEASE,
@@ -171,7 +169,7 @@ def test_failed_happ_activation_records_a_failed_required_stage(
     package_fixture: PackageFixture,
     failure: str,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
 
     def execute(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
         if argv[0] == "/usr/bin/systemctl":
@@ -182,11 +180,10 @@ def test_failed_happ_activation_records_a_failed_required_stage(
         return read_only_reply(argv)
 
     with pytest.raises(RuntimeError, match=r"happd\.service"):
-        with installation.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
+            packages=("foot",),
+            happ=True,
             paths=paths,
             run=execute,
             release=RELEASE,
@@ -197,7 +194,7 @@ def test_failed_happ_activation_records_a_failed_required_stage(
     state = json.loads(paths.journal.read_text())
     assert state["status"] == "failed" and state["stage"] == "happ-service"
     assert "packages" in state["completed"] and "happ-service" not in state["completed"]
-    assert paths.backports.is_file() and not paths.policy.exists()
+    assert not paths.backports.exists() and not paths.policy.exists()
 
 
 @pytest.mark.parametrize("failure", ["missing-client", "unreviewed-version", "not-systemd"])
@@ -205,7 +202,7 @@ def test_missing_reviewed_systemd_manager_stops_before_persistent_or_staging_wri
     package_fixture: PackageFixture,
     failure: str,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
 
     def execute(argv: list[str], **options: object) -> subprocess.CompletedProcess[str]:
         assert argv[0] == "/usr/bin/systemctl"
@@ -218,11 +215,10 @@ def test_missing_reviewed_systemd_manager_stops_before_persistent_or_staging_wri
         return read_only_reply(argv)
 
     with pytest.raises(ValueError, match=r"systemd|manager|systemctl"):
-        with installation.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
+            packages=("foot",),
+            happ=True,
             paths=paths,
             run=execute,
             release=RELEASE,
@@ -241,7 +237,7 @@ def test_uncontrolled_happ_unit_or_parent_stops_before_manager_actions(
     unit_name: str,
     unsafe: str,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     unit = getattr(paths, unit_name)
     unit.parent.mkdir(parents=True, mode=0o700)
     unit.write_text("Synthetic administrator unit: preserve these bytes\n")
@@ -266,11 +262,10 @@ def test_uncontrolled_happ_unit_or_parent_stops_before_manager_actions(
         make_unsafe()
     try:
         with pytest.raises(ValueError, match=r"controlled|System|parent|unit"):
-            with installation.prepare_packages(
+            with apt_transaction.prepare_packages(
                 root,
-                target=target,
-                happ=happ,
-                proxy=None,
+                packages=("foot",),
+                happ=True,
                 paths=paths,
                 run=execute,
                 release=RELEASE,

@@ -8,18 +8,18 @@ import os
 import platform
 import subprocess
 import tarfile
-import tomllib
 from pathlib import Path
 
 import tomlkit
 
-from setup_system.application.project_catalog import ProjectCatalog
-from setup_system.capabilities import load_policy
-from setup_system.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
-from setup_system.infrastructure.config_store import SettingsPaths, safe_file
-from setup_system.infrastructure.theme import RESOURCE_ROOT
-from setup_system.infrastructure.user_files import apply_files
-from setup_system.storage import managed_block
+from setup_system.domain.managed_text import managed_block
+from setup_system.domain.tool_releases import CodexRelease
+from setup_system.infrastructure.catalog_repository import load_policy, load_projects, read_contract
+from setup_system.infrastructure.config_store import SettingsPaths
+from setup_system.infrastructure.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
+from setup_system.infrastructure.managed_files import apply_files
+from setup_system.infrastructure.user_storage import safe_file
+from setup_system.resource_locator import ResourceLocator
 
 
 def configure_firefox() -> None:
@@ -57,7 +57,9 @@ def _original(path: Path) -> tuple[bytes, str | None]:
 def configure_codex(root: Path) -> None:
     if os.geteuid() == 0:
         raise ValueError("Codex must be installed as the normal user")
-    document = tomllib.loads((RESOURCE_ROOT / "catalogs/codex.toml").read_text())
+    document = read_contract(
+        ResourceLocator.for_root(root).resource("catalogs/codex.toml"), CodexRelease
+    )
     architecture = load_policy(root).debian_architecture(platform.machine())
     config_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     if (
@@ -76,9 +78,7 @@ def configure_codex(root: Path) -> None:
         (override_data, override_hash) if instructions == override else _original(instructions)
     )
     policy_path = SettingsPaths().user.parent / "policy/engineering.md"
-    catalog = ProjectCatalog.model_validate(
-        tomllib.loads((root / "manifests/projects.toml").read_text())
-    )
+    catalog = load_projects(root)
     rules = next(item for item in catalog.project if item.id == "serrja/baseRules").policy
     if rules is None:
         raise ValueError("Missing baseRules provenance")
@@ -98,9 +98,9 @@ def configure_codex(root: Path) -> None:
         "unrelated files."
     )
     updated_instructions = managed_block(prior.decode(), body).encode()
-    pin = document[architecture]
-    data = read_https(pin["url"], DownloadPolicy(GITHUB_RELEASE_HOSTS, 256 * 1024 * 1024, 60))
-    if hashlib.sha256(data).hexdigest() != pin["sha256"]:
+    pin = document.archive(architecture)
+    data = read_https(pin.url, DownloadPolicy(GITHUB_RELEASE_HOSTS, 256 * 1024 * 1024, 60))
+    if hashlib.sha256(data).hexdigest() != pin.sha256:
         raise ValueError("Official Codex checksum mismatch")
     target = Path.home() / ".local/bin/codex"
     safe_file(target, os.getuid())
@@ -108,7 +108,7 @@ def configure_codex(root: Path) -> None:
         members = archive.getmembers()
         if (
             len(members) != 1
-            or members[0].name != pin["member"]
+            or members[0].name != pin.member
             or not members[0].isfile()
             or members[0].size > 512 * 1024 * 1024
         ):
@@ -131,5 +131,5 @@ def configure_codex(root: Path) -> None:
     actual = subprocess.run(
         [str(target), "--version"], check=True, capture_output=True, text=True, timeout=15
     )
-    if actual.stdout.strip() != "codex-cli " + document["version"]:
+    if actual.stdout.strip() != "codex-cli " + document.version:
         raise ValueError("Codex version readback failed")

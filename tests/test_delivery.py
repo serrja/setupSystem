@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from setup_system import _delivery_entry as delivery
-from setup_system.installation import TargetUser
+from setup_system.domain.identity import TargetUser
 
 
 @pytest.fixture
@@ -19,6 +20,13 @@ def prepared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     for filename in ("pyproject.toml", "uv.lock", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
         (source / filename).write_text("Fixture verified source\n")
     (source / "src/module.py").write_text("# Fixture source\n")
+    matrix = Path(__file__).resolve().parents[1] / "manifests/platforms.toml"
+    (source / "manifests/platforms.toml").write_bytes(matrix.read_bytes())
+    monkeypatch.setattr(
+        delivery.platform,
+        "freedesktop_os_release",
+        lambda: {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
+    )
     home = tmp_path / "home with spaces"
     home.mkdir()
     target = TargetUser("fixture", os.getuid(), os.getgid(), home, "/bin/sh")
@@ -93,3 +101,31 @@ def test_delivery_publishes_same_unprivileged_textual_entry_and_preserves_owner_
     with pytest.raises(ValueError, match="launcher differs"):
         delivery.prepare(source, "v1.2.3", uv)
     assert "Owner customization" in launcher.read_text()
+
+
+def test_unsupported_delivery_target_preserves_empty_home(prepared, monkeypatch):
+    source, uv, home = prepared
+    monkeypatch.setattr(
+        delivery.platform, "freedesktop_os_release", lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"}
+    )
+    with pytest.raises(ValueError, match="supported Debian"):
+        delivery.prepare(source, "v1.2.3", uv)
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize("version", [True, 1.0, "1", 2])
+def test_invalid_native_provenance_preserves_home(prepared, version):
+    source, uv, home = prepared
+    raw = json.dumps({"schemaVersion": version, "sourceSha": "a" * 40}).encode()
+    with pytest.raises(ValueError, match="provenance"):
+        delivery.prepare(source, "v1.2.3", uv, raw)
+    assert not list(home.iterdir())
+
+
+def test_native_provenance_accepts_additional_provider_fields(prepared):
+    source, uv, home = prepared
+    sha = "a" * 40
+    receipt = {"schemaVersion": 1, "sourceSha": sha, "files": [], "providerVersion": "fixture"}
+    delivery.prepare(source, "v1.2.3", uv, json.dumps(receipt).encode())
+    state = home / ".local/state/setup-system/release.json"
+    assert json.loads(state.read_bytes()) == {"release": "v1.2.3", "source_sha": sha}

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -15,8 +17,13 @@ from pathlib import Path
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from setup_system.installation import resolve_target, user_environment, validate_user_path
-from setup_system.runtime import UserRuntime
+from setup_system.bootstrap.user_policy import bootstrap_architecture
+from setup_system.bootstrap.user_runtime import UserRuntime
+from setup_system.infrastructure.identity import (
+    resolve_target,
+    user_environment,
+    validate_user_path,
+)
 
 
 def prepare(
@@ -31,11 +38,28 @@ def prepare(
         os.environ.update(previous)
 
 
+def _source_identity(provenance: bytes) -> str:
+    if len(provenance) > 262144:
+        raise ValueError("Oversized release provenance")
+    receipt = json.loads(provenance)
+    if (
+        not isinstance(receipt, dict)
+        or type(receipt.get("schemaVersion")) is not int
+        or receipt["schemaVersion"] != 1
+        or not isinstance(source_sha := receipt.get("sourceSha"), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+    ):
+        raise ValueError("Release native provenance is unavailable")
+    return source_sha
+
+
 def _prepare(source: Path, release: str, uv: Path, provenance: bytes | None) -> tuple[Path, Path]:
     if os.geteuid() == 0:
         raise ValueError("Delivery builds must run as the desktop user")
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-dev\.[0-9]+)?", release):
         raise ValueError("An explicit release tag is required")
+    source_sha = _source_identity(provenance) if provenance is not None else None
+    bootstrap_architecture(source, platform.machine(), check_host=True)
     target = resolve_target(None)
     environment = user_environment(target, {})
     os.environ.update(environment)
@@ -77,7 +101,7 @@ def _prepare(source: Path, release: str, uv: Path, provenance: bytes | None) -> 
             stream.write(uv.read_bytes())
         binary.chmod(0o755)
     runtime = UserRuntime(destination).prepare()
-    from setup_system.storage import atomic_write, new_backup
+    from setup_system.infrastructure.user_storage import atomic_write, new_backup
 
     launcher = validate_user_path(target.home / ".local/bin/setup-system", target)
     launcher_receipt = validate_user_path(
@@ -99,21 +123,7 @@ def _prepare(source: Path, release: str, uv: Path, provenance: bytes | None) -> 
         atomic_write(launcher, launcher_content, 0o755, preserve_existing_mode=False)
     atomic_write(launcher_receipt, (hashlib.sha256(launcher_content).hexdigest() + "\n").encode())
 
-    if provenance is not None:
-        import json
-
-        from setup_system.storage import atomic_write
-
-        if len(provenance) > 262144:
-            raise ValueError("Oversized release provenance")
-        receipt = json.loads(provenance)
-        source_sha = receipt.get("sourceSha")
-        if (
-            receipt.get("schemaVersion") != 1
-            or not isinstance(source_sha, str)
-            or not re.fullmatch(r"[0-9a-f]{40}", source_sha)
-        ):
-            raise ValueError("Release native provenance is unavailable")
+    if source_sha is not None:
         state = Path(environment["XDG_STATE_HOME"]) / "setup-system/release.json"
         atomic_write(state, json.dumps({"release": release, "source_sha": source_sha}).encode())
     return destination, runtime / "bin/setup-system"
@@ -122,4 +132,5 @@ def _prepare(source: Path, release: str, uv: Path, provenance: bytes | None) -> 
 if __name__ == "__main__":
     if len(sys.argv) != 5:
         raise SystemExit("Invalid private delivery request")
-    prepare(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4]).read_bytes())
+    with Path(sys.argv[4]).open("rb") as stream:
+        prepare(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), stream.read(262145))

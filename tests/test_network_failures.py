@@ -4,7 +4,8 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from setup_system import downloads, runtime
+from setup_system.bootstrap import user_runtime as runtime
+from setup_system.infrastructure import downloads
 
 
 def mock_open(monkeypatch, respond):
@@ -53,9 +54,14 @@ def test_uv_network_failure_does_not_disclose_proxy_credentials(monkeypatch) -> 
 
 
 def test_uv_download_identifies_installer_without_changing_pinned_url(monkeypatch) -> None:
+    from pathlib import Path
     from urllib.request import Request
 
-    url = runtime.RELEASE_BASE + "/uv-x86_64-unknown-linux-gnu.tar.gz"
+    from setup_system.bootstrap.user_policy import runtime_pins
+
+    pins = runtime_pins(Path(__file__).resolve().parents[1])
+    target, _ = pins.artifact("amd64")
+    url = f"{pins.uv_base}/{pins.uv}/uv-{target}.tar.gz"
 
     class Response:
         status = 200

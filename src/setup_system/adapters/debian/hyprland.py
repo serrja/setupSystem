@@ -4,17 +4,9 @@ from __future__ import annotations
 
 import platform
 from pathlib import Path
-from typing import cast
 
-from setup_system.capabilities import load_policy
-
-
-def profile_capabilities(root: Path | None = None) -> dict[str, object]:
-    """Load the shared profile matrix without package, network or privilege operations."""
-    return cast(dict[str, object], load_policy(root).document()["hyprland"])
-
-
-HYPRLAND_VERSION = load_policy().hyprland.version_pin
+from setup_system.domain.platforms import CapabilityPolicy
+from setup_system.infrastructure.catalog_repository import load_policy
 
 
 def package_arguments(
@@ -23,9 +15,10 @@ def package_arguments(
     architecture: str | None = None,
     root: Path | None = None,
     graphical_login: bool = True,
+    policy: CapabilityPolicy | None = None,
 ) -> list[str]:
     """Select one compatible package set; the privileged system adapter owns execution."""
-    capabilities = load_policy(root)
+    capabilities = load_policy(root) if policy is None else policy
     profile = capabilities.hyprland
     release = platform.freedesktop_os_release() if os_release is None else os_release
     machine = platform.machine() if architecture is None else architecture

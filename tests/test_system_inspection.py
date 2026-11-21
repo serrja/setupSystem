@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from setup_system import system_inspection as inspection
-from setup_system.system_inspection import EncryptionState, InspectionPaths
+from setup_system.domain.system_facts import ClockSnapshot, EncryptionState, InspectionPaths
+from setup_system.infrastructure import clock, encryption, inspection, inspection_commands
 
 
 def timezone_bytes(offset: int = 0) -> bytes:
@@ -77,7 +77,7 @@ class Queries:
             assert argv[1] == "show" and not any("set-" in item for item in argv)
             return subprocess.CompletedProcess(argv, 0, self.clock, "")
         if command == "dpkg-query":
-            assert argv[-1] in inspection.TIME_PROVIDERS
+            assert argv[-1] in inspection_commands.TIME_PROVIDERS
             present = argv[-1] in self.providers
             return subprocess.CompletedProcess(
                 argv, 0 if present else 1, "install ok installed" if present else "", ""
@@ -97,7 +97,11 @@ def context(tmp_path: Path) -> tuple[Path, InspectionPaths, Queries]:
     timezone.write_text("UTC\n")
     localtime = tmp_path / "localtime"
     localtime.symlink_to(zones / "UTC")
-    return home, InspectionPaths(zones, timezone, localtime), Queries(home)
+    return (
+        home,
+        InspectionPaths(zoneinfo=zones, timezone=timezone, localtime=localtime),
+        Queries(home),
+    )
 
 
 def encrypted_tree() -> list[dict[str, object]]:
@@ -232,8 +236,14 @@ def test_clock_uses_machine_properties_and_installed_provider_without_setting_th
     query.clock = "Timezone=Region/City\nNTP=yes\nNTPSynchronized=no\nLocalRTC=yes\nCanNTP=yes\n"
     query.providers = ("chrony",)
     observed = inspection.inspect_system(home, run=query, paths=paths)
-    assert observed.clock == inspection.ClockSnapshot(
-        "Region/City", True, False, True, True, ("chrony",), True
+    assert observed.clock == ClockSnapshot(
+        timezone="Region/City",
+        ntp_enabled=True,
+        synchronized=False,
+        rtc_local=True,
+        can_ntp=True,
+        providers=("chrony",),
+        providers_known=True,
     )
     assert all(
         Path(call[0]).name in {"findmnt", "lsblk", "lsattr", "timedatectl", "dpkg-query"}
@@ -260,16 +270,14 @@ def test_ambiguous_clock_output_falls_back_without_inventing_sync_state(context)
 @pytest.mark.parametrize("value", [None, "", "   "])
 def test_empty_timezone_choice_preserves_current_setting(context, value) -> None:
     _, paths, _ = context
-    assert inspection.validate_timezone(value, zoneinfo_root=paths.zoneinfo) is None
+    assert clock.validate_timezone(value, zoneinfo_root=paths.zoneinfo) is None
 
 
 def test_timezone_uses_real_tzif_with_aliases_and_normalizes_outer_spaces(context) -> None:
     _, paths, _ = context
     (paths.zoneinfo / "Alias").symlink_to(paths.zoneinfo / "UTC")
-    assert (
-        inspection.validate_timezone(" Region/City ", zoneinfo_root=paths.zoneinfo) == "Region/City"
-    )
-    assert inspection.validate_timezone("Alias", zoneinfo_root=paths.zoneinfo) == "Alias"
+    assert clock.validate_timezone(" Region/City ", zoneinfo_root=paths.zoneinfo) == "Region/City"
+    assert clock.validate_timezone("Alias", zoneinfo_root=paths.zoneinfo) == "Alias"
 
 
 @pytest.mark.parametrize(
@@ -278,7 +286,7 @@ def test_timezone_uses_real_tzif_with_aliases_and_normalizes_outer_spaces(contex
 def test_unsafe_or_missing_timezone_is_rejected_before_any_apply(context, value) -> None:
     _, paths, _ = context
     with pytest.raises(ValueError, match="installed IANA timezone"):
-        inspection.validate_timezone(value, zoneinfo_root=paths.zoneinfo)
+        clock.validate_timezone(value, zoneinfo_root=paths.zoneinfo)
 
 
 def test_timezone_external_symlink_and_non_tzif_are_rejected(context, tmp_path: Path) -> None:
@@ -289,7 +297,7 @@ def test_timezone_external_symlink_and_non_tzif_are_rejected(context, tmp_path: 
     (paths.zoneinfo / "Text").write_text("private marker")
     for value in ("External", "Text"):
         with pytest.raises(ValueError):
-            inspection.validate_timezone(value, zoneinfo_root=paths.zoneinfo)
+            clock.validate_timezone(value, zoneinfo_root=paths.zoneinfo)
 
 
 def test_invalid_home_never_enters_a_query(context) -> None:
@@ -309,8 +317,8 @@ def test_native_runner_has_fixed_timeout_and_no_ambient_credentials(monkeypatch)
 
     monkeypatch.setenv("GH_TOKEN", "fixture")
     monkeypatch.setenv("HTTP_PROXY", "fixture")
-    monkeypatch.setattr(inspection.subprocess, "run", execute)
-    inspection.run_inspection(
+    monkeypatch.setattr(subprocess, "run", execute)
+    inspection_commands.run_inspection(
         ["/usr/bin/findmnt", "--json", "--target", "/", "--output", "SOURCE,FSTYPE"]
     )
     assert calls[0][1] == {
@@ -328,7 +336,7 @@ def test_truncated_tzif_has_a_preflight_value_error(context, content) -> None:
     _, paths, _ = context
     (paths.zoneinfo / "Broken").write_bytes(content)
     with pytest.raises(ValueError, match="installed IANA timezone"):
-        inspection.validate_timezone("Broken", zoneinfo_root=paths.zoneinfo)
+        clock.validate_timezone("Broken", zoneinfo_root=paths.zoneinfo)
 
 
 @pytest.mark.parametrize(
@@ -343,11 +351,9 @@ def test_truncated_tzif_has_a_preflight_value_error(context, content) -> None:
     ],
 )
 def test_inspection_runner_rejects_any_nonquery_operation(monkeypatch, argv) -> None:
-    monkeypatch.setattr(
-        inspection.subprocess, "run", lambda *_a, **_k: pytest.fail("nonquery subprocess")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("nonquery subprocess"))
     with pytest.raises(ValueError, match="read-only inspection query"):
-        inspection.run_inspection(argv)
+        inspection_commands.run_inspection(argv)
 
 
 def test_real_localtime_fallback_wins_stale_timezone_label(context) -> None:
@@ -386,7 +392,7 @@ def test_fscrypt_production_query_classifies_unlock_state_without_key_material(
         }
         return query(argv)
 
-    monkeypatch.setattr(inspection.subprocess, "run", execute)
+    monkeypatch.setattr(subprocess, "run", execute)
     observed = inspection.inspect_system(home, paths=paths)
     assert observed.encryption.home.state == state
     assert "fscrypt" in observed.encryption.home.layers
@@ -402,7 +408,7 @@ def test_native_missing_key_during_attribute_query_reaches_locked(context, monke
             raise OSError(errno.ENOKEY, "private key identifier")
         return query(argv)
 
-    monkeypatch.setattr(inspection.subprocess, "run", execute)
+    monkeypatch.setattr(subprocess, "run", execute)
     observed = inspection.inspect_system(home, paths=paths)
     assert observed.encryption.home.state == EncryptionState.LOCKED
     assert "private key identifier" not in repr(observed)
@@ -430,18 +436,16 @@ def test_copied_localtime_does_not_accept_a_conflicting_timezone_label(context) 
 
 def test_readonly_runner_cannot_unlock_fscrypt(monkeypatch, context) -> None:
     home, _, _ = context
-    monkeypatch.setattr(
-        inspection.subprocess, "run", lambda *_a, **_k: pytest.fail("unlock invoked")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("unlock invoked"))
     with pytest.raises(ValueError, match="read-only inspection query"):
-        inspection.run_inspection(["/usr/bin/fscrypt", "unlock", str(home)])
+        inspection_commands.run_inspection(["/usr/bin/fscrypt", "unlock", str(home)])
 
 
 def test_timezone_symlink_cycle_has_a_preflight_value_error(context) -> None:
     _, paths, _ = context
     (paths.zoneinfo / "Cycle").symlink_to(paths.zoneinfo / "Cycle")
     with pytest.raises(ValueError, match="installed IANA timezone"):
-        inspection.validate_timezone("Cycle", zoneinfo_root=paths.zoneinfo)
+        clock.validate_timezone("Cycle", zoneinfo_root=paths.zoneinfo)
 
 
 @pytest.mark.parametrize("marker_type", ["directory", "file", "broken-link"])
@@ -466,7 +470,7 @@ def test_ecryptfs_policy_marker_requires_mounted_home_through_native_queries(
         assert options["stdin"] == subprocess.DEVNULL
         return query(argv)
 
-    monkeypatch.setattr(inspection.subprocess, "run", execute)
+    monkeypatch.setattr(subprocess, "run", execute)
     original_read = Path.open
 
     def no_marker_content(path, *arguments, **options):
@@ -516,14 +520,14 @@ def test_home_access_guard_observes_ecryptfs_unmount_again_before_each_worker(
         assert Path(argv[0]).name not in {"timedatectl", "dpkg-query"}
         return query(argv)
 
-    monkeypatch.setattr(inspection.subprocess, "run", execute)
+    monkeypatch.setattr(subprocess, "run", execute)
     before = set(home.iterdir())
-    assert inspection.validate_home_access(home).state == EncryptionState.ENCRYPTED
+    assert encryption.validate_home_access(home).state == EncryptionState.ENCRYPTED
     query.home_filesystem = "ext4"
     with pytest.raises(
         ValueError, match="encrypted HOME is locked or its unlock status is unknown"
     ):
-        inspection.validate_home_access(home)
+        encryption.validate_home_access(home)
     assert sum(call[0] == "/usr/bin/findmnt" for call in query.calls) == 2
     assert set(home.iterdir()) == before
 
@@ -532,12 +536,12 @@ def test_home_access_guard_observes_ecryptfs_unmount_again_before_each_worker(
 def test_home_access_guard_rechecks_existing_fscrypt_key_state(context, reply) -> None:
     home, _, query = context
     query.attributes = "--------------eE------"
-    assert inspection.validate_home_access(home, run=query).state == EncryptionState.ENCRYPTED
+    assert encryption.validate_home_access(home, run=query).state == EncryptionState.ENCRYPTED
     query.fscrypt_status = reply
     with pytest.raises(
         ValueError, match="encrypted HOME is locked or its unlock status is unknown"
     ):
-        inspection.validate_home_access(home, run=query)
+        encryption.validate_home_access(home, run=query)
     assert not any(Path(call[0]).name in {"timedatectl", "dpkg-query"} for call in query.calls)
     assert list(home.iterdir()) == []
 
@@ -549,7 +553,7 @@ def test_home_access_guard_accepts_accessible_ordinary_unknown_without_creating_
     private = home / "private filename must not be logged"
     private.write_bytes(b"existing content")
     before = private.stat()
-    info = inspection.validate_home_access(home, run=query)
+    info = encryption.validate_home_access(home, run=query)
     assert info.state == EncryptionState.UNKNOWN and not info.layers
     assert private.read_bytes() == b"existing content"
     assert private.stat().st_mtime_ns == before.st_mtime_ns
@@ -576,11 +580,11 @@ def test_home_access_guard_rejects_read_errors_without_private_diagnostics_or_le
     def unreadable(_path):
         raise OSError(errno.ENOKEY, "private key description")
 
-    monkeypatch.setattr(inspection.os, "open", open_directory)
+    monkeypatch.setattr(os, "open", open_directory)
     if where == "read":
-        monkeypatch.setattr(inspection.os, "scandir", unreadable)
+        monkeypatch.setattr(os, "scandir", unreadable)
     with pytest.raises(ValueError, match="HOME is locked or unreadable") as error:
-        inspection.validate_home_access(home, run=query)
+        encryption.validate_home_access(home, run=query)
     assert "private" not in str(error.value)
     for descriptor in descriptors:
         with pytest.raises(OSError) as closed:
@@ -594,5 +598,5 @@ def test_home_access_guard_rejects_unsafe_home_before_native_queries(context) ->
     alias.symlink_to(home, target_is_directory=True)
     for selected in (Path("relative"), home / ".." / home.name, alias):
         with pytest.raises(ValueError):
-            inspection.validate_home_access(selected, run=query)
+            encryption.validate_home_access(selected, run=query)
     assert query.calls == []

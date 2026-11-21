@@ -8,11 +8,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from setup_system.domain.paths import XdgPaths
+from setup_system.domain.system_commands import COMMAND
+from setup_system.infrastructure import firefox_policy, system_settings
 from setup_system.infrastructure import privileged_tasks as tasks
-from setup_system.infrastructure.trusted_bootstrap import validate_settings
 
 
-def test_root_source_import_is_stdlib_only() -> None:
+def test_bootstrap_import_is_stdlib_only() -> None:
     source = Path(__file__).resolve().parents[1] / "src"
     result = subprocess.run(
         [
@@ -21,7 +23,7 @@ def test_root_source_import_is_stdlib_only() -> None:
             "-S",
             "-c",
             "import sys;sys.path.insert(0,sys.argv[1]);"
-            "import setup_system.infrastructure.privileged_tasks;"
+            "import setup_system.bootstrap.source,setup_system.bootstrap.validation_runtime;"
             "assert 'pydantic' not in sys.modules;assert 'ansible_runner' not in sys.modules",
             str(source),
         ],
@@ -39,7 +41,7 @@ def test_untrusted_settings_rejected_before_source_or_package_side_effects(
     tmp_path: Path, settings: dict
 ) -> None:
     with pytest.raises(ValueError):
-        validate_settings("workspace_packages", settings, tmp_path)
+        COMMAND.validate_python({"action": "workspace_packages", "settings": settings})
     assert not list(tmp_path.iterdir())
 
 
@@ -52,7 +54,7 @@ def test_xdg_cannot_select_privileged_resources(tmp_path: Path, path: str) -> No
         "xdg": dict.fromkeys(("config", "data", "state", "cache"), path),
     }
     with pytest.raises(ValueError):
-        validate_settings("cleanup", options, tmp_path)
+        tasks.check_xdg(XdgPaths.model_validate(options["xdg"]), tmp_path)
 
 
 def test_root_workspace_rejects_a_package_outside_allowlist(
@@ -60,8 +62,8 @@ def test_root_workspace_rejects_a_package_outside_allowlist(
 ) -> None:
     monkeypatch.setattr(tasks, "caller", lambda: SimpleNamespace(pw_name="fixture"))
     monkeypatch.setattr(tasks, "protected", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tasks.system, "resolve_target", lambda _: object())
-    monkeypatch.setattr(tasks.system, "user_environment", lambda *args: {})
+    monkeypatch.setattr(tasks, "resolve_target", lambda _: object())
+    monkeypatch.setattr(tasks, "user_environment", lambda *args: {})
     monkeypatch.setattr(
         tasks, "_packages", lambda *args, **kwargs: pytest.fail("Unexpected package applied")
     )
@@ -69,8 +71,9 @@ def test_root_workspace_rejects_a_package_outside_allowlist(
         tasks.execute(
             Path(__file__).resolve().parents[1],
             "fixture",
-            "workspace_packages",
-            {"packages": ["openssh-server-"]},
+            COMMAND.validate_python(
+                {"action": "workspace_packages", "settings": {"packages": ["openssh-server-"]}}
+            ),
         )
 
 
@@ -80,8 +83,8 @@ def test_root_package_action_uses_only_selected_packages(
     calls = []
     monkeypatch.setattr(tasks, "caller", lambda: SimpleNamespace(pw_name="fixture"))
     monkeypatch.setattr(tasks, "protected", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tasks.system, "resolve_target", lambda _: object())
-    monkeypatch.setattr(tasks.system, "user_environment", lambda *args: {})
+    monkeypatch.setattr(tasks, "resolve_target", lambda _: object())
+    monkeypatch.setattr(tasks, "user_environment", lambda *args: {})
     monkeypatch.setattr(
         tasks, "_packages", lambda root, packages, **kwargs: calls.append((packages, kwargs))
     )
@@ -89,8 +92,9 @@ def test_root_package_action_uses_only_selected_packages(
         tasks.execute(
             Path(__file__).resolve().parents[1],
             "fixture",
-            "workspace_packages",
-            {"packages": ["git"], "happ": False},
+            COMMAND.validate_python(
+                {"action": "workspace_packages", "settings": {"packages": ["git"], "happ": False}}
+            ),
         )
         == 0
     )
@@ -102,7 +106,7 @@ def test_base_apply_revalidates_then_applies_finite_stages(
 ) -> None:
     from contextlib import contextmanager
 
-    from setup_system.installation import TargetUser
+    from setup_system.domain.identity import TargetUser
 
     home = tmp_path / "home"
     home.mkdir()
@@ -110,17 +114,8 @@ def test_base_apply_revalidates_then_applies_finite_stages(
     calls = []
     monkeypatch.setattr(tasks, "caller", lambda: SimpleNamespace(pw_name="fixture"))
     monkeypatch.setattr(tasks, "protected", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tasks.system, "resolve_target", lambda _: target)
-    real_path = Path
-    monkeypatch.setattr(
-        tasks,
-        "Path",
-        lambda value: (
-            tmp_path / "system.toml"
-            if value == "/etc/setup-system/system.toml"
-            else real_path(value)
-        ),
-    )
+    monkeypatch.setattr(tasks, "resolve_target", lambda _: target)
+    monkeypatch.setattr(system_settings, "SETTINGS_PATH", tmp_path / "system.toml")
 
     class Desktop:
         def __init__(self, *args, **kwargs):
@@ -130,9 +125,9 @@ def test_base_apply_revalidates_then_applies_finite_stages(
             calls.append("plan")
             return SimpleNamespace(extra_packages=())
 
-        def revalidate(self, plan):
+        def revalidate(self, confirmed, target, environment):
             calls.append("revalidate")
-            return plan
+            return confirmed
 
         def apply(self, plan):
             calls.append("desktop")
@@ -142,8 +137,10 @@ def test_base_apply_revalidates_then_applies_finite_stages(
         yield SimpleNamespace(install=lambda: calls.append("packages"))
 
     monkeypatch.setattr(tasks, "DesktopSystem", Desktop)
-    monkeypatch.setattr(tasks.system, "prepare_packages", packages)
-    monkeypatch.setattr(tasks, "_save_system", lambda settings, **kwargs: calls.append("settings"))
+    monkeypatch.setattr(tasks, "prepare_packages", packages)
+    monkeypatch.setattr(
+        system_settings, "save", lambda settings, **kwargs: calls.append("settings")
+    )
     options = {
         "schema_version": 1,
         "hyprland": True,
@@ -154,17 +151,50 @@ def test_base_apply_revalidates_then_applies_finite_stages(
         "expected_system_sha256": None,
         "xdg": {name: str(home / name) for name in ("config", "data", "state", "cache")},
     }
-    assert tasks.execute(tmp_path, "fixture", "base", options) == 0
+    assert (
+        tasks.execute(
+            tmp_path, "fixture", COMMAND.validate_python({"action": "base", "settings": options})
+        )
+        == 0
+    )
     assert calls == ["packages"]
-    assert tasks.execute(tmp_path, "fixture", "login", options) == 0
-    assert tasks.execute(tmp_path, "fixture", "system_settings", options) == 0
-    assert calls == ["packages", "plan", "revalidate", "desktop", "settings"]
+    assert (
+        tasks.execute(
+            tmp_path,
+            "fixture",
+            COMMAND.validate_python(
+                {
+                    "action": "login",
+                    "settings": {
+                        **options,
+                        "confirmed": {
+                            "previous_target": "multi-user.target",
+                            "intended": "1" * 64,
+                            "manager_enabled": False,
+                            "observed": {},
+                            "deferred": (),
+                        },
+                    },
+                }
+            ),
+        )
+        == 0
+    )
+    assert (
+        tasks.execute(
+            tmp_path,
+            "fixture",
+            COMMAND.validate_python({"action": "system_settings", "settings": options}),
+        )
+        == 0
+    )
+    assert calls == ["packages", "revalidate", "desktop", "settings"]
 
 
 def test_stale_system_revision_stops_before_packages(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from setup_system.installation import TargetUser
+    from setup_system.domain.identity import TargetUser
 
     home = tmp_path / "home"
     home.mkdir()
@@ -173,35 +203,50 @@ def test_stale_system_revision_stops_before_packages(
     path.write_text("schema_version=1\n")
     monkeypatch.setattr(tasks, "caller", lambda: SimpleNamespace(pw_name="fixture"))
     monkeypatch.setattr(tasks, "protected", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tasks.system, "resolve_target", lambda _: target)
-    monkeypatch.setattr(tasks, "Path", lambda _: path)
+    monkeypatch.setattr(tasks, "resolve_target", lambda _: target)
+    monkeypatch.setattr(system_settings, "SETTINGS_PATH", path)
     monkeypatch.setattr(
-        tasks.system,
+        tasks,
         "prepare_packages",
         lambda *args, **kwargs: pytest.fail("Stale settings reached APT"),
     )
     with pytest.raises(ValueError, match="changed after"):
-        tasks.execute(tmp_path, "fixture", "base", {"expected_system_sha256": None})
+        tasks.execute(
+            tmp_path,
+            "fixture",
+            COMMAND.validate_python(
+                {
+                    "action": "base",
+                    "settings": {
+                        "schema_version": 1,
+                        "hyprland": True,
+                        "graphical_login": False,
+                        "plymouth": False,
+                        "expected_system_sha256": None,
+                    },
+                }
+            ),
+        )
 
 
 def test_new_firefox_policy_is_readable_through_each_created_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(tasks, "protected", lambda *args, **kwargs: None)
     path = tmp_path / "etc/firefox/policies/policies.json"
-    tasks._firefox_policy(path)
+    firefox_policy.apply(firefox_policy.inspect(path))
     for directory in (path.parent, path.parent.parent, path.parent.parent.parent):
         assert directory.stat().st_mode & 0o005 == 0o005
     assert path.stat().st_mode & 0o004
     assert "downloads/latest/uBlock0@raymondhill.net/latest.xpi" in path.read_text()
     path.write_text('{"policies":{"DisableTelemetry":true}}')
     with pytest.raises(ValueError, match="manual review"):
-        tasks._firefox_policy(path)
+        firefox_policy.apply(firefox_policy.inspect(path))
 
 
 def test_known_private_firefox_policy_migrates_without_exposing_other_files(tmp_path, monkeypatch):
     monkeypatch.setattr(tasks, "protected", lambda *args, **kwargs: None)
     path = tmp_path / "etc/firefox/policies/policies.json"
     backups = tmp_path / "backups"
-    tasks._firefox_policy(path, backups=backups)
+    firefox_policy.apply(firefox_policy.inspect(path), backups=backups)
     legacy = path.read_bytes().replace(
         b"/uBlock0@raymondhill.net/latest.xpi", b"/ublock-origin/latest.xpi"
     )
@@ -211,9 +256,9 @@ def test_known_private_firefox_policy_migrates_without_exposing_other_files(tmp_
     other = path.parent / "admin.conf"
     other.touch()
     with pytest.raises(ValueError, match="unknown contents"):
-        tasks._firefox_policy(path, backups=backups)
+        firefox_policy.apply(firefox_policy.inspect(path), backups=backups)
     assert not (path.parent.parent.stat().st_mode & 0o077)
     other.unlink()
-    tasks._firefox_policy(path, backups=backups)
+    firefox_policy.apply(firefox_policy.inspect(path), backups=backups)
     assert all(directory.stat().st_mode & 0o001 for directory in (path.parent.parent, path.parent))
     assert next(backups.iterdir()).read_bytes() == legacy
