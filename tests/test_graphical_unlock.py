@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from setup_system.infrastructure import graphical_unlock as unlock
+from setup_system.infrastructure import system_files
 
 
 @pytest.fixture
@@ -35,8 +36,8 @@ def boot_tree(tmp_path, monkeypatch):
     # Keep the production atomic write implementation, with ownership checked against
     # the fixture account for all temporary test paths.
     monkeypatch.setattr(
-        unlock.system,
-        "_system_path",
+        system_files,
+        "validate_system_path",
         lambda path: (path.relative_to(tmp_path), path.parent.stat().st_uid == real_euid),
     )
     return tmp_path
@@ -147,3 +148,130 @@ def test_recovery_preserves_external_admin_edit(boot_tree, monkeypatch):
     assert "custom-admin" in (unlock.ETC / "plymouth/plymouthd.conf").read_text()
     (receipt,) = unlock.STATE.glob("*/operation.json")
     assert json.loads(receipt.read_text())["status"] == "partial"
+
+
+def test_rollback_preserves_a_later_admin_chmod(boot_tree, monkeypatch):
+    path = unlock.ETC / "plymouth/plymouthd.conf"
+
+    path.chmod(0o644)
+
+    def run(args):
+        if Path(args[0]).name == "mkinitramfs":
+            path.chmod(0o600)
+            raise OSError("injected failure after chmod")
+        return boot_commands(args)
+
+    monkeypatch.setattr(unlock, "_command", run)
+    with pytest.raises(RuntimeError, match="preserved later edits"):
+        unlock.apply_unlock("fixture")
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("timing", ["observation", "claim"])
+def test_boot_rollback_retains_same_content_replacement_during_claim(
+    boot_tree, monkeypatch, timing
+):
+    from setup_system.infrastructure import boot_recovery
+
+    path = unlock.ETC / "plymouth/plymouthd.conf"
+    changed = []
+    observe = boot_recovery.digest
+
+    def replace_after_observation(source):
+        result = observe(source)
+        journals = list(unlock.STATE.glob("*/operation.json"))
+        if (
+            source == path
+            and not changed
+            and journals
+            and json.loads(journals[0].read_bytes())["status"] == "restoring"
+        ):
+            new = path.with_suffix(".replacement")
+            new.write_bytes(path.read_bytes())
+            new.chmod(path.stat().st_mode & 0o777)
+            new.replace(path)
+            changed.append(path.stat().st_ino)
+        return result
+
+    def fail(args):
+        if Path(args[0]).name == "mkinitramfs":
+            raise OSError("injected rebuild failure")
+        return boot_commands(args)
+
+    if timing == "observation":
+        monkeypatch.setattr(boot_recovery, "digest", replace_after_observation)
+    else:
+        move = boot_recovery.move_new
+
+        def replace_during_claim(source, destination, **kwargs):
+            if source == path:
+                replace_after_observation(path)
+            move(source, destination, **kwargs)
+
+        monkeypatch.setattr(boot_recovery, "move_new", replace_during_claim)
+    monkeypatch.setattr(unlock, "_command", fail)
+    with pytest.raises(RuntimeError, match="preserved later edits"):
+        unlock.apply_unlock("fixture")
+    assert changed and path.stat().st_ino == changed[0]
+
+
+@pytest.mark.parametrize("target", ["initrd", "new_config"])
+def test_boot_apply_preserves_concurrent_file_during_publication(boot_tree, monkeypatch, target):
+    from setup_system.infrastructure import boot_recovery
+
+    image = unlock.BOOT / "initrd.img-6.1"
+    new_config = unlock.ETC / "default/grub.d/98-setup-system-splash.cfg"
+    selected = image if target == "initrd" else new_config
+    replacement = b"later administrator contents\n"
+    created = []
+
+    def replace():
+        file = selected.with_name("administrator-replacement")
+        file.write_bytes(replacement)
+        file.replace(selected)
+        created.append(selected.stat().st_ino)
+
+    checkpoint = boot_recovery.BootRecovery.checkpoint
+    copy = boot_recovery.shutil.copyfile
+
+    def after_checkpoint(operation, status):
+        checkpoint(operation, status)
+        if target == "new_config" and not created and new_config in operation.after:
+            replace()
+
+    def during_copy(source, destination):
+        result = copy(source, destination)
+        if target == "initrd" and Path(source).name == "initrd" and not created:
+            replace()
+        return result
+
+    monkeypatch.setattr(boot_recovery.BootRecovery, "checkpoint", after_checkpoint)
+    monkeypatch.setattr(boot_recovery.shutil, "copyfile", during_copy)
+    monkeypatch.setattr(unlock, "_command", boot_commands)
+    with pytest.raises((OSError, RuntimeError, ValueError)):
+        unlock.apply_unlock("fixture")
+    assert created and selected.read_bytes() == replacement
+    assert selected.stat().st_ino == created[0]
+    assert (unlock.BOOT / "grub/grub.cfg").read_text() == "original grub.cfg"
+
+
+def test_interrupted_boot_publication_returns_actual_displaced_inode(boot_tree, monkeypatch):
+    from setup_system.infrastructure import boot_recovery
+
+    path = unlock.BOOT / "initrd.img-6.1"
+    original = path.stat()
+    move = boot_recovery.move_new
+
+    def fail_after_displacement(source, destination, **options):
+        move(source, destination, **options)
+        if source == path and destination.name == "displaced":
+            raise OSError("injected interruption after displacement")
+
+    monkeypatch.setattr(boot_recovery, "move_new", fail_after_displacement)
+    monkeypatch.setattr(unlock, "_command", boot_commands)
+    with pytest.raises(OSError, match="interruption"):
+        unlock.apply_unlock("fixture")
+    assert os.path.samestat(path.stat(), original)
+    assert path.read_bytes() == b"previous image"
+    (journal,) = unlock.STATE.glob("*/operation.json")
+    assert json.loads(journal.read_bytes())["status"] == "restored"

@@ -2,20 +2,8 @@
 
 from __future__ import annotations
 
-import re
-import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
-
-from setup_system.installation_state import (
-    InstallJournal as InstallJournal,
-)
-from setup_system.installation_state import (
-    InstallStage as InstallStage,
-)
-from setup_system.installation_state import (
-    InstallStatus as InstallStatus,
-)
 
 DEBIAN_ARCHIVE = "https://deb.debian.org/debian"
 DEBIAN_SECURITY = "https://security.debian.org/debian-security"
@@ -62,10 +50,9 @@ class AptSources:
 @dataclass(frozen=True)
 class AptCommands:
     stage: Path
-    proxy: str | None
     selection: tuple[str, ...]
 
-    def options(self, *, offline: bool = False) -> list[str]:
+    def options(self) -> list[str]:
         settings = (
             f"Dir::Etc::sourcelist={self.stage / 'debian.sources'}",
             "Dir::Etc::sourceparts=-",
@@ -78,8 +65,8 @@ class AptCommands:
             "Acquire::http::Timeout=30",
             "Acquire::https::Timeout=30",
             "DPkg::Lock::Timeout=30",
-            f"Acquire::http::Proxy={'DIRECT' if offline else self.proxy or 'DIRECT'}",
-            f"Acquire::https::Proxy={'DIRECT' if offline else self.proxy or 'DIRECT'}",
+            "Acquire::http::Proxy=DIRECT",
+            "Acquire::https::Proxy=DIRECT",
         )
         return [argument for setting in settings for argument in ("-o", setting)]
 
@@ -110,52 +97,8 @@ class AptCommands:
             "--net",
             "--",
             "/usr/bin/apt-get",
-            *self.options(offline=True),
+            *self.options(),
             "--yes",
             "--no-download",
             *self.install_arguments(),
         ]
-
-
-@dataclass(frozen=True)
-class HappPin:
-    digest: str
-    version: str
-    architecture: str
-
-    @classmethod
-    def load(cls, path: Path, architecture: str) -> HappPin:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
-            raise ValueError("Happ manifest must be a bounded regular file")
-        manifest = tomllib.loads(path.read_text())
-        linux = manifest.get("linux")
-        asset = linux.get(architecture) if isinstance(linux, dict) else None
-        if not isinstance(asset, dict):
-            raise ValueError("Missing pinned Happ package for the target architecture")
-        digest, version = asset.get("sha256"), manifest.get("packageVersion")
-        if (
-            not isinstance(digest, str)
-            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-            or not isinstance(version, str)
-            or re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,200}", version) is None
-            or asset.get("packageArchitecture") != architecture
-        ):
-            raise ValueError("Invalid pinned Happ digest, version or target architecture")
-        return cls(digest, version, architecture)
-
-    def validate_metadata(self, output: str) -> None:
-        fields: dict[str, str] = {}
-        for line in output.splitlines():
-            name, separator, value = line.partition(":")
-            if not separator or name in fields:
-                raise ValueError("Happ archive metadata differs from the pinned release")
-            fields[name] = value.strip()
-        if fields != {
-            "Package": "happ",
-            "Version": self.version,
-            "Architecture": self.architecture,
-        }:
-            raise ValueError("Happ archive metadata differs from the pinned release")
-
-    def cache_name(self) -> str:
-        return f"happ_{self.version}_{self.architecture}.deb"

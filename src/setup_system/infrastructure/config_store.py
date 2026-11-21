@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import stat
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,18 +11,57 @@ from typing import Any, cast
 
 import tomlkit
 from platformdirs import user_cache_path, user_config_path, user_state_path
-from pydantic import BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, TypeAdapter
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
+from setup_system.domain.catalog import ComponentCatalog
 from setup_system.domain.settings import V1_APP_KEYS, SystemSettings, UserSettings
+from setup_system.infrastructure.catalog_repository import load_components
+from setup_system.infrastructure.user_storage import safe_file
 
 
-class _UserSettingsBoundary(UserSettings, BaseSettings):
-    model_config = SettingsConfigDict(extra="forbid", frozen=True, env_prefix="SETUP_SYSTEM_")
+class _EnvironmentDefaults(EnvSettingsSource):
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        if field_name in self.current_state:
+            return None, field_name, False
+        return super().get_field_value(field, field_name)
+
+    def prepare_field_value(
+        self, field_name: str, field: FieldInfo, value: Any, value_is_complex: bool
+    ) -> Any:
+        if field.annotation is bool and isinstance(value, str):
+            return TypeAdapter(bool).validate_python(value)
+        return super().prepare_field_value(field_name, field, value, value_is_complex)
 
 
-class _SystemSettingsBoundary(SystemSettings, BaseSettings):
-    model_config = SettingsConfigDict(extra="forbid", frozen=True, env_prefix="SETUP_SYSTEM_")
+_SETTINGS_CONFIG = SettingsConfigDict(extra="forbid", frozen=True, env_prefix="SETUP_SYSTEM_")
+
+
+class _FileSettings(BaseSettings):
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return init_settings, _EnvironmentDefaults(settings_cls)
+
+
+class _UserSettingsBoundary(UserSettings, _FileSettings):
+    model_config = _SETTINGS_CONFIG
+
+
+class _SystemSettingsBoundary(SystemSettings, _FileSettings):
+    model_config = _SETTINGS_CONFIG
 
 
 @dataclass(frozen=True)
@@ -44,24 +82,16 @@ class SettingsPaths:
         return user_cache_path("setup-system")
 
 
-def safe_file(path: Path, uid: int) -> None:
-    if not path.is_absolute() or ".." in path.parts:
-        raise ValueError("Settings path must be absolute")
-    for parent in (path, *path.parents):
-        if parent.is_symlink():
-            raise ValueError("Settings paths cannot traverse symlinks")
-    try:
-        info = path.stat()
-    except FileNotFoundError:
-        return
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1:
-        raise ValueError("Settings must be an owned, single-link regular file")
-    if info.st_mode & 0o022:
-        raise ValueError("Settings cannot be writable by other users")
-
-
 class ConfigStore[T: BaseModel]:
-    def __init__(self, path: Path, model: type[T], *, uid: int | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        model: type[T],
+        *,
+        uid: int | None = None,
+        catalog: ComponentCatalog | None = None,
+    ) -> None:
+        self.catalog = catalog
         self.path, self.model = path, model
         self.uid = os.getuid() if uid is None else uid
 
@@ -79,10 +109,13 @@ class ConfigStore[T: BaseModel]:
         return self._validate(document.unwrap()), hashlib.sha256(raw).hexdigest()
 
     def _validate(self, values: dict[str, Any]) -> T:
+        if any(key.startswith("_") for key in values):
+            raise ValueError("Settings cannot select additional configuration sources")
         if self.model is UserSettings:
-            return cast(
-                T, UserSettings.model_validate(_UserSettingsBoundary(**values).model_dump())
-            )
+            if self.catalog is None:
+                self.catalog = load_components()
+            validated = UserSettings.model_validate(_UserSettingsBoundary(**values).model_dump())
+            return cast(T, self.catalog.validate_settings(validated))
         if self.model is SystemSettings:
             return cast(
                 T, SystemSettings.model_validate(_SystemSettingsBoundary(**values).model_dump())
@@ -91,6 +124,9 @@ class ConfigStore[T: BaseModel]:
 
     def prepare(self, settings: T, expected: str | None) -> bytes:
         _, actual = self.read()
+        settings = self.model.model_validate(settings)
+        if isinstance(settings, UserSettings) and self.catalog is not None:
+            self.catalog.validate_settings(settings)
         if actual != expected:
             raise ValueError("Settings changed since inspection; reload before saving")
         raw = self.path.read_bytes() if self.path.exists() else b""
@@ -115,7 +151,7 @@ class ConfigStore[T: BaseModel]:
         return tomlkit.dumps(document).encode()
 
     def save(self, settings: T, expected: str | None) -> str:
-        from setup_system.infrastructure.user_files import apply_files
+        from setup_system.infrastructure.managed_files import apply_files
 
         output = self.prepare(settings, expected)
         apply_files({self.path: output}, modes={self.path: 0o600}, expected={self.path: expected})
@@ -127,12 +163,14 @@ def save_intentions(
     system: SystemSettings,
     user_revision: str | None,
     draft_revision: str | None,
+    *,
+    catalog: ComponentCatalog | None = None,
 ) -> tuple[str, str]:
-    from setup_system.infrastructure.user_files import apply_files
+    from setup_system.infrastructure.managed_files import apply_files
 
     path = SettingsPaths().user
     draft = path.parent / "system-intentions.toml"
-    user_bytes = ConfigStore(path, UserSettings).prepare(user, user_revision)
+    user_bytes = ConfigStore(path, UserSettings, catalog=catalog).prepare(user, user_revision)
     draft_bytes = ConfigStore(draft, SystemSettings).prepare(system, draft_revision)
     apply_files(
         {path: user_bytes, draft: draft_bytes},

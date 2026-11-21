@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.adapters.debian.hyprland import package_arguments, profile_capabilities
-from setup_system.capabilities import CapabilityStatus, load_policy, parse_policy
-from setup_system.planning import load_capabilities
+from setup_system.adapters.debian.hyprland import package_arguments
+from setup_system.domain.platforms import CapabilityPolicy, CapabilityStatus
+from setup_system.infrastructure.catalog_repository import load_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
     [
         ("base_packages", "foot"),
         ("commands", "Hyprland"),
-        ("preflight_paths", "config:hypr/"),
+        ("system_python", "CPython"),
         ("architectures", "x86_64"),
         ("apt_architectures", "amd64"),
         ("backport_packages", []),
@@ -35,7 +35,7 @@ def test_hyprland_manifest_fields_are_validated_before_use(
     # TOML cannot encode None, so represent a missing field directly in the fixture text.
     source = (ROOT / "manifests/platforms.toml").read_text()
     if field == "init_version":
-        source = source.replace('init_version = "257"\n', "")
+        source = source.replace(f'init_version = "{data["hyprland"]["init_version"]}"\n', "")
     else:
         import json
 
@@ -55,7 +55,7 @@ def test_hyprland_manifest_fields_are_validated_before_use(
     (folder / "platforms.toml").write_text(source)
     before = {str(p): p.read_bytes() for p in folder.iterdir()}
     with pytest.raises(ValueError):
-        load_capabilities(tmp_path)
+        load_policy(tmp_path)
     assert {str(p): p.read_bytes() for p in folder.iterdir()} == before
 
 
@@ -80,11 +80,12 @@ def test_typed_policy_is_immutable_and_dictionary_views_are_detached() -> None:
     policy = load_policy(ROOT)
     assert policy.debian.status is CapabilityStatus.IMPLEMENTED
     assert policy.debian.status.value == "implemented"
-    view = policy.document()
-    parsed = parse_policy(view)
+    view = policy.model_dump(mode="json")
+    expected_version = policy.hyprland.version_pin
+    parsed = CapabilityPolicy.model_validate(view)
     assert parsed == policy
     view.clear()
-    assert policy.hyprland.version_pin == "0.55.2+ds-1~bpo13+1"
+    assert policy.hyprland.version_pin == expected_version
     with pytest.raises(TypeError):
         policy.debian.codenames["13"] = "changed"  # type: ignore[index]
     assert policy.debian_codename("12") == "bookworm"
@@ -117,23 +118,21 @@ def test_inconsistent_capability_fields_are_rejected(
     data = copy.deepcopy(raw)
     data[section][field] = value
     with pytest.raises(ValueError):
-        parse_policy(data)
+        CapabilityPolicy.model_validate(data)
 
 
 @pytest.mark.parametrize(
     "path", ["config:../escape", "data:/absolute", "cache:a//b", "root:etc/file", "state:a\\b"]
 )
-def test_preflight_destinations_are_validated_at_load(path: str) -> None:
-    data = tomllib.loads((ROOT / "manifests/platforms.toml").read_text())
-    data["hyprland"]["preflight_paths"] = [path]
-    with pytest.raises(ValueError, match="destination"):
-        parse_policy(data)
+def test_resource_destinations_reject_old_prefixes_and_traversal(path: str) -> None:
+    from setup_system.resource_locator import ResourceLocator
+
+    with pytest.raises(ValueError, match="resource path"):
+        ResourceLocator.for_root(ROOT).resource(path)
 
 
 def test_public_package_arguments_keep_the_manifest_order_and_pins() -> None:
     policy = load_policy(ROOT)
-    profile = profile_capabilities(ROOT)
-    assert profile == load_capabilities(ROOT)["hyprland"]
     assert package_arguments(
         root=ROOT,
         architecture="aarch64",
@@ -143,4 +142,3 @@ def test_public_package_arguments_keep_the_manifest_order_and_pins() -> None:
         *policy.hyprland.base_packages,
         *(f"{name}={version}" for name, version in policy.hyprland.backport_packages.items()),
     ]
-    assert not any("JetBrainsMono-" in path for path in policy.hyprland.preflight_paths)

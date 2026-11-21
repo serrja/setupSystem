@@ -1,18 +1,12 @@
-"""Load the release's shared palette at user and stdlib-only system boundaries."""
+"""Read the named native colors from the selected release."""
 
-import re
-import tomllib
 from pathlib import Path
 
-RESOURCE_ROOT = Path(__file__).resolve().parents[1] / "resources"
+from setup_system.domain.palette import DesktopPalette
+from setup_system.infrastructure.catalog_repository import read_contract
+from setup_system.resource_locator import ResourceLocator
 
 
-def palette(resources: Path = RESOURCE_ROOT) -> dict[str, str]:
-    document = tomllib.loads((resources / "themes/catppuccin_mocha_green.toml").read_text())
-    document.pop("name", None)
-    if not all(
-        isinstance(value, str) and re.fullmatch(r"#[0-9a-f]{6}", value)
-        for value in document.values()
-    ):
-        raise ValueError("Invalid desktop palette color")
-    return document
+def palette(root: Path | None = None) -> dict[str, str]:
+    path = ResourceLocator.for_root(root).resource("themes/catppuccin_mocha_green.toml")
+    return read_contract(path, DesktopPalette).model_dump(exclude={"name"})

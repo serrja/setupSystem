@@ -1,35 +1,29 @@
-"""Pure conservative package removal policy."""
+"""Conservative package removal policy and the released candidate schema."""
 
-import re
-import tomllib
-from pathlib import Path
-from typing import TypedDict
+from collections.abc import Mapping
+from typing import Annotated
+
+from pydantic import Field, StrictBool, StrictInt
+
+from setup_system.domain.catalog import PackageName
+from setup_system.domain.contracts import ContractModel
+from setup_system.domain.manifest_types import FrozenMap
 
 
-class CleanupCandidate(TypedDict):
-    requires_verified_editor: bool
+class CleanupCandidate(ContractModel):
+    requires_verified_editor: StrictBool = False
 
 
-def cleanup_catalog() -> dict[str, CleanupCandidate]:
-    path = Path(__file__).resolve().parents[1] / "resources/catalogs/optional_cleanup.toml"
-    with path.open("rb") as stream:
-        data = tomllib.load(stream)
-    entries = data.get("candidates")
-    if data.get("schema_version") != 1 or not isinstance(entries, dict) or not entries:
-        raise ValueError("Invalid cleanup catalog")
-    result: dict[str, CleanupCandidate] = {}
-    for package, metadata in entries.items():
-        if (
-            not re.fullmatch(r"[a-z0-9][a-z0-9+.-]+", package)
-            or not isinstance(metadata, dict)
-            or set(metadata) - {"requires_verified_editor"}
-        ):
-            raise ValueError("Unexpected cleanup candidate")
-        required = metadata.get("requires_verified_editor", False)
-        if not isinstance(required, bool):
-            raise ValueError("Invalid editor requirement")
-        result[package] = {"requires_verified_editor": required}
-    return result
+class CleanupCatalogDocument(ContractModel):
+    schema_version: Annotated[StrictInt, Field(ge=1, le=1)]
+    candidates: Annotated[FrozenMap[PackageName, CleanupCandidate], Field(min_length=1)]
+
+
+class CleanupPlan(ContractModel):
+    requested: frozenset[str]
+    removed: frozenset[str]
+    essential: frozenset[str]
+    simulation: str
 
 
 PROTECTED_PACKAGES = frozenset(
@@ -66,14 +60,14 @@ def validate_removals(
     essential: frozenset[str],
     *,
     editor_verified: bool,
+    catalog: Mapping[str, CleanupCandidate],
 ) -> None:
     """Reject every unexpected dependency removal, including seemingly optional ones."""
-    catalog = cleanup_catalog()
     if not requested or not requested <= catalog.keys():
         raise ValueError("Only explicitly selected cleanup candidates are allowed")
     if removed != requested:
         raise ValueError("APT removal closure changed; review a new plan")
     if removed & (PROTECTED_PACKAGES | essential):
         raise ValueError("Essential, Protected or workstation package removal is forbidden")
-    if not editor_verified and any(catalog[p]["requires_verified_editor"] for p in removed):
+    if not editor_verified and any(catalog[p].requires_verified_editor for p in removed):
         raise ValueError("A working Neovim fallback and EDITOR/VISUAL must be verified first")

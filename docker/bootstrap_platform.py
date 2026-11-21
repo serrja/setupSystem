@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from setup_system.capabilities import load_policy
+from setup_system.infrastructure.catalog_repository import load_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 START = "# Generated from manifests/platforms.toml."
@@ -32,7 +32,7 @@ def render() -> str:
         )
     rows.append('    case "$(uname -m)" in')
     for machine in profile.architectures:
-        names = sorted({machine, *(k for k, v in policy.aliases.items() if v == machine)})
+        names = sorted({machine, *(k for k, v in policy.architectures.items() if v == machine)})
         rows.append(
             f"        {'|'.join(names)}) architecture={policy.debian_architecture(machine)} ;;"
         )

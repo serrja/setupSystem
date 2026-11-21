@@ -1,102 +1,76 @@
-"""User stages merge into the latest system journal without losing completed package work."""
+"""Package receipts reject unknown schemas and preserve historical bytes before migration."""
 
-from __future__ import annotations
-
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
-from setup_system import installation
-
-
-def journal(tmp_path: Path) -> installation.SystemPaths:
-    paths = installation.SystemPaths(journal=tmp_path / "state/install.json")
-    installation._write_system(
-        paths.journal,
-        (
-            json.dumps(
-                {
-                    "schema": 1,
-                    "status": "system-complete",
-                    "stage": "user-runtime",
-                    "completed": [
-                        "metadata",
-                        "resolution",
-                        "downloads",
-                        "packages",
-                        "source",
-                        "happ-service",
-                    ],
-                }
-            )
-            + "\n"
-        ).encode(),
-    )
-    return paths
-
-
-def test_failure_uses_actual_user_download_stage_and_preserves_package_progress(
-    tmp_path: Path,
-) -> None:
-    paths = journal(tmp_path)
-    before = json.loads(paths.journal.read_text())
-    installation.mark_user_stage(paths, "failed", stage="user-downloads")
-    state = json.loads(paths.journal.read_text())
-    assert state["status"] == "failed" and state["stage"] == "user-downloads"
-    assert state["completed"] == before["completed"]
-
-
-def test_completion_merges_latest_journal_and_is_idempotent(tmp_path: Path) -> None:
-    paths = journal(tmp_path)
-    latest = json.loads(paths.journal.read_text())
-    latest["completed"].append("user-downloads")
-    latest["observation"] = "latest package-context receipt"
-    installation._write_system(paths.journal, (json.dumps(latest) + "\n").encode())
-    for _ in range(2):
-        installation.mark_user_stage(
-            paths,
-            "complete",
-            completed=("user-downloads", "user-configuration"),
-        )
-    state = json.loads(paths.journal.read_text())
-    assert state["status"] == "complete" and state["stage"] == "user"
-    assert state["observation"] == latest["observation"]
-    assert state["completed"] == [*latest["completed"], "user-configuration"]
+from setup_system.domain.package_journal import InstallJournal, InstallStage, InstallStatus
+from setup_system.infrastructure.package_journal import prepare_journal
 
 
 @pytest.mark.parametrize(
-    ("status", "stage", "completed"),
+    "stage", ["temporary-network", "temporary-network-cleanup", "user-runtime", "package-downloads"]
+)
+def test_historical_stages_are_preserved_outside_the_live_vocabulary(
+    tmp_path: Path, stage: str
+) -> None:
+    path = tmp_path / "install.json"
+    original = json.dumps(
+        {
+            "schema": 1,
+            "stage": stage,
+            "status": "failed",
+            "completed": ["metadata"],
+            "extra": "prior run",
+        }
+    ).encode()
+    path.write_bytes(original)
+    prepare_journal(path)
+    prepare_journal(path)
+    backup = (
+        tmp_path / "migration" / ("install-v1-" + hashlib.sha256(original).hexdigest() + ".json")
+    )
+    assert backup.read_bytes() == path.read_bytes() == original
+    with pytest.raises(ValueError):
+        InstallStage(stage)
+
+
+@pytest.mark.parametrize(
+    "changes",
     [
-        ("unknown", "user", ()),
-        ("complete", "unknown-stage", ()),
-        ("complete", "user", ("unverified-stage",)),
+        {"schema": True},
+        {"schema": 3},
+        {"stage": "unrecognized"},
+        {"status": "broken"},
+        {"completed": [1]},
+        {"error": {}},
     ],
 )
-def test_invalid_user_updates_cannot_change_the_journal(
-    tmp_path: Path,
-    status: str,
-    stage: str,
-    completed: tuple[str, ...],
-) -> None:
-    paths = journal(tmp_path)
-    before = paths.journal.read_bytes()
-    with pytest.raises(ValueError):
-        installation.mark_user_stage(paths, status, stage=stage, completed=completed)
-    assert paths.journal.read_bytes() == before
-
-
-@pytest.mark.parametrize(
-    "changes", [{"schema": 2}, {"stage": "unknown"}, {"status": None}, {"completed": [0]}]
-)
-def test_malformed_existing_journal_is_preserved_for_review(
+def test_unknown_historical_receipt_is_preserved(
     tmp_path: Path, changes: dict[str, object]
 ) -> None:
-    paths = journal(tmp_path)
-    document = json.loads(paths.journal.read_text())
-    document.update(changes)
-    paths.journal.write_text(json.dumps(document))
-    before = paths.journal.read_bytes()
+    path = tmp_path / "install.json"
+    data = json.dumps({"schema": 1, "stage": "metadata", "status": "running", **changes}).encode()
+    path.write_bytes(data)
     with pytest.raises(ValueError, match="journal"):
-        installation.mark_user_stage(paths, "complete", completed=("user-downloads",))
-    assert paths.journal.read_bytes() == before
+        prepare_journal(path)
+    assert path.read_bytes() == data
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_current_session_retains_completed_stages_on_failure(tmp_path: Path) -> None:
+    journal = (
+        InstallJournal()
+        .checkpoint(InstallStage.RESOLUTION, "metadata")
+        .checkpoint(InstallStage.DOWNLOADS, "resolution")
+    )
+    failed = journal.failed(RuntimeError("private detail"))
+    path = tmp_path / "install.json"
+    path.write_bytes(failed.serialize())
+    prepare_journal(path)
+    assert list(tmp_path.iterdir()) == [path]
+    assert failed.completed == (InstallStage.METADATA, InstallStage.RESOLUTION)
+    assert failed.status == InstallStatus.FAILED and failed.error == "RuntimeError"
+    assert b"private detail" not in path.read_bytes()

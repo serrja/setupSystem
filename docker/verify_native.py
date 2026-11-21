@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -67,6 +68,29 @@ def verify(artifacts: Path) -> None:
     environment.pop("PYTHONHOME", None)
     with tempfile.TemporaryDirectory(prefix="setup-system-installed-") as temporary:
         stage = Path(temporary)
+        system_python = tomllib.loads((root / "manifests/platforms.toml").read_text())["hyprland"][
+            "system_python"
+        ]
+        subprocess.run(
+            [
+                "uv",
+                "run",
+                "--no-project",
+                "--isolated",
+                "--python",
+                system_python,
+                "python",
+                "-I",
+                "-B",
+                "-S",
+                str(root / "docker/verify_privileged.py"),
+                str(sdists[0]),
+            ],
+            cwd=stage,
+            env=environment,
+            timeout=240,
+            check=True,
+        )
         executable = stage / "venv/bin/python"
         requirements = stage / "runtime.txt"
         commands = (

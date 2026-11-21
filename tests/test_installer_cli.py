@@ -2,17 +2,16 @@
 
 from pathlib import Path
 
-from setup_system.application.installer import InstallRequest, Operation
+from setup_system.domain.operations import InstallRequest, Operation
 from setup_system.domain.settings import Section
 
 
 def test_request_is_an_immutable_plan_input() -> None:
-    from dataclasses import FrozenInstanceError
-
     import pytest
+    from pydantic import ValidationError
 
-    request = InstallRequest(Operation.PLAN)
-    with pytest.raises(FrozenInstanceError):
+    request = InstallRequest(operation=Operation.PLAN)
+    with pytest.raises(ValidationError, match="frozen"):
         request.section = Section.WORKSPACE
     assert request.yes is False
 

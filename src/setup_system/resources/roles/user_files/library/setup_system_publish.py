@@ -2,7 +2,8 @@
 
 from ansible.module_utils.basic import AnsibleModule  # type: ignore[import-untyped]
 
-from setup_system.infrastructure.file_receipts import FileChange, publish_prepared
+from setup_system.domain.receipts import FileChange
+from setup_system.infrastructure.file_publication import publish_prepared
 
 
 def main() -> None:

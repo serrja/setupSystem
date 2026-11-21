@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import ClassVar
 
 from pydantic import JsonValue
 from textual import on
@@ -13,9 +13,19 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, TabbedContent, TabPane
 
-from setup_system.application import templates
-from setup_system.application.tools import ToolAction, ToolRequest, projects
-from setup_system.infrastructure.file_receipts import list_operations
+from setup_system.domain.tool_requests import (
+    CacheTemplate,
+    ConfigureGit,
+    InspectGit,
+    OpenProject,
+    RestoreTool,
+    SimpleTool,
+    ToolChoices,
+    ToolRequest,
+    UseGitProfile,
+    WriteTemplate,
+    snapshot_answers,
+)
 
 
 class ToolsScreen(ModalScreen[ToolRequest | None]):
@@ -26,11 +36,11 @@ class ToolsScreen(ModalScreen[ToolRequest | None]):
     """
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Close")]
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, choices: ToolChoices) -> None:
         super().__init__()
-        self.sources = templates.load_templates(root)
-        self.projects = projects(root)
-        self.history = list_operations()
+        self.sources = {item.name: item for item in choices.templates}
+        self.projects = choices.projects
+        self.history = choices.history
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(), TabbedContent():
@@ -95,16 +105,20 @@ class ToolsScreen(ModalScreen[ToolRequest | None]):
         template = self.sources.get(str(event.value))
         self.query_one("#python-profile", Select).disabled = str(event.value) != "python"
         menu = self.query_one("#template-version", Select)
-        menu.set_options(
-            [(v.version, v.version) for v in template.metadata.versions] if template else []
-        )
-        if template and template.metadata.recommended_version:
-            menu.value = template.metadata.recommended_version
+        menu.set_options([(version, version) for version in template.versions] if template else [])
+        if template and template.recommended:
+            menu.value = template.recommended
 
     @on(Button.Pressed)
     def submit(self, event: Button.Pressed) -> None:
-        action = cast(ToolAction, (event.button.id or "").replace("-", "_"))
+        try:
+            request = self.request_for((event.button.id or "").replace("-", "_"))
+        except ValueError as exc:
+            self.notify(str(exc), severity="warning")
+            return
+        self.dismiss(request)
 
+    def request_for(self, action: str) -> ToolRequest:
         def chosen(widget: str) -> str:
             value = self.query_one("#" + widget, Select).value
             return "" if value is Select.BLANK else str(value)
@@ -112,51 +126,58 @@ class ToolsScreen(ModalScreen[ToolRequest | None]):
         def entry(widget: str) -> str:
             return self.query_one("#" + widget, Input).value.strip()
 
-        request = ToolRequest(action)
-        if action in {"open_project", "open_codex"}:
-            request = ToolRequest(action, name=chosen("project"))
-        elif action in {"create_template", "update_template", "template_cache"}:
-            name, destination, project = (
-                chosen("template"),
-                entry("template-directory"),
-                entry("project-name"),
-            )
-            if not name or (action != "template_cache" and not destination):
-                self.notify("Select a template and enter the project directory.")
-                return
+        if action == "open_project" or action == "open_codex":
+            if not chosen("project"):
+                raise ValueError("Select a local checkout.")
+            return OpenProject.model_validate({"action": action, "name": chosen("project")})
+        if action in {"create_template", "update_template", "template_cache"}:
+            name, version = chosen("template"), chosen("template-version") or None
+            if not name:
+                raise ValueError("Select a template.")
+            if action == "template_cache":
+                return CacheTemplate(name=name, version=version)
+            project, destination = entry("project-name"), entry("template-directory")
+            if not destination:
+                raise ValueError("Enter the project directory.")
             if action == "create_template" and not project:
-                self.notify("Enter a project name to create this template.")
-                return
+                raise ValueError("Enter a project name to create this template.")
             answers: dict[str, JsonValue] = {}
             if project:
                 answers["service_name" if name == "service" else "projectName"] = project
             if action == "create_template" and name == "python":
                 answers["profile"] = chosen("python-profile")
-            request = ToolRequest(
-                action,
+            return WriteTemplate(
+                action="create_template" if action == "create_template" else "update_template",
                 name=name,
-                destination=Path(destination).expanduser() if destination else None,
-                version=chosen("template-version") or None,
-                answers=answers,
+                destination=Path(destination).expanduser(),
+                version=version,
+                answers=snapshot_answers(answers),
             )
-        elif action in {"git_use", "git_configure", "git_inspect"}:
+        if action in {"git_use", "git_configure", "git_inspect"}:
             directory = entry("git-directory")
             if not directory:
-                self.notify("Enter the exact repository directory.")
-                return
+                raise ValueError("Enter the exact repository directory.")
+            repo = Path(directory).expanduser()
+            if action == "git_inspect":
+                return InspectGit(destination=repo)
+            name = entry("git-profile")
+            if not name:
+                raise ValueError("Enter the identity profile name.")
+            if action == "git_use":
+                return UseGitProfile(name=name, destination=repo)
             owner = entry("owner-directory")
-            request = ToolRequest(
-                action,
-                name=entry("git-profile"),
-                destination=Path(directory).expanduser(),
+            return ConfigureGit(
+                name=name,
+                destination=repo,
                 owner_directory=Path(owner).expanduser() if owner else None,
             )
-        elif action in {"restore", "restore_preview"}:
+        if action == "restore" or action == "restore_preview":
             if not chosen("recovery-operation"):
-                self.notify("Select a recorded operation.")
-                return
-            request = ToolRequest(action, backup_id=chosen("recovery-operation"))
-        self.dismiss(request)
+                raise ValueError("Select a recorded operation.")
+            return RestoreTool.model_validate(
+                {"action": action, "backup_id": chosen("recovery-operation")}
+            )
+        return SimpleTool.model_validate({"action": action})
 
     def action_cancel(self) -> None:
         self.dismiss(None)

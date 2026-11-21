@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from setup_system.application import workstation
-from setup_system.infrastructure.user_files import apply_files
+from setup_system.infrastructure.managed_files import apply_files
 
 
 @pytest.mark.parametrize(

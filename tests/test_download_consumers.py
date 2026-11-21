@@ -11,10 +11,8 @@ from urllib.request import Request
 
 import pytest
 
-from setup_system import downloads
-from setup_system.application import rtk
-from setup_system.infrastructure import editor_downloads
-from setup_system.planning import Platform
+from setup_system.domain.system_facts import Platform
+from setup_system.infrastructure import downloads, editor_downloads, rtk
 
 
 class Response(io.BytesIO):
@@ -153,21 +151,35 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
         "linux_x86_64_url": "https://github.com/owner/tool",
         "linux_x86_64_sha256": digest,
     }
-    manifest = (
-        {"neovim": entry} if provider == "neovim" else {"archiveTools": {"fixture-tool": entry}}
-    )
-    monkeypatch.setattr(editor_downloads, "_manifest", lambda _: manifest)
+    from setup_system.domain.editor_lock import ArchiveRelease
+    from setup_system.infrastructure.catalog_repository import load_editor
+
+    manifest = load_editor(Path(__file__).resolve().parents[1])
+    release = ArchiveRelease.model_validate(entry)
+    if provider == "neovim":
+        manifest = manifest.validated(neovim=release)
+    else:
+        manifest = manifest.validated(
+            archive_tools={**manifest.archive_tools, "fixture-tool": release}
+        )
     monkeypatch.setattr(
         editor_downloads,
         "_run",
         lambda *_a, **_k: "NVIM v1.2.3" if provider == "neovim" else "fixture-tool 1.2.3",
     )
-    platform = Platform("debian", "13", "x86_64", True, False, "fixture")
+    platform = Platform(
+        distribution="debian",
+        version="13",
+        architecture="x86_64",
+        implemented=True,
+        verified=False,
+        reason="fixture",
+    )
 
     def install() -> str:
         if provider == "neovim":
-            return editor_downloads.install_neovim(tmp_path, platform)
-        return editor_downloads.install_archive_tool(tmp_path, platform, "fixture-tool")
+            return editor_downloads.install_neovim(manifest.neovim, platform)
+        return editor_downloads.install_archive_tool(manifest, platform, "fixture-tool")
 
     if not valid_digest:
         with pytest.raises(RuntimeError, match="digest mismatch"):
@@ -192,20 +204,22 @@ def test_terminal_providers_preserve_hash_verification_and_repeat_behavior(
 
 
 @pytest.mark.parametrize(
-    ("machine", "expected"),
+    ("machine", "expected_field"),
     [
-        ("x86_64", "amd64.tar.gz"),
-        ("amd64", "amd64.tar.gz"),
-        ("aarch64", "arm64.tar.gz"),
-        ("arm64", "arm64.tar.gz"),
+        ("x86_64", "linux_x86_64"),
+        ("amd64", "linux_x86_64"),
+        ("aarch64", "linux_arm64"),
+        ("arm64", "linux_arm64"),
     ],
 )
 def test_rtk_asset_architecture_uses_the_shared_alias_policy(
-    monkeypatch: pytest.MonkeyPatch, machine: str, expected: str
+    monkeypatch: pytest.MonkeyPatch, machine: str, expected_field: str
 ) -> None:
     monkeypatch.setattr(rtk.platform, "system", lambda: "Linux")
     monkeypatch.setattr(rtk.platform, "machine", lambda: machine)
-    assert (
-        rtk._target_name({"linux_x86_64": "amd64.tar.gz", "linux_arm64": "arm64.tar.gz"})
-        == expected
-    )
+    from setup_system.domain.tool_releases import RtkRelease
+    from setup_system.infrastructure.catalog_repository import read_contract
+
+    root = Path(__file__).resolve().parents[1]
+    release = read_contract(root / "manifests/rtk.toml", RtkRelease)
+    assert rtk._target_name(release, root=root) == getattr(release, expected_field)

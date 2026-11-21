@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import shlex
 import stat
 import subprocess
 import tarfile
 import tempfile
-import tomllib
 import zipfile
 from pathlib import Path
 
 from platformdirs import user_cache_path
 
-from setup_system.downloads import (
+from setup_system.domain.editor_lock import ArchiveRelease, EditorLock
+from setup_system.domain.system_facts import Platform
+from setup_system.infrastructure.downloads import (
     GITHUB_RELEASE_HOSTS,
     DownloadError,
     DownloadFailure,
@@ -24,18 +24,11 @@ from setup_system.downloads import (
     ProxyPolicy,
     copy_https,
 )
-from setup_system.infrastructure.config_store import safe_file
-from setup_system.infrastructure.file_receipts import checked_directory
-from setup_system.infrastructure.user_files import apply_files
-from setup_system.planning import Platform
-from setup_system.storage import atomic_write
+from setup_system.infrastructure.managed_files import apply_files
+from setup_system.infrastructure.user_storage import atomic_write, checked_directory, safe_file
 
 MAX_NEOVIM_ARCHIVE_BYTES = 120 * 1024 * 1024
 MAX_TOOL_ARCHIVE_BYTES = 100 * 1024 * 1024
-
-
-def _manifest(project_root: Path) -> dict[str, object]:
-    return tomllib.loads((project_root / "manifests/editor.toml").read_text())
 
 
 def _data_home() -> Path:
@@ -128,13 +121,13 @@ def _digest_file(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _archive(entry: dict[str, object], platform: Platform, limit: int) -> Path:
+def _archive(entry: ArchiveRelease, platform: Platform, limit: int) -> Path:
     if not platform.implemented or platform.distribution != "debian":
         raise ValueError(platform.reason)
-    key = "linux_" + platform.architecture
-    value = entry.get(key + "_sha256")
-    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+    pin = entry.archive(platform.architecture)
+    if pin is None:
         raise ValueError("No reviewed archive for this platform")
+    url, value = pin
     path = checked_directory(user_cache_path("setup-system") / "downloads") / value
     safe_file(path, os.getuid())
     if path.exists():
@@ -145,7 +138,7 @@ def _archive(entry: dict[str, object], platform: Platform, limit: int) -> Path:
     with tempfile.TemporaryDirectory(prefix=".download-", dir=path.parent) as tmp:
         stage = Path(tmp) / "archive"
         found = _download_archive(
-            str(entry[key + "_url"]),
+            url,
             stage,
             limit,
             redirect_error="Unexpected editor archive redirect",
@@ -197,14 +190,9 @@ def expose_commands(commands: dict[str, Path]) -> None:
         apply_files(targets, modes=dict.fromkeys(targets, 0o755))
 
 
-def install_neovim(project_root: Path, platform: Platform) -> str:
+def install_neovim(entry: ArchiveRelease, platform: Platform) -> str:
     """Compare an existing runtime with the verified upstream archive before execution."""
-    entry = _manifest(project_root)["neovim"]
-    if not isinstance(entry, dict):
-        raise ValueError("Invalid Neovim release")
-    version = str(entry["version"])
-    if not re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", version):
-        raise ValueError("Invalid Neovim version")
+    version = entry.version
     archive = _archive(entry, platform, MAX_NEOVIM_ARCHIVE_BYTES)
     target = checked_directory(_data_home() / "setup-system/neovim" / version)
     top = "nvim-linux-" + platform.architecture
@@ -236,23 +224,13 @@ def install_neovim(project_root: Path, platform: Platform) -> str:
     return f"{status}: Neovim {version}"
 
 
-def install_plugins(project_root: Path) -> list[str]:
+def install_plugins(manifest: EditorLock) -> list[str]:
     """Check out exact public revisions into Neovim's standard user data path."""
-    plugins = _manifest(project_root)["plugins"]
-    if not isinstance(plugins, dict):
-        raise ValueError("Invalid plugin manifest")
     destination = checked_directory(_data_home() / "nvim/lazy")
     destination.mkdir(parents=True, exist_ok=True)
     results: list[str] = []
-    for name, entry in plugins.items():
-        if not isinstance(entry, dict):
-            raise ValueError("Invalid plugin entry")
-        repo = str(entry["repo"])
-        commit = str(entry["commit"])
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or not re.fullmatch(
-            r"[0-9a-f]{40}", commit
-        ):
-            raise ValueError("Invalid plugin source or commit")
+    for name, entry in manifest.plugins.items():
+        repo, commit = entry.repo, entry.commit
         folder_name = "lazy.nvim" if name == "lazy" else name
         folder = destination / folder_name
         if folder.is_symlink():
@@ -290,11 +268,9 @@ def install_plugins(project_root: Path) -> list[str]:
     return results
 
 
-def install_archive_tool(project_root: Path, platform: Platform, name: str) -> str:
+def install_archive_tool(manifest: EditorLock, platform: Platform, name: str) -> str:
     """Verify the binary against its release asset before running or exposing it."""
-    entries = _manifest(project_root)["archiveTools"]
-    if not isinstance(entries, dict) or not isinstance(entry := entries[name], dict):
-        raise ValueError("Invalid editor tool release")
+    entry = manifest.archive_tools[name]
     archive = _archive(entry, platform, MAX_TOOL_ARCHIVE_BYTES)
     target = checked_directory(_data_home() / "setup-system/editor-tools" / archive.name) / name
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -313,7 +289,7 @@ def install_archive_tool(project_root: Path, platform: Platform, name: str) -> s
     status = "unchanged" if target.exists() else "changed"
     if not target.exists():
         atomic_write(target, data, 0o755)
-    if str(entry["version"]) not in _run([str(target), "--version"], timeout=15):
+    if entry.version not in _run([str(target), "--version"], timeout=15):
         raise RuntimeError(f"{name} version verification failed")
     legacy = checked_directory(Path.home() / ".local/bin") / name
     if not legacy.is_symlink() and legacy.is_file() and legacy.read_bytes() == data:

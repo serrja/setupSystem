@@ -13,9 +13,9 @@ from importlib.metadata import distribution, version
 from pathlib import Path
 
 import setup_system
-from setup_system.application.project_layout import load_layout
 from setup_system.application.templates import load_templates
-from setup_system.infrastructure.theme import palette
+from setup_system.infrastructure.palette import palette
+from setup_system.infrastructure.project_layout import load_layout
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--wheel", type=Path)
@@ -60,16 +60,13 @@ subprocess.run(["git", "--version"], check=True)
 assert palette()["green"] == "#a6e3a1"
 ui_probe = """import asyncio,sys
 from pathlib import Path
-from setup_system.application.installer import InstallationService,InstallRequest,Operation
-from setup_system.installation import TargetUser
+from setup_system.composition import build_app
+from setup_system.domain.identity import TargetUser
 import os
-from setup_system.tui.installer import InstallationApp
 from textual.widgets import TabbedContent
 async def exercise():
- service=InstallationService(Path(sys.argv[1]),identity=lambda _:TargetUser(
+ app=build_app(Path(sys.argv[1]),identity=lambda _:TargetUser(
   "fixture",os.getuid(),os.getgid(),Path.home(),"/bin/sh"))
- app=InstallationApp(Path(sys.argv[1]),InstallRequest(Operation.PLAN),service=service)
- service.interaction=app.interaction
  async with app.run_test(size=(100,40)) as pilot:
   assert not app.busy
   await pilot.press('ctrl+2')
@@ -80,8 +77,8 @@ async def exercise():
   assert app.last_code==0 and not app.busy,app.output_lines
 asyncio.run(exercise())
 
-from setup_system.infrastructure.user_files import apply_files
-from setup_system.storage import restore
+from setup_system.infrastructure.managed_files import apply_files
+from setup_system.composition import restore
 target = Path.home() / "config with spaces/example.ini"
 operation = apply_files({target: b"installed wheel role\\n"})
 assert target.read_bytes() == b"installed wheel role\\n"

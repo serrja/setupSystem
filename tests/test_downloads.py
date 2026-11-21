@@ -11,7 +11,7 @@ from urllib.response import addinfourl
 
 import pytest
 
-from setup_system import downloads
+from setup_system.infrastructure import downloads
 
 
 def scripted_https(

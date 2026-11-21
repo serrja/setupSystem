@@ -4,17 +4,8 @@ from __future__ import annotations
 
 import platform
 from pathlib import Path
-from typing import cast
 
-from setup_system.capabilities import load_policy
-
-
-def profile_capabilities(root: Path | None = None) -> dict[str, object]:
-    """Load the shared profile matrix without package, network or privilege operations."""
-    return cast(dict[str, object], load_policy(root).document()["hyprland"])
-
-
-HYPRLAND_VERSION = load_policy().hyprland.version_pin
+from setup_system.infrastructure.catalog_repository import load_policy
 
 
 def package_arguments(

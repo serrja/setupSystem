@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.runtime import UV_VERSION
+from setup_system.bootstrap.user_policy import runtime_pins
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,7 +48,7 @@ def test_complete_bootstrap_reaches_only_the_textual_entrypoint(
     home.mkdir()
     uv = tmp_path / "uv.tar.gz"
     binary = b"""#!/bin/sh
-if [ "$1" = --version ]; then printf "uv UV_VERSION (PLATFORM_TARGET)\\n"; exit 0; fi
+if [ "$1" = --version ]; then printf "uv PINNED_UV_VERSION (PLATFORM_TARGET)\\n"; exit 0; fi
 if [ "$1" = python ]; then printf 'python prepared\\n' >> "$HOME/bootstrap.log"; exit 0; fi
 while [ "$1" != -- ]; do shift; done
 shift
@@ -58,7 +58,7 @@ exec PYTHON_EXECUTABLE "$@"
 """
     binary = binary.replace(b"PYTHON_EXECUTABLE", shlex.quote(sys.executable).encode())
     binary = binary.replace(b"PLATFORM_TARGET", target.encode()).replace(
-        b"UV_VERSION", UV_VERSION.encode()
+        b"PINNED_UV_VERSION", runtime_pins().uv.encode()
     )
     if ready:
         managed = home / ".local/share/setup-system/bin/uv"

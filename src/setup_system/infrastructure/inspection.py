@@ -2,7 +2,39 @@
 
 from pathlib import Path
 
-from setup_system.system_inspection import inspect_system
+from setup_system.domain.system_facts import EncryptionSnapshot, InspectionPaths, SystemSnapshot
+from setup_system.infrastructure.clock import inspect_clock
+from setup_system.infrastructure.encryption import (
+    DirectoryFlags,
+    filesystem_flags,
+    home_encryption,
+    root_encryption,
+)
+from setup_system.infrastructure.inspection_commands import (
+    InspectionRunner,
+    run_inspection,
+    safe_absolute,
+)
+
+
+def inspect_system(
+    home: Path,
+    *,
+    run: InspectionRunner = run_inspection,
+    paths: InspectionPaths | None = None,
+    home_flags: DirectoryFlags | None = None,
+) -> SystemSnapshot:
+    """Observe current protection/clock state; UNKNOWN never means unencrypted."""
+    if not safe_absolute(str(home)):
+        raise ValueError("System inspection requires an absolute HOME without traversal")
+    paths = InspectionPaths() if paths is None else paths
+    flags = (lambda path: filesystem_flags(path, run=run)) if home_flags is None else home_flags
+    return SystemSnapshot(
+        encryption=EncryptionSnapshot(
+            root=root_encryption(Path("/"), run), home=home_encryption(home, run, flags)
+        ),
+        clock=inspect_clock(run, paths),
+    )
 
 
 def observations(

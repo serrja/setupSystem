@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from jinja2 import Environment, StrictUndefined
 
 from setup_system.domain.displays import MonitorLayout
+from setup_system.domain.paths import XdgPaths
 from setup_system.domain.settings import ThemeSettings
-from setup_system.infrastructure.palette import RESOURCE_ROOT as RESOURCE_ROOT
-from setup_system.infrastructure.palette import palette as palette
+from setup_system.infrastructure.palette import palette
 
 _TEMPLATES = Environment(
     undefined=StrictUndefined,
@@ -36,6 +37,7 @@ def render(
     content: str,
     settings: ThemeSettings | None = None,
     *,
+    root: Path | None = None,
     keyboard: str | None = None,
     monitors: tuple[MonitorLayout, ...] = (),
     fonts: FontValues | None = None,
@@ -44,7 +46,7 @@ def render(
     if keyboard not in {None, "us", "us,ru"}:
         raise ValueError("Unsupported keyboard layout")
     selected = settings or ThemeSettings()
-    colors = palette()
+    colors = palette(root)
     values: dict[str, object] = dict(colors)
     values.update({key + "_hex": color[1:] for key, color in colors.items()})
     values.update(
@@ -65,11 +67,17 @@ def render(
     )
 
 
-def preview(settings: ThemeSettings) -> str:
-    colors = palette()
+def preview(settings: ThemeSettings, *, root: Path | None = None) -> str:
+    colors = palette(root)
     return (
         f"Catppuccin Mocha · green {colors['green']} · base {colors['base']}\n"
         f"Top floating panel {30 if settings.compact_panel else 36}px · "
         f"opacity {settings.opacity:.2f} · rounding {settings.rounding}px · "
         f"effects {'on' if settings.effects else 'off'}"
     )
+
+
+def render_launcher(content: str, paths: XdgPaths) -> str:
+    # The shell template supplies single quotes. Escape only the quote that terminates them.
+    quoted = {key: str(path).replace("'", "'\"'\"'") for key, path in paths.overrides().items()}
+    return _TEMPLATES.from_string(content).render(xdg=quoted)
