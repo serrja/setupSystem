@@ -36,13 +36,17 @@ ARTIFACT_ORIGINS = MappingProxyType(
 
 
 def load_components(
-    root: Path | None = None, *, architecture: str | None = None
+    root: Path | None = None,
+    *,
+    architecture: str | None = None,
+    policy: CapabilityPolicy | None = None,
 ) -> ComponentCatalog:
     resources = ResourceLocator.for_root(root)
     definitions = TypeAdapter(dict[ComponentID, ComponentDefinition]).validate_python(
         read_toml(resources.manifest("applications.toml"))
     )
-    policy = load_policy(resources.root)
+    if policy is None:
+        policy = load_policy(resources.root)
     machine = policy.normalize_architecture(architecture or platform.machine())
     arch = policy.debian.apt_architectures.get(machine, machine)
     entries = []

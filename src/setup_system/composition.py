@@ -25,9 +25,14 @@ from setup_system.domain.operations import InstallRequest, Operation
 from setup_system.domain.settings import SystemSettings, UserSettings
 from setup_system.infrastructure import displays, receipt_repository
 from setup_system.infrastructure.catalog_deb import last_attempt
-from setup_system.infrastructure.catalog_repository import load_cleanup, load_components
+from setup_system.infrastructure.catalog_repository import (
+    load_cleanup,
+    load_components,
+    load_policy,
+)
 from setup_system.infrastructure.config_store import ConfigStore, SettingsPaths, save_intentions
 from setup_system.infrastructure.identity import resolve_target
+from setup_system.infrastructure.login import DesktopSystem
 from setup_system.infrastructure.mutation import user_operation
 from setup_system.infrastructure.palette import palette
 from setup_system.infrastructure.privileged import PrivilegedExecutor
@@ -39,17 +44,30 @@ from setup_system.tui.installer import InstallationApp
 
 @dataclass(frozen=True)
 class LocalSettings:
-    paths: SettingsPaths
-    catalog: ComponentCatalog
+    user_store: ConfigStore[UserSettings]
+    draft_store: ConfigStore[SystemSettings]
+    system_store: ConfigStore[SystemSettings]
 
-    def draft(self) -> ConfigStore[SystemSettings]:
-        return ConfigStore(self.paths.user.parent / "system-intentions.toml", SystemSettings)
+    @classmethod
+    def bind(cls, paths: SettingsPaths, catalog: ComponentCatalog) -> LocalSettings:
+        path = paths.user
+        return cls(
+            ConfigStore(path, UserSettings, catalog=catalog),
+            ConfigStore(path.with_name("system-intentions.toml"), SystemSettings),
+            ConfigStore(paths.system, SystemSettings, uid=0),
+        )
+
+    def user(self) -> tuple[UserSettings, str | None]:
+        return self.user_store.read()
+
+    def draft(self) -> tuple[SystemSettings, str | None]:
+        return self.draft_store.read()
 
     def system(self) -> tuple[SystemSettings, str | None]:
-        return ConfigStore(self.paths.system, SystemSettings, uid=0).read()
+        return self.system_store.read()
 
     def read(self) -> Intentions:
-        user, revision = ConfigStore(self.paths.user, UserSettings, catalog=self.catalog).read()
+        user, revision = self.user()
         warning = None
         try:
             system, root_revision = self.system()
@@ -59,7 +77,7 @@ class LocalSettings:
                 "Base system settings are unreadable. See the system directory recovery "
                 "procedure in docs/configuration.md."
             )
-        draft, draft_revision = self.draft().read()
+        draft, draft_revision = self.draft()
         return Intentions(
             user,
             draft if draft_revision is not None else system,
@@ -70,7 +88,7 @@ class LocalSettings:
         )
 
     def check_draft(self, expected: str | None) -> None:
-        if self.draft().read()[1] != expected:
+        if self.draft()[1] != expected:
             raise ValueError("System intentions changed on disk. Reopen the application.")
 
     def save(
@@ -82,7 +100,12 @@ class LocalSettings:
     ) -> tuple[str, str]:
         with user_operation():
             return save_intentions(
-                user, system, user_revision, draft_revision, catalog=self.catalog
+                user,
+                system,
+                user_revision,
+                draft_revision,
+                user_store=self.user_store,
+                draft_store=self.draft_store,
             )
 
 
@@ -99,7 +122,8 @@ def build_service(
     authorize: Callable[[], bool] | None = None,
 ) -> InstallationService:
     paths = SettingsPaths()
-    catalog = load_components(root)
+    policy = load_policy(root)
+    catalog = load_components(root, policy=policy)
     blocker = "System apply requires a published release with native build provenance"
     if executor is None:
         try:
@@ -111,7 +135,9 @@ def build_service(
             )
     return InstallationService(
         root,
-        paths=paths,
+        settings=LocalSettings.bind(paths, catalog),
+        policy=policy,
+        login_plan=DesktopSystem(root, run=subprocess.run).plan,
         catalog=catalog,
         executor=executor,
         identity=resolve_target if identity is None else identity,
@@ -132,8 +158,10 @@ def build_app(
     if production is not None:
         service = production
         catalog = production.catalog
+        settings = production.settings
     else:
         catalog = load_components(root)
+        settings = LocalSettings.bind(SettingsPaths(), catalog)
     assert service is not None
     views = ViewServices(
         catalog=catalog,
@@ -141,7 +169,7 @@ def build_app(
         palette=palette(root),
         preview=partial(preview, root=root),
         last_attempt=last_attempt,
-        settings=LocalSettings(SettingsPaths(), catalog),
+        settings=settings,
         tools=build_tools(root),
         displays=DisplayControls(
             displays.discover_outputs,

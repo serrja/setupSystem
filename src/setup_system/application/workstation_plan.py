@@ -16,15 +16,14 @@ from setup_system.domain.operations import (
     PackageAction,
     RegionAction,
 )
+from setup_system.domain.platforms import CapabilityPolicy
 from setup_system.domain.settings import SystemSettings, UserSettings
 from setup_system.domain.system_commands import RegionalKind
 from setup_system.infrastructure import regional
-from setup_system.infrastructure.catalog_repository import load_policy
 
 
-def platform_blocker(root: Path) -> tuple[str, ...]:
+def platform_blocker(policy: CapabilityPolicy) -> tuple[str, ...]:
     release = platform.freedesktop_os_release()
-    policy = load_policy(root)
     profile = policy.hyprland
     if (
         release.get("ID") == profile.distribution
@@ -125,6 +124,7 @@ def desktop_changes(
 def workspace_actions(
     root: Path,
     catalog: ComponentCatalog,
+    policy: CapabilityPolicy,
     system: SystemSettings,
     settings: UserSettings,
     system_blocked: tuple[str, ...],
@@ -150,7 +150,6 @@ def workspace_actions(
             from setup_system.adapters.debian.packages import installed_version
             from setup_system.infrastructure.catalog_repository import load_happ_pin
 
-            policy = load_policy(root)
             pin = load_happ_pin(
                 root,
                 policy.debian_architecture(platform.machine()),
@@ -177,7 +176,7 @@ def workspace_actions(
         if component.kind == "language" and not blockers:
             from setup_system.infrastructure.language_tools import language_blocker
 
-            reason = language_blocker(root, component.id)
+            reason = language_blocker(root, component.id, policy=policy)
             if reason:
                 blockers += (reason,)
         if component.handler in {"apt", "happ", "catalog_deb"} and not blockers:

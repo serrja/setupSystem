@@ -5,15 +5,17 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from threading import Event, Lock
 
 from setup_system.application.interaction import Interaction
+from setup_system.application.ui_ports import SettingsPort
 from setup_system.application.workstation_stages import Executor, Stages
 from setup_system.diagnostics import PartialApplyError, error_text
 from setup_system.domain.catalog import ComponentCatalog
 from setup_system.domain.identity import TargetUser
+from setup_system.domain.login import DesktopPlan
 from setup_system.domain.operations import (
     Action,
     BlockedAction,
@@ -26,8 +28,8 @@ from setup_system.domain.operations import (
     WorkstationPlan,
 )
 from setup_system.domain.paths import XdgPaths
-from setup_system.domain.settings import Section, SystemSettings, UserSettings
-from setup_system.infrastructure.config_store import ConfigStore, SettingsPaths
+from setup_system.domain.platforms import CapabilityPolicy
+from setup_system.domain.settings import Section
 
 
 class InstallationService:
@@ -38,7 +40,9 @@ class InstallationService:
         root: Path,
         *,
         catalog: ComponentCatalog,
-        paths: SettingsPaths,
+        settings: SettingsPort,
+        policy: CapabilityPolicy,
+        login_plan: Callable[[TargetUser, Mapping[str, str]], DesktopPlan],
         privilege_blocker: str,
         interaction: Interaction,
         executor: Executor | None = None,
@@ -48,7 +52,8 @@ class InstallationService:
         self.root = root
         self.identity = identity
         self.interaction = interaction
-        self.paths, self.catalog = paths, catalog
+        self.settings, self.catalog = settings, catalog
+        self.policy, self.login_plan = policy, login_plan
         self.cancel = Event()
         self._mutation = Lock()
         self.completed: list[str] = []
@@ -80,9 +85,9 @@ class InstallationService:
         saved_system = None
         revision = draft_revision = None
         if request.section == Section.BASE:
-            saved_system, revision = ConfigStore(self.paths.system, SystemSettings, uid=0).read()
-            _, draft_revision = self._draft_store().read()
-        _, user_revision = ConfigStore(self.paths.user, UserSettings, catalog=self.catalog).read()
+            saved_system, revision = self.settings.system()
+            _, draft_revision = self.settings.draft()
+        _, user_revision = self.settings.user()
         if request.revision_known and (
             (
                 request.section == Section.BASE
@@ -94,7 +99,7 @@ class InstallationService:
         ):
             raise ValueError("Settings changed since inspection; reload before applying")
         release = platform.freedesktop_os_release()
-        user_blocked = platform_blocker(self.root)
+        user_blocked = platform_blocker(self.policy)
         blocked = user_blocked
         if self.executor is None:
             blocked += (self.privilege_blocker,)
@@ -106,7 +111,9 @@ class InstallationService:
 
                 try:
                     packages = package_arguments(
-                        root=self.root, graphical_login=request.system.graphical_login
+                        root=self.root,
+                        graphical_login=request.system.graphical_login,
+                        policy=self.policy,
                     )
                     reasons = blocked
                 except ValueError as exc:
@@ -130,13 +137,9 @@ class InstallationService:
                         BlockedAction(id="login", description="Graphical login", blockers=blocked)
                     )
                 elif request.system.graphical_login:
-                    from setup_system.infrastructure.login import DesktopSystem
-
                     description = "Enable greetd and keep the GRUB menu visible"
                     try:
-                        login = DesktopSystem(self.root, run=subprocess.run).plan(
-                            target, environment
-                        )
+                        login = self.login_plan(target, environment)
                         description += f". Boot target {login.previous_target} → graphical.target."
                         if login.consent.deferred:
                             description += (
@@ -200,7 +203,13 @@ class InstallationService:
                 )
         else:
             actions, matched = workspace_actions(
-                self.root, self.catalog, request.system, request.settings, blocked, user_blocked
+                self.root,
+                self.catalog,
+                self.policy,
+                request.system,
+                request.settings,
+                blocked,
+                user_blocked,
             )
         return WorkstationPlan(
             section=request.section,
@@ -224,9 +233,6 @@ class InstallationService:
             user_revision=user_revision,
             matched=matched,
         )
-
-    def _draft_store(self) -> ConfigStore[SystemSettings]:
-        return ConfigStore(self.paths.user.parent / "system-intentions.toml", SystemSettings)
 
     def show_plan(self, plan: WorkstationPlan) -> None:
         for line in plan.describe():
@@ -276,14 +282,11 @@ class InstallationService:
                 from setup_system.infrastructure.mutation import user_operation
 
                 with user_operation():
-                    if ConfigStore(self.paths.user, UserSettings, catalog=self.catalog).read()[
-                        1
-                    ] != plan.user_revision or (
+                    if self.settings.user()[1] != plan.user_revision or (
                         plan.section == Section.BASE
                         and (
-                            ConfigStore(self.paths.system, SystemSettings, uid=0).read()[1]
-                            != plan.system_revision
-                            or self._draft_store().read()[1] != plan.draft_revision
+                            self.settings.system()[1] != plan.system_revision
+                            or self.settings.draft()[1] != plan.draft_revision
                         )
                     ):
                         raise ValueError("Settings changed after plan confirmation")

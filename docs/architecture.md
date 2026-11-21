@@ -23,9 +23,10 @@ between completed stages.
 
 The catalog repository reads resources from the selected checkout or installed wheel.
 It validates platform aliases, source pins, component IDs and built-in handlers. The
-planner resolves selections against that snapshot. Domain models perform their
-validation in memory. The configuration store applies the documented source priority
-and preserves TOML comments on save. [Configuration](configuration.md)
+planner uses the same component catalog and platform policy for both sections.
+Domain models validate their inputs in memory. The screen and the running service
+share the settings stores bound at startup. Apply checks their revisions again
+before executing a confirmed plan. Saving preserves TOML comments. [Configuration](configuration.md)
 
 ## Privilege and source trust
 

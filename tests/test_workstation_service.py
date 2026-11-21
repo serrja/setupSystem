@@ -192,8 +192,9 @@ def test_changed_draft_during_confirmation_stops_before_authorization(service, m
     monkeypatch.setattr("setup_system.infrastructure.regional.actual", lambda kind: None)
 
     def confirm(prompt):
-        store = service._draft_store()
-        store.save(SystemSettings(timezone="UTC"), None)
+        path = Path(os.environ["XDG_CONFIG_HOME"]) / "setup-system/system-intentions.toml"
+        path.parent.mkdir(parents=True)
+        path.write_text('timezone = "UTC"\n')
         return True
 
     service.interaction.confirm = confirm
@@ -265,7 +266,7 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("HOME", str(account.home))
-    monkeypatch.setattr(login, "DesktopSystem", lambda *args, **kw: system)
+    service.login_plan = system.plan
     monkeypatch.setattr(tasks, "DesktopSystem", lambda *args, **kw: system)
     monkeypatch.setattr(login_plan, "inspect_system", lambda home: snapshot)
     monkeypatch.setattr(login, "_require_root", lambda: None)

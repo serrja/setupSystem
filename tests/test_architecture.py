@@ -206,3 +206,82 @@ def test_user_and_privileged_command_schema_reject_invalid_variants(payload):
         COMMAND.validate_python(payload)
     with pytest.raises(ValidationError):
         COMMAND.validate_json(json.dumps(payload))
+
+
+def test_ui_and_apply_read_the_same_settings_at_the_bound_paths(tmp_path, monkeypatch):
+    from setup_system.composition import build_app
+    from setup_system.domain.identity import TargetUser
+    from setup_system.infrastructure.config_store import ConfigStore
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for scope in ("config", "state", "cache", "data"):
+        monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(tmp_path / scope))
+    target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/sh")
+    app = build_app(SOURCE.parents[1], identity=lambda _: target)
+    assert app.views.settings is app.service.settings
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "other"))
+    user, system = UserSettings(apps=("firefox",)), SystemSettings(timezone="UTC")
+    revisions = app.views.settings.save(user, system, None, None)
+    assert app.service.settings.user() == (user, revisions[0])
+    assert app.service.settings.draft() == (system, revisions[1])
+    assert not (tmp_path / "other").exists()
+    assert (tmp_path / "config/setup-system/settings.toml").is_file()
+
+    original = ConfigStore.read
+
+    def denied(store):
+        if store.uid == 0:
+            raise PermissionError("unreadable system settings")
+        return original(store)
+
+    monkeypatch.setattr(ConfigStore, "read", denied)
+    assert app.views.settings.read().warning
+    with pytest.raises(PermissionError):
+        app.service.plan(InstallRequest(operation=Operation.APPLY, system=system))
+
+
+def test_one_policy_read_covers_base_and_workspace_plans(tmp_path, monkeypatch):
+    from setup_system.composition import build_service
+    from setup_system.domain.identity import TargetUser
+    from setup_system.infrastructure import catalog_repository
+
+    files = []
+    read = catalog_repository.read_toml
+
+    def count(path):
+        if path.name == "platforms.toml":
+            files.append(path)
+        return read(path)
+
+    monkeypatch.setattr(catalog_repository, "read_toml", count)
+    monkeypatch.setattr(
+        "setup_system.infrastructure.language_tools._existing_flutter", lambda: None
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for scope in ("config", "state", "cache", "data"):
+        monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(tmp_path / scope))
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        "platform.freedesktop_os_release",
+        lambda: {
+            "ID": "debian",
+            "VERSION_ID": "13",
+            "VERSION_CODENAME": "trixie",
+        },
+    )
+    target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/sh")
+    service = build_service(SOURCE.parents[1], identity=lambda _: target)
+    base = service.plan(
+        InstallRequest(operation=Operation.PLAN, system=SystemSettings(hyprland=True))
+    )
+    assert "base" in {a.id for a in base.actions}
+    workspace = service.plan(
+        InstallRequest(
+            operation=Operation.PLAN,
+            section=Section.WORKSPACE,
+            settings=UserSettings(apps=("happ",), language_profiles=("dart_flutter",)),
+        )
+    )
+    assert "workspace_packages" in {a.id for a in workspace.actions}
+    assert files == [SOURCE.parents[1] / "manifests/platforms.toml"]
+    assert not list(tmp_path.iterdir())

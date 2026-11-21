@@ -164,14 +164,14 @@ def save_intentions(
     user_revision: str | None,
     draft_revision: str | None,
     *,
-    catalog: ComponentCatalog | None = None,
+    user_store: ConfigStore[UserSettings],
+    draft_store: ConfigStore[SystemSettings],
 ) -> tuple[str, str]:
     from setup_system.infrastructure.managed_files import apply_files
 
-    path = SettingsPaths().user
-    draft = path.parent / "system-intentions.toml"
-    user_bytes = ConfigStore(path, UserSettings, catalog=catalog).prepare(user, user_revision)
-    draft_bytes = ConfigStore(draft, SystemSettings).prepare(system, draft_revision)
+    path, draft = user_store.path, draft_store.path
+    user_bytes = user_store.prepare(user, user_revision)
+    draft_bytes = draft_store.prepare(system, draft_revision)
     apply_files(
         {path: user_bytes, draft: draft_bytes},
         modes={path: 0o600, draft: 0o600},

@@ -17,6 +17,7 @@ from pathlib import Path
 from platformdirs import user_cache_path, user_data_path
 
 from setup_system.bootstrap.user_runtime import managed_uv
+from setup_system.domain.platforms import CapabilityPolicy
 from setup_system.infrastructure.catalog_repository import load_editor
 from setup_system.infrastructure.downloads import DownloadPolicy, copy_https
 from setup_system.infrastructure.editor_downloads import expose_commands, tree_digest
@@ -181,13 +182,17 @@ def _existing_flutter() -> Path | None:
     )
 
 
-def language_blocker(root: Path, profile: str) -> str | None:
+def language_blocker(
+    root: Path, profile: str, *, policy: CapabilityPolicy | None = None
+) -> str | None:
     """Report the available SDK delivery path before other selected stages can mutate."""
     if profile != "dart_flutter" or _existing_flutter() is not None:
         return None
     from setup_system.infrastructure.catalog_repository import load_policy
 
-    arch = load_policy(root).normalize_architecture(platform.machine())
+    if policy is None:
+        policy = load_policy(root)
+    arch = policy.normalize_architecture(platform.machine())
     flutter = load_editor(root).flutter
     if flutter.archive(arch) is None:
         return f"No reviewed Flutter archive for {arch}. Set FLUTTER_ROOT to an existing SDK."
