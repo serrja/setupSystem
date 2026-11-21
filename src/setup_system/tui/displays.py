@@ -11,8 +11,8 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
+from setup_system.application.ui_ports import DisplayControls
 from setup_system.domain.displays import DisplayOutput, MonitorLayout
-from setup_system.infrastructure.displays import PREVIEW_SECONDS, preview_layout, validate_layouts
 
 
 class DisplaysScreen(ModalScreen[tuple[MonitorLayout, ...] | None]):
@@ -23,9 +23,13 @@ class DisplaysScreen(ModalScreen[tuple[MonitorLayout, ...] | None]):
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "close", "Close")]
 
     def __init__(
-        self, outputs: tuple[DisplayOutput, ...], saved: tuple[MonitorLayout, ...]
+        self,
+        outputs: tuple[DisplayOutput, ...],
+        saved: tuple[MonitorLayout, ...],
+        controls: DisplayControls,
     ) -> None:
         super().__init__()
+        self.controls = controls
         self.outputs = outputs
         self.saved = {entry.output: entry for entry in saved}
         self.previewed: tuple[MonitorLayout, ...] | None = None
@@ -45,7 +49,7 @@ class DisplaysScreen(ModalScreen[tuple[MonitorLayout, ...] | None]):
                 for label in ("scale", "x", "y"):
                     yield Label(label.capitalize())
                     yield Input(str(getattr(saved, label)), id=f"{label}-{index}")
-            yield Button(f"Preview for {PREVIEW_SECONDS} seconds", id="display-preview")
+            yield Button(f"Preview for {self.controls.seconds} seconds", id="display-preview")
             yield Label("The preview restores the saved layout automatically.", id="display-status")
             yield Button("Use layout in next plan", id="display-use")
             yield Button("Close", id="display-close")
@@ -79,7 +83,7 @@ class DisplaysScreen(ModalScreen[tuple[MonitorLayout, ...] | None]):
     @work(thread=True, exit_on_error=False)
     def run_preview(self, layouts: tuple[MonitorLayout, ...]) -> None:
         try:
-            preview_layout(layouts)
+            self.controls.preview(layouts)
         except (OSError, ValueError, RuntimeError) as exc:
             self.app.call_from_thread(self.preview_result, None, str(exc))
         else:
@@ -98,7 +102,7 @@ class DisplaysScreen(ModalScreen[tuple[MonitorLayout, ...] | None]):
     def accept(self) -> None:
         try:
             layouts = self.layouts()
-            validate_layouts(layouts)
+            self.controls.validate(layouts)
             if layouts and layouts != self.previewed:
                 raise ValueError("Preview these exact display settings first")
         except (OSError, ValueError, RuntimeError) as exc:

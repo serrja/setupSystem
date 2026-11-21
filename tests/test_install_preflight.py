@@ -2,8 +2,8 @@
 
 import pytest
 
+from setup_system.bootstrap.source import validate_url
 from setup_system.infrastructure.privileged import PrivilegedExecutor
-from setup_system.infrastructure.trusted_bootstrap import validate_url
 
 
 @pytest.mark.parametrize(
@@ -26,10 +26,15 @@ def test_ui_does_not_invoke_sudo_when_it_is_already_root(monkeypatch: pytest.Mon
         "subprocess.run", lambda *args, **kwargs: pytest.fail("Root UI reached sudo")
     )
     with pytest.raises(ValueError, match="unprivileged"):
-        PrivilegedExecutor("v1.2.3", "a" * 40).run("base", {})
+        PrivilegedExecutor("v1.2.3", "a" * 40).run({"action": "base", "settings": {}})
 
 
 def test_dangerous_action_is_not_a_system_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("os.geteuid", lambda: 1000)
-    with pytest.raises(ValueError, match="Unexpected"):
-        PrivilegedExecutor("v1.2.3", "a" * 40).run("shell", {"command": "id"})
+    monkeypatch.setattr(
+        "subprocess.run", lambda *args, **kwargs: pytest.fail("Invalid command reached sudo")
+    )
+    with pytest.raises(ValueError, match="union_tag_invalid"):
+        PrivilegedExecutor("v1.2.3", "a" * 40).run(
+            {"action": "shell", "settings": {"command": "id"}}
+        )

@@ -10,7 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from setup_system.infrastructure import trusted_bootstrap as bootstrap
+from setup_system.bootstrap import source as bootstrap
+from setup_system.domain.system_commands import COMMAND
 from setup_system.infrastructure.privileged import PrivilegedExecutor
 
 
@@ -40,7 +41,19 @@ def test_executor_uses_system_python_and_data_on_stdin(monkeypatch: pytest.Monke
         "subprocess.run",
         lambda argv, **kwargs: calls.append((argv, kwargs)) or SimpleNamespace(stdout=""),
     )
-    PrivilegedExecutor("v1.2.3", "a" * 40).run("base", {"hyprland": True})
+    PrivilegedExecutor("v1.2.3", "a" * 40).run(
+        COMMAND.validate_python(
+            {
+                "action": "base",
+                "settings": {
+                    "schema_version": 1,
+                    "hyprland": True,
+                    "graphical_login": False,
+                    "plymouth": False,
+                },
+            }
+        )
+    )
     argv, options = calls[0]
     assert argv[:8] == ["/usr/bin/sudo", "-n", "--", "/usr/bin/python3", "-I", "-B", "-S", "-c"]
     assert json.loads(options["input"])["action"] == "base"
@@ -141,7 +154,7 @@ def test_operation_lock_excludes_another_executor_and_releases_on_failure(
 
 
 def test_initial_loader_resolves_only_a_published_tag_commit():
-    from setup_system.infrastructure.release_loader import PROGRAM
+    from setup_system.bootstrap.loader import PROGRAM
 
     loader = {"__name__": "loader_fixture"}
     exec(compile(PROGRAM, "<release loader>", "exec"), loader)
@@ -199,3 +212,52 @@ def test_verified_extraction_reuses_only_the_identical_root_owned_tree(tmp_path,
     with pytest.raises(ValueError, match="conflicts"):
         bootstrap.acquire("v1.2.3", sha)
     assert list(original.parent.iterdir()) == [original]
+
+
+@pytest.mark.parametrize("version", [True, 1.0, "1", 2])
+def test_root_requires_an_integer_native_receipt_version(monkeypatch, version):
+    sha = "a" * 40
+    urls = []
+
+    def fetch(url, limit):
+        urls.append(url)
+        return json.dumps({"schemaVersion": version, "sourceSha": sha}).encode()
+
+    monkeypatch.setattr(bootstrap, "fetch", fetch)
+    with pytest.raises(ValueError, match="provenance"):
+        bootstrap.acquire("v1.2.3", sha)
+    assert len(urls) == 1 and urls[0].endswith("/python-build-receipt.json")
+
+
+def test_login_confirmation_crosses_stdlib_envelope_without_host_elevation(tmp_path, monkeypatch):
+    import sys
+    from contextlib import nullcontext
+
+    from test_desktop_system import system_fixture
+
+    from setup_system.bootstrap import validation_runtime
+    from setup_system.domain.system_commands import LoginCommand, LoginOptions
+    from setup_system.infrastructure import privileged_tasks
+
+    system, account, environment, _, snapshot = system_fixture(tmp_path)
+    confirmed = system.plan(account, environment, snapshot=snapshot).consent
+    options = LoginOptions(
+        schema_version=1, hyprland=True, graphical_login=True, plymouth=False, confirmed=confirmed
+    )
+    command = LoginCommand(settings=options)
+    received = []
+    monkeypatch.setattr(bootstrap, "caller", lambda: SimpleNamespace(pw_name=account.name))
+    monkeypatch.setattr(bootstrap, "operation_lock", nullcontext)
+    monkeypatch.setattr(bootstrap, "acquire", lambda *args: tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(validation_runtime, "validation_runtime", lambda source: nullcontext())
+    monkeypatch.setattr(privileged_tasks, "execute", lambda r, u, cmd: received.append(cmd) or 0)
+
+    def handoff(argv, **options):
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(options["input"].encode())))
+        assert bootstrap.main() == 0
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr("subprocess.run", handoff)
+    PrivilegedExecutor("v1.2.3", "a" * 40).run(command)
+    assert received == [command]

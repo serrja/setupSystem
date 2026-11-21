@@ -2,8 +2,10 @@
 
 import pytest
 
-from setup_system.domain.cleanup import validate_removals
+from setup_system.domain.cleanup import CleanupCandidate, validate_removals
+from setup_system.domain.system_commands import CleanupOptions
 from setup_system.infrastructure import cleanup
+from setup_system.infrastructure.catalog_repository import load_cleanup
 
 
 def test_optional_closure_cannot_expand_even_to_another_candidate() -> None:
@@ -12,6 +14,7 @@ def test_optional_closure_cannot_expand_even_to_another_candidate() -> None:
             frozenset({"reportbug"}),
             frozenset({"reportbug", "nano"}),
             frozenset(),
+            catalog=load_cleanup(),
             editor_verified=True,
         )
 
@@ -22,16 +25,30 @@ def test_optional_closure_cannot_expand_even_to_another_candidate() -> None:
 def test_critical_packages_are_never_cleanup_candidates(package: str) -> None:
     with pytest.raises(ValueError):
         validate_removals(
-            frozenset({package}), frozenset({package}), frozenset(), editor_verified=True
+            frozenset({package}),
+            frozenset({package}),
+            frozenset(),
+            catalog=load_cleanup(),
+            editor_verified=True,
         )
 
 
 def test_fallback_editor_replacement_is_required() -> None:
     with pytest.raises(ValueError, match="Neovim"):
         validate_removals(
-            frozenset({"nano"}), frozenset({"nano"}), frozenset(), editor_verified=False
+            frozenset({"nano"}),
+            frozenset({"nano"}),
+            frozenset(),
+            catalog=load_cleanup(),
+            editor_verified=False,
         )
-    validate_removals(frozenset({"nano"}), frozenset({"nano"}), frozenset(), editor_verified=True)
+    validate_removals(
+        frozenset({"nano"}),
+        frozenset({"nano"}),
+        frozenset(),
+        catalog=load_cleanup(),
+        editor_verified=True,
+    )
 
 
 def test_real_essential_flag_overrides_catalog_candidate() -> None:
@@ -40,6 +57,7 @@ def test_real_essential_flag_overrides_catalog_candidate() -> None:
             frozenset({"reportbug"}),
             frozenset({"reportbug"}),
             frozenset({"reportbug"}),
+            catalog=load_cleanup(),
             editor_verified=True,
         )
 
@@ -65,7 +83,7 @@ def test_absent_candidates_do_not_resolve_another_removal(monkeypatch: pytest.Mo
     monkeypatch.setattr(cleanup, "_run", lambda argv: calls.append(argv) or "")
     assert not cleanup.preview(("reportbug",)).requested
     assert len(calls) == 1
-    assert cleanup.cleanup_catalog()["nano"]["requires_verified_editor"]
+    assert load_cleanup()["nano"].requires_verified_editor
 
 
 def test_apply_removes_exact_confirmed_set_without_another_resolver(
@@ -73,8 +91,8 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
 ) -> None:
     from types import SimpleNamespace
 
-    from setup_system import installation as system
-    from setup_system.infrastructure import privileged_bootstrap_helpers, trusted_bootstrap
+    from setup_system.bootstrap import source as trusted_bootstrap
+    from setup_system.infrastructure import admin_editor, processes, system_files
 
     monkeypatch.setattr(
         trusted_bootstrap,
@@ -83,7 +101,7 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
     )
     monkeypatch.setattr(cleanup.os, "geteuid", lambda: 0)
     monkeypatch.setattr(
-        privileged_bootstrap_helpers,
+        admin_editor,
         "editor_ready",
         lambda *args: pytest.fail("Document removal does not execute an editor"),
     )
@@ -92,17 +110,27 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
     monkeypatch.setattr(
         cleanup,
         "preview",
-        lambda *args, **kwargs: cleanup.CleanupPlan(next(results), selected, frozenset(), ""),
+        lambda *args, **kwargs: cleanup.CleanupPlan(
+            requested=next(results), removed=selected, essential=frozenset(), simulation=""
+        ),
     )
     records = []
     calls = []
-    monkeypatch.setattr(system, "_write_system", lambda path, data: records.append(data))
-    monkeypatch.setattr(system, "run_command", lambda argv, **kwargs: calls.append(argv))
-    cleanup.apply_cleanup({"mode": "remove", "packages": ["reportbug"], "closure": ["reportbug"]})
+    monkeypatch.setattr(system_files, "write_system", lambda path, data: records.append(data))
+    monkeypatch.setattr(processes, "run_command", lambda argv, **kwargs: calls.append(argv))
+    cleanup.apply_cleanup(
+        CleanupOptions.model_validate(
+            {"mode": "remove", "packages": ["reportbug"], "closure": ["reportbug"]}
+        )
+    )
     assert calls == [["/usr/bin/dpkg", "--remove", "--", "reportbug"]]
     assert b'"status": "complete"' in records[-1]
     with pytest.raises(ValueError, match="closure changed"):
-        cleanup.apply_cleanup({"mode": "remove", "packages": ["reportbug"], "closure": []})
+        cleanup.apply_cleanup(
+            CleanupOptions.model_validate(
+                {"mode": "remove", "packages": ["reportbug"], "closure": []}
+            )
+        )
     assert len(calls) == 1
 
 
@@ -117,15 +145,16 @@ def test_apt_hold_blocks_catalog_candidate(monkeypatch):
         cleanup.preview(("reportbug",))
 
 
-def test_catalog_controls_editor_requirement(monkeypatch):
-    import setup_system.domain.cleanup as policy
-
-    monkeypatch.setattr(
-        policy, "cleanup_catalog", lambda: {"reportbug": {"requires_verified_editor": True}}
-    )
+def test_catalog_controls_editor_requirement():
     selected = frozenset({"reportbug"})
     with pytest.raises(ValueError, match="Neovim"):
-        validate_removals(selected, selected, frozenset(), editor_verified=False)
+        validate_removals(
+            selected,
+            selected,
+            frozenset(),
+            catalog={"reportbug": CleanupCandidate(requires_verified_editor=True)},
+            editor_verified=False,
+        )
 
 
 @pytest.mark.parametrize(

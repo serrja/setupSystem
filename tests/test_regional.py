@@ -28,6 +28,7 @@ def test_keyboard_apply_preserves_other_fields_and_records_backup(tmp_path, monk
 def test_timezone_rejects_false_success_after_command(tmp_path, monkeypatch):
     monkeypatch.setattr(regional, "STATE", tmp_path)
     monkeypatch.setattr(regional, "actual", lambda kind: "UTC")
+    monkeypatch.setattr(regional, "protected", lambda *args, **kwargs: None)
     monkeypatch.setattr(regional, "_command", lambda argv: "")
     with pytest.raises(RuntimeError, match="readback"):
         regional.apply("timezone", "Europe/Moscow", "UTC")
@@ -77,3 +78,18 @@ def test_missing_supported_locale_is_generated_without_dropping_existing_locales
     record = json.loads((regional.STATE / "locale.json").read_text())
     assert record["status"] == "complete"
     assert Path(record["locale_gen_backup"]).read_text() == "de_DE.UTF-8 UTF-8\n"
+
+
+def test_previous_unknown_receipt_stops_native_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(regional, "STATE", tmp_path)
+    monkeypatch.setattr(regional, "actual", lambda kind: "UTC")
+    monkeypatch.setattr(regional, "protected", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        regional, "_command", lambda argv: pytest.fail("Unknown receipt reached native command")
+    )
+    path = tmp_path / "timezone.json"
+    original = b'{"schema_version":2,"status":"running"}'
+    path.write_bytes(original)
+    with pytest.raises(ValueError):
+        regional.apply("timezone", "Europe/Moscow", "UTC")
+    assert path.read_bytes() == original

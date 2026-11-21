@@ -12,31 +12,30 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 from pathlib import Path
 
 from platformdirs import user_cache_path, user_data_path
 
-from setup_system.downloads import DownloadPolicy, copy_https
-from setup_system.infrastructure.config_store import safe_file
+from setup_system.bootstrap.user_runtime import managed_uv
+from setup_system.domain.platforms import CapabilityPolicy
+from setup_system.infrastructure.catalog_repository import load_editor
+from setup_system.infrastructure.downloads import DownloadPolicy, copy_https
 from setup_system.infrastructure.editor_downloads import expose_commands, tree_digest
-from setup_system.infrastructure.file_receipts import checked_directory
-from setup_system.infrastructure.theme import RESOURCE_ROOT
-from setup_system.runtime import managed_uv
-from setup_system.storage import atomic_write
+from setup_system.infrastructure.user_storage import atomic_write, checked_directory, safe_file
+from setup_system.resource_locator import ResourceLocator
 
 
-def install_python_tools() -> None:
+def install_python_tools(root: Path) -> None:
     if os.geteuid() == 0:
         raise ValueError("Language tools cannot be installed as root")
-    from setup_system.planning import detect_platform
+    from setup_system.infrastructure.platform_facts import detect_platform
 
-    capability = detect_platform()
+    capability = detect_platform(root=root)
     if not capability.implemented:
         raise ValueError(capability.reason)
     arch = capability.architecture
-    uv = managed_uv(("debian", arch))
-    requirements = RESOURCE_ROOT / "catalogs/python_tools.requirements.txt"
+    uv = managed_uv(("debian", arch), root=root)
+    requirements = ResourceLocator.for_root(root).resource("catalogs/python_tools.requirements.txt")
     digest = hashlib.sha256(requirements.read_bytes()).hexdigest()
     parent = checked_directory(user_data_path("setup-system") / "language-tools")
     legacy = parent / "python"
@@ -100,8 +99,8 @@ def install_python_tools() -> None:
     )
 
 
-def _npm_profile() -> dict[str, Path]:
-    lock = (RESOURCE_ROOT / "catalogs/typescript_vue.lock.json").read_bytes()
+def _npm_profile(root: Path) -> dict[str, Path]:
+    lock = ResourceLocator.for_root(root).resource("catalogs/typescript_vue.lock.json").read_bytes()
     document = json.loads(lock)
     packages = document["packages"]
     for name, package in packages.items():
@@ -183,26 +182,31 @@ def _existing_flutter() -> Path | None:
     )
 
 
-def language_blocker(root: Path, profile: str) -> str | None:
+def language_blocker(
+    root: Path, profile: str, *, policy: CapabilityPolicy | None = None
+) -> str | None:
     """Report the available SDK delivery path before other selected stages can mutate."""
     if profile != "dart_flutter" or _existing_flutter() is not None:
         return None
-    from setup_system.capabilities import load_policy
+    from setup_system.infrastructure.catalog_repository import load_policy
 
-    arch = load_policy(root).normalize_architecture(platform.machine())
-    flutter = tomllib.loads((root / "manifests/editor.toml").read_text())["flutter"]
-    if f"linux_{arch}_sha256" not in flutter:
+    if policy is None:
+        policy = load_policy(root)
+    arch = policy.normalize_architecture(platform.machine())
+    flutter = load_editor(root).flutter
+    if flutter.archive(arch) is None:
         return f"No reviewed Flutter archive for {arch}. Set FLUTTER_ROOT to an existing SDK."
     return None
 
 
 def _flutter_profile(root: Path, arch: str) -> dict[str, Path]:
-    settings = tomllib.loads((root / "manifests/editor.toml").read_text())["flutter"]
+    settings = load_editor(root).flutter
     parent = checked_directory(user_data_path("setup-system") / "language-tools/flutter")
-    destination = checked_directory(parent / settings["version"])
+    destination = checked_directory(parent / settings.version)
     selected = _existing_flutter() or destination
     if selected == destination and not destination.exists():
-        if f"linux_{arch}_sha256" not in settings:
+        pin = settings.archive(arch)
+        if pin is None:
             raise ValueError(
                 f"No reviewed Flutter archive for {arch}. Set FLUTTER_ROOT to an existing SDK."
             )
@@ -213,13 +217,13 @@ def _flutter_profile(root: Path, arch: str) -> dict[str, Path]:
             archive = Path(tmp) / "flutter.tar.xz"
             with archive.open("xb") as stream:
                 result = copy_https(
-                    settings[f"linux_{arch}_url"],
+                    pin[0],
                     stream,
                     DownloadPolicy(
                         frozenset({"storage.googleapis.com"}), 3 * 1024**3, 60, total_timeout=2400
                     ),
                 )
-            if result.sha256 != settings[f"linux_{arch}_sha256"]:
+            if result.sha256 != pin[1]:
                 raise RuntimeError("Flutter SDK archive digest mismatch")
             with tempfile.TemporaryDirectory(prefix=".unpack-", dir=parent) as staging:
                 with tarfile.open(archive, "r:xz") as bundle:
@@ -258,23 +262,23 @@ def _flutter_profile(root: Path, arch: str) -> dict[str, Path]:
             check=True,
             timeout=15,
         ).stdout.strip()
-        if revision != settings["revision"]:
+        if revision != settings.revision:
             raise ValueError("Existing Flutter SDK revision differs from the reviewed release")
     return {"dart": dart, "flutter": flutter}
 
 
 def apply_language_profile(root: Path, profile: str, *, neovim: bool) -> None:
     """Provision just this language. The editor can then check its live LSP handshake."""
-    from setup_system.planning import detect_platform
+    from setup_system.infrastructure.platform_facts import detect_platform
 
-    platform = detect_platform()
+    platform = detect_platform(root=root)
     if os.geteuid() == 0 or not platform.implemented:
         raise ValueError("Language profiles require a supported platform and an ordinary user")
     if profile == "python":
-        install_python_tools()
+        install_python_tools(root)
         return
     if profile == "typescript_vue":
-        commands = _npm_profile()
+        commands = _npm_profile(root)
         for name in ("typescript-language-server", "tsc", "prettier"):
             subprocess.run(
                 [commands[name], "--version"], check=True, timeout=20, capture_output=True

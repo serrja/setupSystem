@@ -7,8 +7,9 @@ Reviewed full-SHA links are reading sources, not automatic loaders or permission
 This repository owns Debian workstation preparation, Hyprland installation and explicitly
 scoped portable user configuration. General system installation remains Debian-only;
 profile capabilities can be narrower. Detect and reject unsupported targets before side
-effects. Keep the source handoff and privileged installation service stdlib-only,
-and planning strictly read-only. Textual is the only public configuration interface.
+effects. Keep the source handoff and initial privileged bootstrap stdlib-only. Load the
+shared system command contracts only from the verified root-owned runtime. Keep planning
+strictly read-only. Textual is the only public configuration interface.
 Do not restore the retired system shell installer or public command router.
 The release bootstrap delivers the app and launches it as the normal user.
 

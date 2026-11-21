@@ -2,63 +2,55 @@
 
 from __future__ import annotations
 
-import json
-import re
 import subprocess
-import tomllib
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from setup_system.adapters.debian.packages import installed_version
-from setup_system.downloads import (
-    GITHUB_RELEASE_HOSTS,
+from setup_system.domain.catalog import DebArtifact
+from setup_system.domain.tool_releases import AcquisitionReport
+from setup_system.infrastructure.catalog_repository import ARTIFACT_ORIGINS, load_components
+from setup_system.infrastructure.downloads import (
     DownloadError,
     DownloadPolicy,
     copy_https,
-    validate_https_url,
 )
-from setup_system.installation import _write_system
+from setup_system.infrastructure.system_files import write_system
 
-ORIGINS = {
-    "chatgpt": frozenset({"persistent.oaistatic.com"}),
-    "obsidian": GITHUB_RELEASE_HOSTS,
-}
 ATTEMPTS = Path("/var/lib/setup-system/downloads")
 
 
-@dataclass(frozen=True)
-class Artifact:
-    version: str
-    url: str
-    sha256: str
-
-
-def artifact(root: Path, app_id: str, arch: str) -> Artifact:
-    catalog = tomllib.loads((root / "manifests/applications.toml").read_text())
-    if app_id not in ORIGINS or arch not in {"amd64", "arm64"}:
+def artifact(root: Path, app_id: str, arch: str) -> DebArtifact:
+    if app_id not in ARTIFACT_ORIGINS or arch not in {"amd64", "arm64"}:
         raise ValueError("Unsupported package adapter or architecture")
-    row = catalog[app_id].get("artifacts", {}).get(arch)
-    if not row or catalog[app_id]["handler"] != "catalog_deb":
+    catalog = load_components(root, architecture=arch)
+    pin = next(
+        (
+            entry.artifact
+            for entry in catalog.entries
+            if entry.id == app_id and entry.handler == "catalog_deb"
+        ),
+        None,
+    )
+    if pin is None:
         raise ValueError(f"No verified {app_id} artifact for {arch}")
-    pin = Artifact(**row)
-    if not re.fullmatch(r"[0-9][0-9A-Za-z.+~-]{0,100}", pin.version) or not re.fullmatch(
-        r"[a-f0-9]{64}", pin.sha256
-    ):
-        raise ValueError("Invalid release artifact pin")
-    validate_https_url(pin.url, ORIGINS[app_id])
     return pin
 
 
 def _attempt(app_id: str, arch: str, version: str, result: str) -> None:
-    content = {
-        "version": version,
-        "architecture": arch,
-        "result": result,
-        "time": datetime.now(UTC).isoformat(timespec="seconds"),
-    }
-    _write_system(ATTEMPTS / f"{app_id}.json", (json.dumps(content) + "\n").encode())
-    print("setup-system/download " + json.dumps({**content, "app": app_id}), flush=True)
+    report = AcquisitionReport.model_validate(
+        {
+            "app": app_id,
+            "version": version,
+            "architecture": arch,
+            "result": result,
+            "time": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+    )
+    # The published system receipt identifies the app by filename.
+    content = report.model_dump_json(exclude={"app"})
+    write_system(ATTEMPTS / f"{app_id}.json", (content + "\n").encode())
+    print("setup-system/download " + report.model_dump_json(), flush=True)
 
 
 def stage_deb(root: Path, app_id: str, arch: str, stage: Path) -> Path:
@@ -66,7 +58,9 @@ def stage_deb(root: Path, app_id: str, arch: str, stage: Path) -> Path:
     path = stage / f"{app_id}_{pin.version}_{arch}.deb"
     try:
         with path.open("xb") as target:
-            download = copy_https(pin.url, target, DownloadPolicy(ORIGINS[app_id], 650_000_000, 60))
+            download = copy_https(
+                pin.url, target, DownloadPolicy(ARTIFACT_ORIGINS[app_id], 650_000_000, 60)
+            )
         if download.sha256 != pin.sha256:
             raise ValueError("Artifact checksum mismatch")
         result = subprocess.run(
@@ -100,31 +94,25 @@ def record_reported_attempts(output: str | None) -> None:
     """Keep the current user's bounded copy of the root acquisition result."""
     import os
 
-    from setup_system.infrastructure.config_store import SettingsPaths, safe_file
-    from setup_system.storage import atomic_write
+    from setup_system.infrastructure.config_store import SettingsPaths
+    from setup_system.infrastructure.user_storage import atomic_write, safe_file
 
     for line in (output or "").splitlines():
         if not line.startswith("setup-system/download ") or len(line) > 1000:
             continue
-        row = json.loads(line.removeprefix("setup-system/download "))
-        app = row.get("app")
-        if (
-            app not in ORIGINS
-            or set(row) != {"app", "version", "time", "architecture", "result"}
-            or not all(isinstance(v, str) for v in row.values())
-        ):
-            raise ValueError("Invalid package acquisition result")
-        path = SettingsPaths().state / "downloads" / f"{app}.json"
+        report = AcquisitionReport.model_validate_json(line.removeprefix("setup-system/download "))
+        path = SettingsPaths().state / "downloads" / f"{report.app}.json"
         safe_file(path, os.getuid())
-        atomic_write(path, (json.dumps(row) + "\n").encode(), 0o600)
+        atomic_write(path, (report.model_dump_json() + "\n").encode(), 0o600)
 
 
 def last_attempt(app_id: str) -> str | None:
     import os
 
-    from setup_system.infrastructure.config_store import SettingsPaths, safe_file
+    from setup_system.infrastructure.config_store import SettingsPaths
+    from setup_system.infrastructure.user_storage import safe_file
 
-    if app_id not in ORIGINS:
+    if app_id not in ARTIFACT_ORIGINS:
         return None
     path = SettingsPaths().state / "downloads" / f"{app_id}.json"
     try:
@@ -133,11 +121,9 @@ def last_attempt(app_id: str) -> str | None:
             return None
         if path.stat().st_size > 4096:
             raise ValueError("Unexpected package acquisition record")
-        row = json.loads(path.read_bytes())
-        if not isinstance(row, dict) or not all(
-            isinstance(row.get(key), str) for key in ("time", "version", "architecture", "result")
-        ):
-            raise ValueError("Invalid package acquisition record")
-        return f"{row['time']} · {row['version']} ({row['architecture']}) · {row['result']}"
+        report = AcquisitionReport.model_validate_json(path.read_bytes())
+        if report.app != app_id:
+            raise ValueError("Package acquisition record belongs to a different app")
+        return f"{report.time} · {report.version} ({report.architecture}) · {report.result}"
     except (OSError, ValueError):
         return "Saved acquisition record requires review."

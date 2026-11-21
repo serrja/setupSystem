@@ -14,9 +14,9 @@ import pytest
 
 from setup_system.adapters.debian.hyprland import package_arguments
 from setup_system.application import workstation
+from setup_system.composition import restore
 from setup_system.diagnostics import PartialApplyError
 from setup_system.infrastructure.theme import render
-from setup_system.storage import restore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -173,9 +173,9 @@ def test_missing_or_incompatible_compositor_blocks_before_writes(
 
 
 def test_interrupted_user_apply_can_resume(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from setup_system.infrastructure import user_files
+    from setup_system.infrastructure import managed_files
 
-    original = user_files._run_role
+    original = managed_files._run_role
 
     def interrupted(rows, desired, record_write):
         row = rows[0]
@@ -185,11 +185,11 @@ def test_interrupted_user_apply_can_resume(home: Path, monkeypatch: pytest.Monke
         record_write(path)
         raise OSError("simulated user-stage storage failure")
 
-    monkeypatch.setattr(user_files, "_run_role", interrupted)
+    monkeypatch.setattr(managed_files, "_run_role", interrupted)
     with pytest.raises(PartialApplyError, match="simulated"):
         workstation.apply_desktop(ROOT)
     assert snapshot(home)
-    monkeypatch.setattr(user_files, "_run_role", original)
+    monkeypatch.setattr(managed_files, "_run_role", original)
     backup = workstation.apply_desktop(ROOT)
     before = snapshot(home)
     assert workstation.apply_desktop(ROOT) == backup
@@ -398,7 +398,12 @@ def test_version_inspection_does_not_launch_compositor_without_runtime(
 @pytest.fixture
 def profile_source(tmp_path: Path) -> Path:
     source = tmp_path / "source checkout"
-    for relative in ("assets/hyprland", "assets/fonts", "manifests"):
+    for relative in (
+        "assets/hyprland",
+        "assets/fonts",
+        "manifests",
+        "src/setup_system/resources/themes",
+    ):
         shutil.copytree(
             ROOT / relative,
             source / relative,
