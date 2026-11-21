@@ -10,7 +10,7 @@ import stat
 import sys
 from pathlib import Path
 
-REGISTRY = Path("@LOGIN_REGISTRY@")
+REGISTRY = Path("/etc/setup-system/login-users")
 XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
 SESSION_KEYS = (
     "XDG_RUNTIME_DIR",
@@ -41,7 +41,7 @@ def trusted(path: Path, *, owner: int = 0, boundary: Path = Path("/")) -> os.sta
 
 
 def session(
-    registry: Path = REGISTRY, *, owner: int = 0, boundary: Path = Path("/")
+    registry: Path, *, owner: int = 0, boundary: Path = Path("/")
 ) -> tuple[list[str], dict[str, str]]:
     uid = os.getuid()
     if (
@@ -138,7 +138,9 @@ def session(
 
 def main() -> int:
     try:
-        arguments, environment = session()
+        if sys.argv[1:] != [str(REGISTRY)]:
+            raise ValueError("Expected the installed system login registry")
+        arguments, environment = session(Path(sys.argv[1]))
         os.execve(arguments[0], arguments, environment)
     except (KeyError, OSError, ValueError):
         print(

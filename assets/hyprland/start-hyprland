@@ -32,10 +32,10 @@ CHECK_SESSION
 esac
 : "${XDG_RUNTIME_DIR:?Log in locally so pam_systemd creates the user runtime directory}"
 [ "$(stat -c %u -- "$XDG_RUNTIME_DIR")" = "$(id -u)" ] || exit 4
-export XDG_CONFIG_HOME=@CONFIG_HOME@
-export XDG_DATA_HOME=@DATA_HOME@
-export XDG_STATE_HOME=@STATE_HOME@
-export XDG_CACHE_HOME=@CACHE_HOME@
+export XDG_CONFIG_HOME='@{xdg.config}@'
+export XDG_DATA_HOME='@{xdg.data}@'
+export XDG_STATE_HOME='@{xdg.state}@'
+export XDG_CACHE_HOME='@{xdg.cache}@'
 export PATH="$HOME/.local/bin:$PATH"
 if command -v nvim >/dev/null 2>&1; then
     export EDITOR=nvim VISUAL=nvim GIT_EDITOR=nvim

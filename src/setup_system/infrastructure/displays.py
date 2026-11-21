@@ -2,20 +2,38 @@
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
 import sys
 import time
 
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, Field, StrictBool, StrictFloat, StrictInt, TypeAdapter
 
+from setup_system.domain.contracts import ContractModel
 from setup_system.domain.displays import DisplayOutput, MonitorLayout
 from setup_system.infrastructure.mutation import user_operation
 
 PREVIEW_SECONDS = 12
 _LAYOUTS = TypeAdapter(tuple[MonitorLayout, ...])
+
+
+class OutputStatus(ContractModel):
+    # hyprctl also returns hardware and renderer metadata outside the workstation contract.
+    model_config = ConfigDict(extra="ignore")
+    disabled: StrictBool = False
+    mirror: str = Field(default="none", alias="mirrorOf")
+
+
+class OutputFacts(OutputStatus):
+    name: str
+    width: StrictInt = Field(gt=0)
+    height: StrictInt = Field(gt=0)
+    refresh: StrictFloat = Field(alias="refreshRate", gt=0)
+    modes: tuple[str, ...] = Field(alias="availableModes")
+    scale: StrictFloat
+    x: StrictInt
+    y: StrictInt
 
 
 def _hyprctl(*args: str) -> str:
@@ -33,21 +51,21 @@ def _hyprctl(*args: str) -> str:
 def discover_outputs() -> tuple[DisplayOutput, ...]:
     """Expose only active, addressable outputs with advertised modes."""
     result: list[DisplayOutput] = []
-    for row in json.loads(_hyprctl("-j", "monitors")):
-        if row.get("disabled") or row.get("mirrorOf", "none") != "none":
+    for row in TypeAdapter(tuple[dict[str, object], ...]).validate_json(_hyprctl("-j", "monitors")):
+        status = OutputStatus.model_validate(row)
+        if status.disabled or status.mirror != "none":
             continue
-        modes = tuple(str(mode).removesuffix("Hz") for mode in row["availableModes"])
-        resolution = f"{row['width']}x{row['height']}"
+        facts = OutputFacts.model_validate(row)
+        modes = tuple(mode.removesuffix("Hz") for mode in facts.modes)
+        resolution = f"{facts.width}x{facts.height}"
         candidates = [m for m in modes if m.partition("@")[0] == resolution]
         if not candidates:
             continue
-        closest = min(
-            candidates, key=lambda m: abs(float(m.partition("@")[2]) - row["refreshRate"])
-        )
+        closest = min(candidates, key=lambda m: abs(float(m.partition("@")[2]) - facts.refresh))
         layout = MonitorLayout(
-            output=row["name"], mode=closest, scale=row["scale"], x=row["x"], y=row["y"]
+            output=facts.name, mode=closest, scale=facts.scale, x=facts.x, y=facts.y
         )
-        result.append(DisplayOutput(layout, modes))
+        result.append(DisplayOutput(current=layout, modes=modes))
     return tuple(result)
 
 

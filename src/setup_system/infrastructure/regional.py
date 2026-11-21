@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import stat
 import subprocess
 from pathlib import Path
 
-from setup_system import installation as system
+from setup_system.bootstrap.source import protected
 from setup_system.diagnostics import PartialApplyError, error_text
-from setup_system.infrastructure.trusted_bootstrap import protected
-from setup_system.system_inspection import InspectionPaths, _timezone_file, validate_timezone
+from setup_system.domain.system_commands import RegionalKind
+from setup_system.domain.system_facts import InspectionPaths
+from setup_system.domain.system_receipts import RegionalReceipt
+from setup_system.infrastructure import processes, system_files
+from setup_system.infrastructure.clock import timezone_file, validate_timezone
 
 KEYBOARD = Path("/etc/default/keyboard")
 LOCALE = Path("/etc/locale.conf")
@@ -37,9 +39,9 @@ def _generated(value: str) -> bool:
     )
 
 
-def _generate(value: str, journal: Path, record: dict[str, object]) -> None:
+def _generate(value: str, journal: Path, record: RegionalReceipt) -> RegionalReceipt:
     if _generated(value):
-        return
+        return record
     entry = value + " UTF-8"
     if entry not in SUPPORTED.read_text().splitlines():
         raise ValueError(f"Locale {value} is unavailable in the installed Debian locale data")
@@ -47,11 +49,10 @@ def _generate(value: str, journal: Path, record: dict[str, object]) -> None:
     original = LOCALE_GEN.read_bytes() if LOCALE_GEN.is_file() else b""
     if entry not in original.decode().splitlines():
         backup = STATE / "backups" / (hashlib.sha256(original).hexdigest() + ".gen")
-        system._write_system(backup, original)
-        record["locale_gen_backup"] = str(backup)
-        record["locale_gen_existed"] = LOCALE_GEN.exists()
-        system._write_system(journal, json.dumps(record).encode())
-        system._write_system(
+        system_files.write_system(backup, original)
+        record = record.validated(locale_gen_backup=backup, locale_gen_existed=LOCALE_GEN.exists())
+        system_files.write_system(journal, record.model_dump_json(exclude_none=True).encode())
+        system_files.write_system(
             LOCALE_GEN,
             original.rstrip(b"\n") + b"\n" + entry.encode() + b"\n",
             stat.S_IMODE(LOCALE_GEN.stat().st_mode) if LOCALE_GEN.exists() else 0o644,
@@ -59,6 +60,7 @@ def _generate(value: str, journal: Path, record: dict[str, object]) -> None:
     _command(["/usr/sbin/locale-gen", "--keep-existing"])
     if not _generated(value):
         raise RuntimeError("Locale generation readback failed")
+    return record
 
 
 def _value(path: Path, key: str) -> str | None:
@@ -86,7 +88,7 @@ def equivalent(setting: str, observed: str | None, desired: str) -> bool:
 def actual(setting: str) -> str | None:
     if setting == "timezone":
         paths = InspectionPaths()
-        return _timezone_file(paths) if paths.localtime.is_file() else None
+        return timezone_file(paths) if paths.localtime.is_file() else None
     if setting == "keyboard":
         return _value(KEYBOARD, "XKBLAYOUT")
     if setting == "locale":
@@ -95,7 +97,7 @@ def actual(setting: str) -> str | None:
 
 
 def _command(args: list[str]) -> str:
-    return system.run_command(
+    return processes.run_command(
         args,
         check=True,
         capture_output=True,
@@ -123,7 +125,7 @@ def validate(setting: str, value: object) -> str:
     raise ValueError(f"Unsupported {setting} selection")
 
 
-def apply(setting: str, value: object, expected: object) -> None:
+def apply(setting: RegionalKind, value: object, expected: object) -> None:
     desired = validate(setting, value)
     before = actual(setting)
     if equivalent(setting, before, desired):
@@ -131,13 +133,19 @@ def apply(setting: str, value: object, expected: object) -> None:
     if before != expected:
         raise ValueError(f"System {setting} changed after plan confirmation")
     path = {"keyboard": KEYBOARD, "locale": LOCALE}.get(setting)
-    record: dict[str, object] = {
-        "schema_version": 1,
-        "setting": setting,
-        "before": before,
-        "after": desired,
-        "status": "running",
-    }
+    record = RegionalReceipt(setting=setting, before=before, after=desired)
+    journal = STATE / (setting + ".json")
+    protected(journal, directory=False)
+    if journal.exists():
+        if journal.stat().st_size > 1024 * 1024 or journal.stat().st_nlink != 1:
+            raise ValueError("Unsafe previous regional receipt")
+        previous = journal.read_bytes()
+        parsed = RegionalReceipt.model_validate_json(previous, strict=True)
+        if parsed.setting != setting:
+            raise ValueError("Previous regional receipt belongs to a different setting")
+        if parsed.status != "complete":
+            saved = STATE / "backups" / ("prior-" + hashlib.sha256(previous).hexdigest() + ".json")
+            system_files.write_system(saved, previous)
     original = b""
     if path is not None:
         protected(path, directory=False)
@@ -147,15 +155,14 @@ def apply(setting: str, value: object, expected: object) -> None:
                 raise ValueError("Unsupported regional configuration file")
             original = path.read_bytes()
             backup = STATE / "backups" / (hashlib.sha256(original).hexdigest() + ".conf")
-            system._write_system(backup, original)
-            record.update(backup=str(backup), mode=stat.S_IMODE(info.st_mode))
-    journal = STATE / (setting + ".json")
-    system._write_system(journal, json.dumps(record).encode())
+            system_files.write_system(backup, original)
+            record = record.validated(backup=backup, mode=stat.S_IMODE(info.st_mode))
+    system_files.write_system(journal, record.model_dump_json(exclude_none=True).encode())
     try:
         if setting == "timezone":
             _command(["/usr/bin/timedatectl", "set-timezone", desired])
         elif setting == "locale":
-            _generate(desired, journal, record)
+            record = _generate(desired, journal, record)
             _command(["/usr/sbin/update-locale", "LANG=" + desired])
         else:
             text = original.decode()
@@ -170,13 +177,16 @@ def apply(setting: str, value: object, expected: object) -> None:
             else:
                 text = text.rstrip("\n") + "\n" + replacement + "\n"
             mode = stat.S_IMODE(KEYBOARD.stat().st_mode) if KEYBOARD.exists() else 0o644
-            system._write_system(KEYBOARD, text.encode(), mode)
+            system_files.write_system(KEYBOARD, text.encode(), mode)
             _command(["/usr/bin/setupcon", "--keyboard-only", "--save-only"])
         if not equivalent(setting, actual(setting), desired):
             raise RuntimeError(f"{setting.title()} readback failed")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        record["status"] = "partial"
-        system._write_system(journal, json.dumps(record).encode())
+        # Generation may have recorded a backup immediately before a subprocess failed.
+        record = RegionalReceipt.model_validate_json(journal.read_bytes(), strict=True).validated(
+            status="partial"
+        )
+        system_files.write_system(journal, record.model_dump_json(exclude_none=True).encode())
         raise PartialApplyError(error_text(exc)) from exc
-    record["status"] = "complete"
-    system._write_system(journal, json.dumps(record).encode())
+    record = record.validated(status="complete")
+    system_files.write_system(journal, record.model_dump_json(exclude_none=True).encode())

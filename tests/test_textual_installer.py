@@ -4,13 +4,24 @@ import asyncio
 from pathlib import Path
 from threading import Event
 
+import pytest
 from textual.widgets import Button, Checkbox, Input, TabbedContent
 
-from setup_system.application.installer import InstallRequest, Operation
+from setup_system.composition import build_app
+from setup_system.domain.operations import InstallRequest, Operation
 from setup_system.domain.settings import Section
-from setup_system.tui.installer import InstallationApp, Prompt
+from setup_system.tui.installer import Prompt
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def private_home(tmp_path, monkeypatch):
+    home = tmp_path / "headless home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    for scope in ("config", "data", "state", "cache"):
+        monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(home / scope))
 
 
 class Service:
@@ -21,6 +32,20 @@ class Service:
         self.block = False
         self.code = 0
         self.interaction = None
+        self.cancel = Event()
+        self.completed = []
+        self.status = None
+
+    def plan(self, request):
+        from setup_system.domain.operations import WorkstationPlan
+
+        return WorkstationPlan(
+            section=request.section,
+            system=request.system,
+            user=request.settings,
+            actions=(),
+            observations=(),
+        )
 
     def run(self, request):
         self.requests.append(request)
@@ -37,9 +62,7 @@ class Service:
 
 
 def app_for(service):
-    app = InstallationApp(ROOT, InstallRequest(Operation.PLAN), service=service)
-    service.interaction = app.interaction
-    return app
+    return build_app(ROOT, InstallRequest(operation=Operation.PLAN), service=service)
 
 
 def test_open_and_navigation_have_no_execution_or_side_effects() -> None:
@@ -180,7 +203,7 @@ def test_action_buttons_fit_a_standard_terminal() -> None:
 def test_recovery_form_previews_and_preserves_conflicting_edits(tmp_path, monkeypatch) -> None:
     from textual.widgets import Select
 
-    from setup_system.infrastructure.user_files import apply_files
+    from setup_system.infrastructure.managed_files import apply_files
     from setup_system.tui.tools import ToolsScreen
 
     home = tmp_path / "private home"
@@ -222,5 +245,64 @@ def test_recovery_form_previews_and_preserves_conflicting_edits(tmp_path, monkey
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert app.last_code != 0 and target.read_bytes() == b"later personal edit"
+
+    asyncio.run(run())
+
+
+def test_project_git_and_template_forms_produce_only_their_required_inputs(tmp_path) -> None:
+    from textual.widgets import Select
+
+    from setup_system.domain.tool_requests import (
+        CacheTemplate,
+        ConfigureGit,
+        InspectGit,
+        WriteTemplate,
+        answer_values,
+    )
+    from setup_system.tui.tools import ToolsScreen
+
+    async def run():
+        app = app_for(Service())
+        async with app.run_test(size=(110, 48)) as pilot:
+            await pilot.click("#tools")
+            await pilot.pause()
+            form = app.screen
+            assert isinstance(form, ToolsScreen)
+            form.query_one("#git-directory", Input).value = str(tmp_path)
+            form.query_one("#git-profile", Input).value = "work"
+            form.query_one("#owner-directory", Input).value = str(tmp_path.parent)
+            assert form.request_for("git_inspect") == InspectGit(destination=tmp_path)
+            assert form.request_for("git_configure") == ConfigureGit(
+                name="work", destination=tmp_path, owner_directory=tmp_path.parent
+            )
+            form.query_one("#template", Select).value = "python"
+            await pilot.pause()
+            cache = form.request_for("template_cache")
+            assert isinstance(cache, CacheTemplate) and cache.name == "python"
+            with pytest.raises(ValueError, match="directory"):
+                form.request_for("create_template")
+            form.query_one("#template-directory", Input).value = str(tmp_path / "new")
+            form.query_one("#project-name", Input).value = "sample"
+            form.query_one("#python-profile", Select).value = "service"
+            request = form.request_for("create_template")
+            assert isinstance(request, WriteTemplate)
+            assert answer_values(request.answers) == {"projectName": "sample", "profile": "service"}
+
+    asyncio.run(run())
+
+
+def test_external_intention_edit_refuses_apply_before_confirmation() -> None:
+    async def run():
+        service = Service()
+        app = app_for(service)
+        async with app.run_test(size=(110, 42)) as pilot:
+            assert app.revisions_loaded
+            draft = Path.home() / "config/setup-system/system-intentions.toml"
+            draft.parent.mkdir(parents=True)
+            draft.write_text('timezone = "Etc/UTC"\n')
+            await pilot.click("#apply")
+            await pilot.pause()
+            assert not app.busy and not service.requests and not isinstance(app.screen, Prompt)
+            assert draft.read_text() == 'timezone = "Etc/UTC"\n'
 
     asyncio.run(run())

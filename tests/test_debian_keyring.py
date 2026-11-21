@@ -9,8 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from setup_system import installation as install
-from setup_system.application.installer import InstallationService, InstallRequest, Operation
+from setup_system.adapters.debian import apt_paths, apt_transaction
+from setup_system.composition import build_service
+from setup_system.domain import identity as account_identity
+from setup_system.domain.operations import InstallRequest, Operation
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
@@ -33,13 +35,13 @@ def keyrings(tmp_path: Path, kind: str = "regular") -> Path:
     return directory
 
 
-def system_paths(tmp_path: Path, directory: Path) -> install.SystemPaths:
+def system_paths(tmp_path: Path, directory: Path) -> apt_paths.SystemPaths:
     runtime = tmp_path / "keyring-run"
     runtime.mkdir(mode=0o700)
-    return install.SystemPaths(
+    return apt_paths.SystemPaths(
         tmp_path / "etc/setup-system-backports.sources",
         tmp_path / "state/install.json",
-        directory / install.SystemPaths().keyring.name,
+        directory / apt_paths.SystemPaths().keyring.name,
         runtime,
         tmp_path / "policy-rc.d",
         happ_unit=tmp_path / "etc-systemd/happd.service",
@@ -48,9 +50,10 @@ def system_paths(tmp_path: Path, directory: Path) -> install.SystemPaths:
 
 
 def test_trixie_canonical_keyring_completes_and_repeats_system_stage(
-    tmp_path: Path, package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths]
+    tmp_path: Path,
+    package_fixture: tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths],
 ) -> None:
-    root, target, happ, _ = package_fixture
+    root, _target, _happ, _ = package_fixture
     directory = keyrings(tmp_path)
     paths = system_paths(tmp_path, directory)
     calls: list[list[str]] = []
@@ -82,20 +85,17 @@ def test_trixie_canonical_keyring_completes_and_repeats_system_stage(
         )
 
     for _ in range(2):
-        with install.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
             run=execute,
             paths=paths,
             release=RELEASE,
             architecture="amd64",
         ) as prepared:
             prepared.install()
-            prepared.activate_happ()
+
         state = json.loads(paths.journal.read_text())
-        assert state["status"] == "system-complete" and state["stage"] == "user-runtime"
+        assert state["status"] == "packages-complete" and state["stage"] == "packages"
     assert paths.keyring.name == CANONICAL
     expected = f"Signed-By: {directory / CANONICAL}".encode()
     assert len(calls) == 8 and all(expected in source for source in sources)
@@ -111,17 +111,14 @@ def test_trixie_canonical_keyring_completes_and_repeats_system_stage(
 def test_untrusted_or_missing_canonical_keyring_stops_before_apt_and_journal(
     tmp_path: Path,
     kind: str,
-    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+    package_fixture: tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths],
 ) -> None:
-    root, target, happ, _ = package_fixture
+    root, _target, _happ, _ = package_fixture
     directory = keyrings(tmp_path, kind)
     paths = system_paths(tmp_path, directory)
     with pytest.raises(ValueError, match="keyring"):
-        with install.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
             run=lambda *args, **kwargs: pytest.fail("APT reached an invalid trust anchor"),
             paths=paths,
             release=RELEASE,
@@ -137,9 +134,11 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
 ) -> None:
     from setup_system.domain.settings import Section, UserSettings
 
-    monkeypatch.setattr("setup_system.application.workstation_plan.platform_blocker", lambda: ())
+    monkeypatch.setattr(
+        "setup_system.application.workstation_plan.platform_blocker", lambda root: ()
+    )
 
-    service = InstallationService(ROOT)
+    service = build_service(ROOT)
     monkeypatch.setattr(
         service,
         "_apply",
@@ -150,7 +149,7 @@ def test_prejournal_failure_exposes_reason_without_claiming_a_journal(
     assert (
         service.run(
             InstallRequest(
-                Operation.APPLY,
+                operation=Operation.APPLY,
                 section=Section.WORKSPACE,
                 settings=UserSettings(apps=("codex",)),
                 yes=True,
@@ -172,12 +171,14 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
 ) -> None:
     from setup_system.domain.settings import Section, UserSettings
 
-    monkeypatch.setattr("setup_system.application.workstation_plan.platform_blocker", lambda: ())
+    monkeypatch.setattr(
+        "setup_system.application.workstation_plan.platform_blocker", lambda root: ()
+    )
 
     marker = hashlib.sha256(str(tmp_path).encode()).hexdigest()
     diagnostic = "archive signature validation failed https://" + marker + ":" + marker
     diagnostic += "@example.invalid/archive?token=" + marker + " password=" + marker
-    service = InstallationService(ROOT)
+    service = build_service(ROOT)
 
     def fail(*args):
         raise ValueError(diagnostic)
@@ -186,7 +187,7 @@ def test_failure_diagnostics_redact_dynamic_credentials_and_preserve_reason(
     assert (
         service.run(
             InstallRequest(
-                Operation.APPLY,
+                operation=Operation.APPLY,
                 section=Section.WORKSPACE,
                 settings=UserSettings(apps=("codex",)),
                 yes=True,

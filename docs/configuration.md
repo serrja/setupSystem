@@ -2,6 +2,10 @@
 
 User settings schema 2 stores selected catalog IDs, theme, display layout and cleanup choices. Reading version 1 maps its application switches into the new selection in memory. Save intentions to persist the migration with a recoverable copy of the original. System settings retain schema 1. Unknown versions or fields require review.
 
+Explicit TOML fields take precedence. A missing field can use a matching
+`SETUP_SYSTEM_` environment variable, such as `SETUP_SYSTEM_KEYBOARD=us`.
+Built-in defaults apply when both are absent.
+
 | Location | Ownership / purpose |
 | --- | --- |
 | `/etc/setup-system/system.toml` | Root-owned applied system desired state |

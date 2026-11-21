@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from setup_system.application.project_layout import load_layout
+from setup_system.infrastructure.project_layout import load_layout
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from setup_system.infrastructure.user_files import apply_files
+from setup_system.infrastructure.managed_files import apply_files
 
 
 @pytest.fixture
@@ -73,18 +73,19 @@ def test_user_role_never_follows_symlink_target(home: Path) -> None:
 
 
 def test_workspace_restore_reverts_changed_files_and_removes_created_paths(home: Path) -> None:
-    from setup_system.application.tools import ToolRequest, execute
+    from setup_system.composition import build_tools
+    from setup_system.domain.tool_requests import RestoreTool
 
     existing = home / "config/tool/first"
     created = home / "config/nested/new"
     apply_files({existing: b"first"})
     changed = apply_files({existing: b"second", created: b"new"})
-    request = ToolRequest(action="restore", backup_id=changed.name)
-    execute(Path(__file__).resolve().parents[1], request, confirmed=True)
+    request = RestoreTool(action="restore", backup_id=changed.name)
+    build_tools(Path(__file__).resolve().parents[1]).execute(request, confirmed=True)
     assert existing.read_bytes() == b"first"
     assert not created.exists()
     assert not created.parent.exists()
-    execute(Path(__file__).resolve().parents[1], request, confirmed=True)
+    build_tools(Path(__file__).resolve().parents[1]).execute(request, confirmed=True)
     assert existing.read_bytes() == b"first"
 
 
@@ -93,8 +94,8 @@ def test_interrupted_runner_keeps_recovery_and_only_verified_writes(
 ) -> None:
     import ansible_runner
 
-    from setup_system.infrastructure.file_receipts import list_operations
-    from setup_system.storage import restore
+    from setup_system.composition import restore
+    from setup_system.infrastructure.receipt_repository import list_operations
 
     selected = home / "config/tool/selected"
     pending = home / "missing/tool/pending"
@@ -127,7 +128,7 @@ def test_runner_success_without_expected_output_fails_readback(
 ) -> None:
     import ansible_runner
 
-    from setup_system.infrastructure.file_receipts import list_operations
+    from setup_system.infrastructure.receipt_repository import list_operations
 
     monkeypatch.setattr(ansible_runner, "run", lambda **kwargs: SimpleNamespace(rc=0))
     with pytest.raises(RuntimeError, match="failed readback"):
@@ -136,8 +137,9 @@ def test_runner_success_without_expected_output_fails_readback(
 
 
 def test_legacy_journal_migration_backs_up_originals_and_preserves_modes(home: Path) -> None:
-    from setup_system.infrastructure.file_receipts import digest
-    from setup_system.storage import new_backup, restore, state_root
+    from setup_system.composition import restore
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure.user_storage import new_backup, state_root
 
     original = home / "tool/owned"
     original.parent.mkdir()
@@ -171,7 +173,8 @@ def test_legacy_journal_migration_backs_up_originals_and_preserves_modes(home: P
 
 
 def test_unknown_receipt_schema_is_a_read_only_conflict(home: Path) -> None:
-    from setup_system.storage import new_backup, restore
+    from setup_system.composition import restore
+    from setup_system.infrastructure.user_storage import new_backup
 
     target = home / "original"
     target.write_bytes(b"before")
@@ -186,7 +189,7 @@ def test_unknown_receipt_schema_is_a_read_only_conflict(home: Path) -> None:
 
 
 def test_restore_refuses_later_mode_change_without_touching_a_sibling(home: Path) -> None:
-    from setup_system.storage import restore
+    from setup_system.composition import restore
 
     one, two = home / "one", home / "two"
     op = apply_files({one: b"first", two: b"second"})
@@ -200,20 +203,20 @@ def test_concurrent_restore_edit_is_returned_without_overwriting(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
-    from setup_system.storage import restore
+    from setup_system.composition import restore
 
     target = home / "tool"
     op = apply_files({target: b"managed"})
-    from setup_system.infrastructure import file_receipts
+    from setup_system.infrastructure import file_publication
 
-    original = file_receipts._move_new
+    original = file_publication.move_new
 
     def concurrent_edit(source, destination):
         if source == target:
             target.write_bytes(b"owner edited during restore")
         return original(source, destination)
 
-    monkeypatch.setattr(file_receipts, "_move_new", concurrent_edit)
+    monkeypatch.setattr(file_publication, "move_new", concurrent_edit)
     with pytest.raises(ValueError, match="later edit"):
         restore(op.name, apply=True)
     assert target.read_bytes() == b"owner edited during restore"
@@ -222,21 +225,21 @@ def test_concurrent_restore_edit_is_returned_without_overwriting(
 def test_interrupted_restore_resumes_from_private_staging(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.infrastructure import file_receipts
-    from setup_system.storage import restore
+    from setup_system.composition import restore
+    from setup_system.infrastructure import restore_files
 
     target = home / "tool"
     apply_files({target: b"first"})
     op = apply_files({target: b"second"})
-    original = file_receipts._publish_original
+    original = restore_files._publish_original
 
     def interrupt(*_args):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(file_receipts, "_publish_original", interrupt)
+    monkeypatch.setattr(restore_files, "_publish_original", interrupt)
     with pytest.raises(KeyboardInterrupt):
         restore(op.name, apply=True)
-    monkeypatch.setattr(file_receipts, "_publish_original", original)
+    monkeypatch.setattr(restore_files, "_publish_original", original)
     assert restore(op.name) == [(str(target), "would-restore")]
     restore(op.name, apply=True)
     assert target.read_bytes() == b"first"
@@ -244,8 +247,9 @@ def test_interrupted_restore_resumes_from_private_staging(
 
 
 def test_legacy_desktop_preparation_requires_committed_index(home: Path) -> None:
-    from setup_system.infrastructure.file_receipts import digest
-    from setup_system.storage import new_backup, restore, state_root
+    from setup_system.composition import restore
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure.user_storage import new_backup, state_root
 
     managed = home / "font.conf"
     index = state_root() / "workstation.json"
@@ -272,8 +276,9 @@ def test_legacy_desktop_preparation_requires_committed_index(home: Path) -> None
 
 
 def test_legacy_git_before_hash_must_match_backup(home: Path) -> None:
-    from setup_system.infrastructure.file_receipts import digest
-    from setup_system.storage import new_backup, restore
+    from setup_system.composition import restore
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure.user_storage import new_backup
 
     config = home / ".gitconfig"
     config.write_bytes(b"old")
@@ -296,7 +301,7 @@ def test_concurrent_edit_between_inspection_and_role_publication(
 ) -> None:
     import ansible_runner
 
-    from setup_system.infrastructure.file_receipts import digest
+    from setup_system.domain.receipts import digest
 
     target = home / "ordinary-editor.txt"
     if existed:
@@ -333,13 +338,14 @@ def test_concurrent_edit_between_inspection_and_role_publication(
 def test_interrupted_displacement_is_recovered_before_another_apply(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.infrastructure import file_receipts, user_files
-    from setup_system.storage import restore
+    from setup_system.composition import restore
+    from setup_system.domain import receipts
+    from setup_system.infrastructure import file_publication, managed_files, receipt_repository
 
     target = home / "tool"
     target.write_bytes(b"owner's original")
-    before = file_receipts.digest(target.read_bytes())
-    original = file_receipts._move_new
+    before = receipts.digest(target.read_bytes())
+    original = file_publication.move_new
 
     def interrupt(source, destination):
         original(source, destination)
@@ -348,15 +354,15 @@ def test_interrupted_displacement_is_recovered_before_another_apply(
 
     def run_role(rows, _desired, callback):
         for row in rows:
-            callback(file_receipts.publish_prepared(row))
+            callback(file_publication.publish_prepared(row))
         return 0
 
-    monkeypatch.setattr(file_receipts, "_move_new", interrupt)
-    monkeypatch.setattr(user_files, "_run_role", run_role)
+    monkeypatch.setattr(file_publication, "move_new", interrupt)
+    monkeypatch.setattr(managed_files, "_run_role", run_role)
     with pytest.raises(KeyboardInterrupt):
         apply_files({target: b"selected"}, expected={target: before})
     assert not target.exists()
-    ((operation, status),) = file_receipts.list_operations()
+    ((operation, status),) = receipt_repository.list_operations()
     assert status == "partial"
     unrelated = home / "unrelated"
     apply_files({unrelated: b"independent"})
@@ -372,13 +378,14 @@ def test_interrupted_displacement_is_recovered_before_another_apply(
 def test_owner_recreates_target_while_prior_inode_is_held(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from setup_system.composition import restore
     from setup_system.diagnostics import PartialApplyError
-    from setup_system.infrastructure import file_receipts, user_files
-    from setup_system.storage import restore
+    from setup_system.domain import receipts
+    from setup_system.infrastructure import file_publication, managed_files, receipt_repository
 
     target = home / "config.ini"
     target.write_bytes(b"prior file")
-    move = file_receipts._move_new
+    move = file_publication.move_new
 
     def racing_move(source, dest):
         move(source, dest)
@@ -387,17 +394,17 @@ def test_owner_recreates_target_while_prior_inode_is_held(
 
     def run_role(rows, _desired, callback):
         for row in rows:
-            callback(file_receipts.publish_prepared(row))
+            callback(file_publication.publish_prepared(row))
         return 0
 
-    monkeypatch.setattr(file_receipts, "_move_new", racing_move)
-    monkeypatch.setattr(user_files, "_run_role", run_role)
+    monkeypatch.setattr(file_publication, "move_new", racing_move)
+    monkeypatch.setattr(managed_files, "_run_role", run_role)
     with pytest.raises(PartialApplyError):
-        apply_files({target: b"wanted"}, expected={target: file_receipts.digest(b"prior file")})
+        apply_files({target: b"wanted"}, expected={target: receipts.digest(b"prior file")})
     assert target.read_bytes() == b"owner's replacement"
-    ((operation, _),) = file_receipts.list_operations()
-    op = file_receipts.load_operation(file_receipts.operation_folder(operation))
-    retained = file_receipts.apply_stage(op.files[0], target) / "original"
+    ((operation, _),) = receipt_repository.list_operations()
+    op = receipt_repository.load_operation(receipt_repository.operation_folder(operation))
+    retained = file_publication.apply_stage(op.files[0], target) / "original"
     assert retained.read_bytes() == b"prior file"
     with pytest.raises(ValueError, match="later edit"):
         restore(operation, apply=True)
@@ -405,8 +412,9 @@ def test_owner_recreates_target_while_prior_inode_is_held(
 
 
 def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
-    from setup_system.infrastructure import file_receipts
-    from setup_system.storage import restore
+    from setup_system.composition import restore
+    from setup_system.domain import receipts
+    from setup_system.infrastructure import file_publication, receipt_repository
 
     target = home / "existing"
     target.write_bytes(b"checked")
@@ -414,12 +422,12 @@ def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
         editor.write(b"checked")
         editor.flush()
         operation = apply_files(
-            {target: b"configured"}, expected={target: file_receipts.digest(b"checked")}
+            {target: b"configured"}, expected={target: receipts.digest(b"checked")}
         )
         editor.seek(0)
         editor.write(b"editor saved later")
-    row = file_receipts.load_operation(operation).files[0]
-    retained = file_receipts.apply_stage(row, target) / "original"
+    row = receipt_repository.load_operation(operation).files[0]
+    retained = file_publication.apply_stage(row, target) / "original"
     assert target.read_bytes() == b"configured"
     assert retained.read_bytes() == b"editor saved later"
     with pytest.raises(ValueError, match="review displaced"):
@@ -432,23 +440,24 @@ def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
 def test_restore_keeps_open_writer_on_the_removed_installation(
     home: Path, monkeypatch: pytest.MonkeyPatch, separate: bool, existed: bool
 ) -> None:
-    from setup_system.infrastructure import file_receipts, user_files
-    from setup_system.storage import restore
+    from setup_system.composition import restore
+    from setup_system.domain import receipts
+    from setup_system.infrastructure import managed_files, receipt_repository, restore_files
 
     if separate:
 
         def separate_filesystems(left, right):
             return left.is_relative_to(home / "state") == right.is_relative_to(home / "state")
 
-        monkeypatch.setattr(user_files, "same_filesystem", separate_filesystems)
-        monkeypatch.setattr(file_receipts, "same_filesystem", separate_filesystems)
+        monkeypatch.setattr(managed_files, "same_filesystem", separate_filesystems)
+        monkeypatch.setattr(restore_files, "same_filesystem", separate_filesystems)
     target = home / "new directory" / "managed"
     if existed:
         target.parent.mkdir()
         target.write_bytes(b"original")
     operation = apply_files(
         {target: b"managed"},
-        expected={target: file_receipts.digest(b"original") if existed else None},
+        expected={target: receipts.digest(b"original") if existed else None},
     )
     with target.open("r+b") as editor:
         restore(operation.name, apply=True)
@@ -458,10 +467,32 @@ def test_restore_keeps_open_writer_on_the_removed_installation(
         assert target.read_bytes() == b"original"
     else:
         assert not target.parent.exists()
-    row = file_receipts.load_operation(operation).files[0]
+    row = receipt_repository.load_operation(operation).files[0]
     assert row.retained_after is not None
     retained = home / row.retained_after.relative / "after"
     if separate:
         assert not retained.is_relative_to(home / "state")
     assert retained.read_bytes() == b"saved after restore"
     assert str(retained) in restore(operation.name)[0][1]
+
+
+def test_unverified_v040_creation_cannot_claim_a_later_matching_file(home: Path) -> None:
+    from setup_system.composition import restore
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure.user_storage import new_backup
+
+    target = home / "independently-created"
+    backup = new_backup([])
+    raw = json.dumps(
+        {"status": "partial", "after": {str(target): digest(b"same bytes")}, "completed": {}}
+    ).encode()
+    journal = backup / "operation.json"
+    journal.write_bytes(raw)
+    target.write_bytes(b"same bytes")
+    target.chmod(0o644)
+    assert restore(backup.name) == [(str(target), "conflict")]
+    with pytest.raises(ValueError, match="later edit"):
+        restore(backup.name, apply=True)
+    assert target.read_bytes() == b"same bytes"
+    assert journal.read_bytes() == raw
+    assert not journal.with_name("operation.v0.json").exists()

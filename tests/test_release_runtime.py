@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.runtime import RUNTIME_PYTHON, UV_VERSION, UserRuntime
+from setup_system.bootstrap.user_policy import runtime_pins
+from setup_system.bootstrap.user_runtime import UserRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,7 +59,7 @@ def lock_check(project: Path, cache: Path) -> subprocess.CompletedProcess[str]:
     uv = shutil.which("uv")
     assert uv is not None, "The documented pinned uv test tool must be available"
     version = subprocess.run([uv, "--version"], capture_output=True, text=True, timeout=10)
-    assert version.returncode == 0 and version.stdout.split()[:2] == ["uv", UV_VERSION]
+    assert version.returncode == 0 and version.stdout.split()[:2] == ["uv", runtime_pins(ROOT).uv]
     return subprocess.run(
         [
             uv,
@@ -262,7 +263,8 @@ def test_readonly_source_lock_is_normalized_privately_without_changing_input(
 def test_prepared_runtime_handoff_is_read_only_and_rejects_unsafe_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
-    from setup_system import installation
+    from setup_system.domain import identity as account_identity
+    from setup_system.infrastructure import identity, processes
 
     home = tmp_path / "prepared desktop home"
     runtime = home / "data/setup-system/runtime"
@@ -271,12 +273,16 @@ def test_prepared_runtime_handoff_is_read_only_and_rejects_unsafe_state(
     command.write_text("#!/bin/sh\nexit 0\n")
     command.chmod(0o700)
     receipt = runtime.parent / "runtime.json"
-    receipt.write_text('{"owner":"setupSystem","runtimePython":"' + RUNTIME_PYTHON + '"}\n')
-    target = installation.TargetUser("runtime_fixture", os.getuid(), os.getgid(), home, "/bin/bash")
-    monkeypatch.setattr(installation, "resolve_target", lambda _: target)
+    receipt.write_text(
+        '{"owner":"setupSystem","runtimePython":"' + runtime_pins(ROOT).python + '"}\n'
+    )
+    target = account_identity.TargetUser(
+        "runtime_fixture", os.getuid(), os.getgid(), home, "/bin/bash"
+    )
+    monkeypatch.setattr(identity, "resolve_target", lambda _: target)
     monkeypatch.setenv("XDG_DATA_HOME", str(home / "data"))
     monkeypatch.setattr(
-        installation,
+        processes,
         "run_command",
         lambda *a, **kw: pytest.fail("Offline handoff executed a command"),
     )
@@ -298,11 +304,11 @@ def test_prepared_runtime_handoff_is_read_only_and_rejects_unsafe_state(
         monkeypatch.setattr(os, "geteuid", lambda: 0)
     before = hashes(home)
     if case == "ready":
-        assert UserRuntime(ROOT).existing() == runtime
-        assert UserRuntime(ROOT).existing() == runtime
+        assert UserRuntime(ROOT).verify_prepared() == runtime
+        assert UserRuntime(ROOT).verify_prepared() == runtime
     else:
         with pytest.raises((ValueError, RuntimeError)):
-            UserRuntime(ROOT).existing()
+            UserRuntime(ROOT).verify_prepared()
     assert hashes(home) == before
 
 

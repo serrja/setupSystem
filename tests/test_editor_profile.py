@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.application.installer import InstallationService
-from setup_system.domain.operations import Action, WorkstationPlan
+from setup_system.composition import build_service
+from setup_system.domain.operations import ApplicationAction, WorkstationPlan
 from setup_system.domain.settings import Section, SystemSettings, UserSettings
 from setup_system.infrastructure import editor
 
@@ -25,30 +25,32 @@ def test_neovim_action_fails_if_parser_verification_fails(
     monkeypatch.setattr(editor, "_headless", broken_parser)
     monkeypatch.setattr(editor.shutil, "which", lambda name: name)
     monkeypatch.setattr(
-        editor, "detect_platform", lambda: type("Platform", (), {"implemented": True})()
+        editor, "detect_platform", lambda **_kwargs: type("Platform", (), {"implemented": True})()
     )
-    service = InstallationService(Path(__file__).resolve().parents[1])
+    service = build_service(Path(__file__).resolve().parents[1])
     plan = WorkstationPlan(
-        Section.WORKSPACE,
-        SystemSettings(),
-        UserSettings(apps=("neovim",)),
-        (Action("neovim", "Editor", handler="neovim"),),
+        section=Section.WORKSPACE,
+        system=SystemSettings(),
+        user=UserSettings(apps=("neovim",)),
+        actions=(ApplicationAction(id="neovim", description="Editor"),),
     )
     with pytest.raises(RuntimeError, match="Parser verification failed"):
-        service._apply("neovim", plan)
+        service._apply(plan.actions[0], plan)
 
 
 def test_editor_locks_cover_selectable_language_parsers() -> None:
     import json
     import tomllib
 
-    from setup_system.domain.catalog import components
-    from setup_system.infrastructure.theme import RESOURCE_ROOT
+    from setup_system.infrastructure.catalog_repository import load_components, load_editor
+    from setup_system.resource_locator import ResourceLocator
 
     root = Path(__file__).resolve().parents[1]
     manifest = tomllib.loads((root / "manifests/editor.toml").read_text())
-    assert set(manifest["parsers"]) - {"base"} == {item.id for item in components("language")}
-    files = editor.editor_files(root, UserSettings())
+    assert set(manifest["parsers"]) - {"base"} == {
+        item.id for item in load_components(root).components("language")
+    }
+    files = editor.editor_files(root, UserSettings(), load_editor(root))
     native = json.loads(
         next(content for path, content in files.items() if path.name == "lazy-lock.json")
     )
@@ -57,15 +59,16 @@ def test_editor_locks_cover_selectable_language_parsers() -> None:
         for name, entry in manifest["plugins"].items()
         if name != "lazy"
     }
-    inputs = (RESOURCE_ROOT / "catalogs/python_tools.in").read_text().splitlines()
-    locked = (RESOURCE_ROOT / "catalogs/python_tools.requirements.txt").read_text()
+    resources = ResourceLocator.for_root(root)
+    inputs = resources.resource("catalogs/python_tools.in").read_text().splitlines()
+    locked = resources.resource("catalogs/python_tools.requirements.txt").read_text()
     assert all(any(row.startswith(name + "==") for row in locked.splitlines()) for name in inputs)
 
 
 def test_missing_flutter_delivery_blocks_before_privilege(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.application.installer import InstallRequest, Operation
+    from setup_system.domain.operations import InstallRequest, Operation
     from setup_system.infrastructure.language_tools import language_blocker
 
     root = Path(__file__).resolve().parents[1]
@@ -82,17 +85,17 @@ def test_missing_flutter_delivery_blocks_before_privilege(
     assert "arm64" in str(language_blocker(root, "dart_flutter"))
     import os
 
-    from setup_system.installation import TargetUser
+    from setup_system.domain.identity import TargetUser
 
     target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
-    service = InstallationService(
+    service = build_service(
         root,
         identity=lambda _name: target,
         authorize=lambda: pytest.fail("authorization before SDK availability"),
     )
 
     request = InstallRequest(
-        Operation.APPLY,
+        operation=Operation.APPLY,
         yes=True,
         section=Section.WORKSPACE,
         settings=UserSettings(language_profiles=("dart_flutter",)),

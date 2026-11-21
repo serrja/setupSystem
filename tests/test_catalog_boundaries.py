@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.application.project_catalog import ProjectCatalog, ProjectRecord
-from setup_system.application.project_layout import active_projects, load_layout
+from setup_system.domain.projects import ProjectCatalog, ProjectRecord
+from setup_system.infrastructure.project_layout import active_projects, load_layout
 
 CATALOG = """schemaVersion = 1
 projectsRoot = "$HOME/Projects"
@@ -206,7 +206,8 @@ def test_catalog_structure_errors_do_not_expose_input(tmp_path: Path) -> None:
 def test_picker_resolves_a_dart_only_client_without_a_python_template(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.application.tools import ToolRequest, execute
+    from setup_system.composition import build_tools
+    from setup_system.domain.tool_requests import SimpleTool
 
     root, home = catalog(tmp_path)
     client = home / "Projects/pokerlost/pokerClient"
@@ -215,7 +216,10 @@ def test_picker_resolves_a_dart_only_client_without_a_python_template(
     (client / "pubspec.yaml").write_text("name: synthetic_client\npublish_to: none\n")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     before = (client / ".git/config").read_bytes()
-    assert execute(root, ToolRequest("projects")) == f"pokerlost/pokerClient: {client}"
+    assert (
+        build_tools(root).execute(SimpleTool(action="projects"))
+        == f"pokerlost/pokerClient: {client}"
+    )
     assert not (client / ".git/index").exists()
     assert (client / ".git/config").read_bytes() == before
     assert not list(client.glob("*.py")) and not (client / ".venv").exists()

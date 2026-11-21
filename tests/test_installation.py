@@ -10,9 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from setup_system import installation as install
-from setup_system import runtime as runtime_provider
-from setup_system.runtime import UserRuntime
+from setup_system.adapters.debian import apt_paths, apt_selection, apt_transaction, service_policy
+from setup_system.bootstrap import user_runtime as runtime_provider
+from setup_system.bootstrap.user_runtime import UserRuntime
+from setup_system.domain import identity as account_identity
+from setup_system.infrastructure import identity, processes, system_files
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
@@ -27,17 +29,17 @@ def test_sudo_account_uses_passwd_home_not_root_environment(
 ) -> None:
     home = tmp_path / "home with spaces"
     home.mkdir()
-    monkeypatch.setattr(install.pwd, "getpwnam", lambda name: account(home))
-    monkeypatch.setattr(install.grp, "getgrgid", lambda gid: object())
-    monkeypatch.setattr(install, "validate_home", lambda target: None)
-    target = install.resolve_target(
+    monkeypatch.setattr(identity.pwd, "getpwnam", lambda name: account(home))
+    monkeypatch.setattr(identity.grp, "getgrgid", lambda gid: object())
+    monkeypatch.setattr(identity, "validate_home", lambda target: None)
+    target = identity.resolve_target(
         None,
         environment={"SUDO_USER": "alice", "SUDO_UID": "1001", "SUDO_GID": "1001", "HOME": "/root"},
         effective_uid=0,
         real_uid=0,
     )
     assert target.home == home and target.uid == 1001
-    env = install.user_environment(target, {"config": home / "config with spaces"})
+    env = identity.user_environment(target, {"config": home / "config with spaces"})
     assert env["HOME"] == str(home) and env["XDG_CONFIG_HOME"].endswith("config with spaces")
     assert (
         not {"SUDO_USER", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GH_TOKEN", "PYTHONPATH"}
@@ -54,8 +56,8 @@ def test_invalid_identity_fails_before_executor(
             raise KeyError(name)
         return account(tmp_path, 0 if case == "zero" else 1001)
 
-    monkeypatch.setattr(install.pwd, "getpwnam", lookup)
-    monkeypatch.setattr(install.grp, "getgrgid", lambda gid: object())
+    monkeypatch.setattr(identity.pwd, "getpwnam", lookup)
+    monkeypatch.setattr(identity.grp, "getgrgid", lambda gid: object())
     environment = {"SUDO_USER": "alice", "SUDO_UID": "1001", "SUDO_GID": "1001"}
     if case == "root":
         environment = {}
@@ -66,25 +68,25 @@ def test_invalid_identity_fails_before_executor(
     if case == "gid":
         environment["SUDO_GID"] = "1002"
     with pytest.raises(ValueError):
-        install.resolve_target(None, environment=environment, effective_uid=0, real_uid=0)
+        identity.resolve_target(None, environment=environment, effective_uid=0, real_uid=0)
 
 
 @pytest.mark.parametrize(
     "suffix", ["../outside", "config/../../root", ".config/../other", "bad\npath"]
 )
 def test_unsafe_user_paths_rejected(tmp_path: Path, suffix: str) -> None:
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
+    target = account_identity.TargetUser("alice", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
     with pytest.raises(ValueError):
-        install.validate_user_path(tmp_path / suffix, target)
+        identity.validate_user_path(tmp_path / suffix, target)
 
 
 def test_symlink_path_rejected(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     (home / "config").symlink_to(tmp_path)
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
+    target = account_identity.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
     with pytest.raises(ValueError):
-        install.validate_user_path(home / "config/new", target)
+        identity.validate_user_path(home / "config/new", target)
 
 
 @pytest.mark.parametrize("mask", [0o002, 0o077, 0o777])
@@ -94,8 +96,8 @@ def test_system_journal_parents_are_private_independently_of_umask(
     destination = tmp_path / "new-system-state" / "nested" / "install.json"
     previous = os.umask(mask)
     try:
-        install._write_system(destination, b"first\n")
-        install._write_system(destination, b"second\n")
+        system_files.write_system(destination, b"first\n")
+        system_files.write_system(destination, b"second\n")
     finally:
         os.umask(previous)
     assert destination.read_bytes() == b"second\n"
@@ -107,17 +109,18 @@ def test_system_journal_parents_are_private_independently_of_umask(
 def test_apt_simulation_refuses_removal_and_downgrade() -> None:
     for text in ("Remv gnome-shell [1.0]", "The following packages will be DOWNGRADED:\n hyprland"):
         with pytest.raises(RuntimeError):
-            install.validate_simulation(text)
-    install.validate_simulation("Inst hyprland (0.55.2 Debian Backports)\nConf hyprland")
+            apt_selection.validate_simulation(text)
+    apt_selection.validate_simulation("Inst hyprland (0.55.2 Debian Backports)\nConf hyprland")
 
 
 @pytest.mark.parametrize(
     "case", ["offline", "signature", "missing-package", "apt-lock", "timeout", "interrupted"]
 )
 def test_system_failure_records_actual_stage_and_never_user_success(
-    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths], case: str
+    package_fixture: tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths],
+    case: str,
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     calls: list[list[str]] = []
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -151,11 +154,8 @@ def test_system_failure_records_actual_stage_and_never_user_success(
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     with pytest.raises((subprocess.SubprocessError, KeyboardInterrupt)):
-        with install.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
             run=run,
             paths=paths,
             release=RELEASE,
@@ -177,9 +177,9 @@ def test_system_failure_records_actual_stage_and_never_user_success(
 
 
 def test_system_repeat_and_full_package_set(
-    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+    package_fixture: tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths],
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     calls: list[list[str]] = []
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -202,31 +202,25 @@ def test_system_repeat_and_full_package_set(
             argv, 0, "Inst hyprland (0.55.2+ds-1~bpo13+1 Debian)", ""
         )
 
-    with install.prepare_packages(
+    with apt_transaction.prepare_packages(
         root,
-        target=target,
-        happ=happ,
-        proxy=None,
         run=run,
         paths=paths,
         release=RELEASE,
         architecture="amd64",
     ) as prepared:
         prepared.install()
-        prepared.activate_happ()
+
     original = paths.backports.read_bytes()
-    with install.prepare_packages(
+    with apt_transaction.prepare_packages(
         root,
-        target=target,
-        happ=happ,
-        proxy=None,
         run=run,
         paths=paths,
         release=RELEASE,
         architecture="amd64",
     ) as prepared:
         prepared.install()
-        prepared.activate_happ()
+
     assert paths.backports.read_bytes() == original and original.count(b"trixie-backports") == 1
     package_calls = [call for call in calls if "install" in call]
     assert all("--no-remove" in call for call in package_calls)
@@ -235,17 +229,14 @@ def test_system_repeat_and_full_package_set(
 
 
 def test_unknown_service_policy_stops_before_any_mutation(
-    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+    package_fixture: tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths],
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     paths.policy.write_bytes(b"#!/bin/sh\nexit 0\n")
     paths.policy.chmod(0o600)
     with pytest.raises(ValueError, match="service policy"):
-        with install.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
             paths=paths,
             run=lambda *a, **kw: pytest.fail("APT ran"),
             release=RELEASE,
@@ -257,21 +248,21 @@ def test_unknown_service_policy_stops_before_any_mutation(
 
 def test_interrupted_owned_service_policy_is_removed_on_retry(tmp_path: Path) -> None:
     path = tmp_path / "policy"
-    path.write_bytes(install.DEFER_POLICY)
+    path.write_bytes(service_policy.DEFER_POLICY)
     path.chmod(0o600)
-    with install._defer_services(path):
-        assert path.read_bytes() == install.DEFER_POLICY
+    with service_policy.defer_services(path):
+        assert path.read_bytes() == service_policy.DEFER_POLICY
     assert not path.exists()
 
 
 def test_group_writable_owned_service_policy_is_preserved_and_rejected(tmp_path: Path) -> None:
     path = tmp_path / "policy"
-    path.write_bytes(install.DEFER_POLICY)
+    path.write_bytes(service_policy.DEFER_POLICY)
     path.chmod(0o664)
     with pytest.raises(ValueError, match="privately controlled"):
-        with install._defer_services(path):
+        with service_policy.defer_services(path):
             pytest.fail("Unsafe policy reached the package stage")
-    assert path.read_bytes() == install.DEFER_POLICY
+    assert path.read_bytes() == service_policy.DEFER_POLICY
     assert path.stat().st_mode & 0o777 == 0o664
 
 
@@ -319,7 +310,7 @@ def test_timeout_terminates_unprivileged_descendant_group(
     )
     _wait_for_leaf_ready(monkeypatch, pid_file)
     with pytest.raises(subprocess.TimeoutExpired):
-        install.run_command([sys.executable, "-c", code], timeout=1, input="fixture input")
+        processes.run_command([sys.executable, "-c", code], timeout=1, input="fixture input")
     child = int(pid_file.read_text())
     try:
         for _ in range(20):
@@ -339,28 +330,28 @@ def test_timeout_terminates_unprivileged_descendant_group(
 def test_user_runtime_uses_lock_without_checkout_venv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system import planning
 
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
-    monkeypatch.setattr(install, "resolve_target", lambda name: target)
-    monkeypatch.setattr(
-        planning,
-        "detect_platform",
-        lambda: planning.Platform("debian", "13", "x86_64", True, False, ""),
-    )
+    target = account_identity.TargetUser("alice", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
+    monkeypatch.setattr(identity, "resolve_target", lambda name: target)
+    monkeypatch.setattr(runtime_provider.platform, "freedesktop_os_release", lambda: RELEASE)
     monkeypatch.setenv("HOME", str(tmp_path))
-    for key, value in install.user_environment(target, {}).items():
+    for key, value in identity.user_environment(target, {}).items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(runtime_provider, "managed_uv", lambda *a: Path("/fake/uv"))
+    monkeypatch.setattr(runtime_provider, "managed_uv", lambda *a, **kw: Path("/fake/uv"))
     calls: list[list[str]] = []
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
+        if argv[1] == "sync":
+            command = Path(os.environ["UV_PROJECT_ENVIRONMENT"]) / "bin/setup-system"
+            command.parent.mkdir(parents=True, exist_ok=True)
+            command.write_text("#!/bin/sh\nexit 0\n")
+            command.chmod(0o700)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setattr(install, "run_command", run)
+    monkeypatch.setattr(processes, "run_command", run)
     assert UserRuntime(ROOT).prepare() == tmp_path / ".local/share/setup-system/runtime"
-    assert calls[0] == ["/fake/uv", "python", "install", runtime_provider.RUNTIME_PYTHON]
+    assert calls[0] == ["/fake/uv", "python", "install", runtime_provider.runtime_pins(ROOT).python]
     assert "--locked" in calls[1] and "--no-editable" in calls[1]
     assert calls[1][calls[1].index("--reinstall-package") + 1] == "setup-system"
     assert os.environ["UV_PROJECT_ENVIRONMENT"] == str(
@@ -374,17 +365,17 @@ def test_user_runtime_uses_lock_without_checkout_venv(
 
 
 def test_unmanaged_runtime_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from setup_system import planning
+    from setup_system.bootstrap import user_runtime as runtime
 
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
-    monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    target = account_identity.TargetUser("alice", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
+    monkeypatch.setattr(identity, "resolve_target", lambda name: target)
     monkeypatch.setattr(
-        planning,
-        "detect_platform",
-        lambda: planning.Platform("debian", "13", "x86_64", True, False, ""),
+        runtime,
+        "bootstrap_architecture",
+        lambda *args, **kwargs: "x86_64",
     )
     monkeypatch.setenv("HOME", str(tmp_path))
-    for key, value in install.user_environment(target, {}).items():
+    for key, value in identity.user_environment(target, {}).items():
         monkeypatch.setenv(key, value)
     runtime = tmp_path / ".local/share/setup-system/runtime"
     runtime.mkdir(parents=True)
@@ -398,21 +389,21 @@ def test_unmanaged_runtime_is_preserved(tmp_path: Path, monkeypatch: pytest.Monk
 def test_uv_destinations_reject_symlinks_before_runtime_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
 ) -> None:
-    from setup_system import planning
+    from setup_system.bootstrap import user_runtime as runtime
 
     home = tmp_path / "home"
     home.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    target = install.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
-    monkeypatch.setattr(install, "resolve_target", lambda name: target)
+    target = account_identity.TargetUser("alice", os.getuid(), os.getgid(), home, "/bin/bash")
+    monkeypatch.setattr(identity, "resolve_target", lambda name: target)
     monkeypatch.setattr(
-        planning,
-        "detect_platform",
-        lambda: planning.Platform("debian", "13", "x86_64", True, False, ""),
+        runtime,
+        "bootstrap_architecture",
+        lambda *args, **kwargs: "x86_64",
     )
     monkeypatch.setenv("HOME", str(home))
-    for key, value in install.user_environment(target, {}).items():
+    for key, value in identity.user_environment(target, {}).items():
         monkeypatch.setenv(key, value)
     path = (
         home / ".cache/setup-system/uv"
@@ -469,16 +460,17 @@ def test_uv_staging_does_not_follow_predictable_stale_symlink(
         info.size = 2
         bundle.addfile(info, io.BytesIO(b"uv"))
     archive = buffer.getvalue()
-    monkeypatch.setitem(
-        runtime_provider.UV_SHA256, "x86_64-unknown-linux-gnu", hashlib.sha256(archive).hexdigest()
+    from dataclasses import replace
+
+    pins = replace(
+        runtime_provider.runtime_pins(ROOT), amd64_sha256=hashlib.sha256(archive).hexdigest()
     )
+    monkeypatch.setattr(runtime_provider, "runtime_pins", lambda root=None: pins)
     monkeypatch.setattr(runtime_provider.shutil, "which", lambda name: None)
     monkeypatch.setattr(
         runtime_provider.subprocess,
         "run",
-        lambda *a, **kw: subprocess.CompletedProcess(
-            a[0], 0, "uv " + runtime_provider.UV_VERSION, ""
-        ),
+        lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "uv " + pins.uv, ""),
     )
     monkeypatch.setattr(runtime_provider, "_read_limited", lambda *a: archive)
     assert runtime_provider.managed_uv(("debian", "x86_64")) == destination / "uv"
@@ -487,17 +479,14 @@ def test_uv_staging_does_not_follow_predictable_stale_symlink(
 
 
 def test_nonexecutable_administrator_policy_stops_before_mutation(
-    package_fixture: tuple[Path, install.TargetUser, Path, install.SystemPaths],
+    package_fixture: tuple[Path, account_identity.TargetUser, Path, apt_paths.SystemPaths],
 ) -> None:
-    root, target, happ, paths = package_fixture
+    root, _target, _happ, paths = package_fixture
     paths.policy.write_bytes(b"#!/bin/sh\nexit 101\n")
     paths.policy.chmod(0o644)
     with pytest.raises(ValueError, match="executable"):
-        with install.prepare_packages(
+        with apt_transaction.prepare_packages(
             root,
-            target=target,
-            happ=happ,
-            proxy=None,
             paths=paths,
             run=lambda *a, **kw: pytest.fail("APT ran before policy validation"),
             release=RELEASE,
@@ -512,7 +501,7 @@ def test_new_service_deferral_is_executable_with_restrictive_umask(tmp_path: Pat
     path = tmp_path / "policy"
     previous = os.umask(0o777)
     try:
-        with install._defer_services(path):
+        with service_policy.defer_services(path):
             assert path.stat().st_mode & 0o100
     finally:
         os.umask(previous)
@@ -521,9 +510,9 @@ def test_new_service_deferral_is_executable_with_restrictive_umask(tmp_path: Pat
 
 def test_owned_interrupted_policy_repairs_executable_mode_before_use(tmp_path: Path) -> None:
     path = tmp_path / "policy"
-    path.write_bytes(install.DEFER_POLICY)
+    path.write_bytes(service_policy.DEFER_POLICY)
     path.chmod(0o644)
-    with install._defer_services(path):
+    with service_policy.defer_services(path):
         assert path.stat().st_mode & 0o100
     assert not path.exists()
 
@@ -536,14 +525,14 @@ def test_privileged_existing_file_requires_controlled_parent(tmp_path: Path) -> 
     path.write_bytes(b"original")
     path.chmod(0o600)
     with pytest.raises(ValueError, match="privately controlled"):
-        install._write_system(path, b"replacement")
+        system_files.write_system(path, b"replacement")
     assert path.read_bytes() == b"original"
 
 
 def test_workspace_package_session_preserves_admin_apt_sources(tmp_path):
     from setup_system.adapters.debian.package_session import AptCommands, AptSources
 
-    paths = install.SystemPaths(
+    paths = apt_paths.SystemPaths(
         backports=tmp_path / "sources/list",
         journal=tmp_path / "state/install.json",
         policy=tmp_path / "policy",
@@ -556,8 +545,8 @@ def test_workspace_package_session_preserves_admin_apt_sources(tmp_path):
     def run(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    session = install._PackageSession(
-        AptCommands(tmp_path, None, ("firefox-esr",)),
+    session = apt_transaction.PackageSession(
+        AptCommands(tmp_path, ("firefox-esr",)),
         source,
         None,
         paths,

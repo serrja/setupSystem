@@ -8,22 +8,23 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.domain.catalog import components, selected_components
 from setup_system.domain.settings import UserSettings
-from setup_system.downloads import DownloadError, DownloadFailure, DownloadResult
 from setup_system.infrastructure import catalog_deb
 from setup_system.infrastructure.app_configs import codex_settings
+from setup_system.infrastructure.catalog_repository import load_components
+from setup_system.infrastructure.downloads import DownloadError, DownloadFailure, DownloadResult
 
 
 def test_every_component_round_trips_through_selection() -> None:
-    for entry in components():
+    catalog = load_components()
+    for entry in catalog.components():
         key = {"app": "apps", "language": "language_profiles", "optional": "optional_apps"}[
             entry.kind
         ]
         settings = UserSettings.model_validate({key: [entry.id]})
-        assert selected_components(settings) == (entry,)
+        assert catalog.selected(settings) == (entry,)
     with pytest.raises(ValueError, match="catalog"):
-        UserSettings.model_validate({"apps": ["arbitrary-executor"]})
+        catalog.selected(UserSettings.model_validate({"apps": ["arbitrary_executor"]}))
 
 
 def test_codex_preserves_account_choices_and_permission_profiles() -> None:
@@ -67,9 +68,12 @@ def test_catalog_archive_verification_retry_and_readback(tmp_path, monkeypatch, 
     sha = hashlib.sha256(data).hexdigest()
     manifests = tmp_path / "manifests"
     manifests.mkdir()
+    (manifests / "platforms.toml").write_bytes(
+        (Path(__file__).resolve().parents[1] / "manifests/platforms.toml").read_bytes()
+    )
     manifest = manifests / "applications.toml"
     manifest.write_text(
-        '[chatgpt]\nhandler="catalog_deb"\n[chatgpt.artifacts.amd64]\nversion="1.0"\n'
+        '[chatgpt]\nkind="app"\ntitle="ChatGPT"\nhandler="catalog_deb"\n[chatgpt.artifacts.amd64]\nversion="1.0"\n'
         f'url="https://persistent.oaistatic.com/pinned.deb"\nsha256="{sha}"\n'
     )
     records = tmp_path / "attempts"
@@ -81,7 +85,7 @@ def test_catalog_archive_verification_retry_and_readback(tmp_path, monkeypatch, 
         records.mkdir(exist_ok=True)
         path.write_bytes(content)
 
-    monkeypatch.setattr(catalog_deb, "_write_system", record)
+    monkeypatch.setattr(catalog_deb, "write_system", record)
 
     def fail(*args):
         raise DownloadError(DownloadFailure.HTTP, host="persistent.oaistatic.com", status=403)
@@ -125,7 +129,7 @@ def test_catalog_archive_verification_retry_and_readback(tmp_path, monkeypatch, 
 def test_happ_upgrade_requires_confirmed_version_and_disconnected_service(
     current, active, accepted
 ):
-    from setup_system.installation import _check_existing_happ
+    from setup_system.adapters.debian.happ_service import check_existing_happ
 
     def command(argv, **kwargs):
         if argv[0] == "/usr/bin/dpkg-query":
@@ -135,10 +139,10 @@ def test_happ_upgrade_requires_confirmed_version_and_disconnected_service(
         return subprocess.CompletedProcess(argv, active)
 
     if accepted:
-        _check_existing_happ("3.0", expected_happ_version="1.0", run=command)
+        check_existing_happ("3.0", expected_happ_version="1.0", run=command)
     else:
         with pytest.raises(ValueError):
-            _check_existing_happ("3.0", expected_happ_version="1.0", run=command)
+            check_existing_happ("3.0", expected_happ_version="1.0", run=command)
 
 
 def test_codex_delivers_verified_policy_in_effective_override(tmp_path, monkeypatch):
@@ -178,30 +182,27 @@ def test_codex_delivers_verified_policy_in_effective_override(tmp_path, monkeypa
     (manifests / "projects.toml").write_text(
         metadata.replace(rules["sha256"], hashlib.sha256(contract).hexdigest())
     )
-    resources = tmp_path / "resources"
+    resources = project / "resources"
     (resources / "catalogs").mkdir(parents=True)
-    monkeypatch.setattr(app_configs, "RESOURCE_ROOT", resources)
     payload = b"#!/bin/sh\necho 'codex-cli 0.0.1'\n"
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        member = tarfile.TarInfo("codex")
-        member.size = len(payload)
-        archive.addfile(member, io.BytesIO(payload))
-    archive_data = buffer.getvalue()
-    archive_url = "https://github.com/openai/codex/releases/download/fixture/codex.tar.gz"
-    release = 'version = "0.0.1"\n'
-    for arch in ("amd64", "arm64"):
+    upstream = "https://raw.githubusercontent.com/serrja/baseRules/" + rules["commit"]
+    assets = {upstream + "/" + rules["document"]: contract, upstream + "/LICENSE": notice}
+    origin = "https://github.com/openai/codex/releases"
+    release = f'version = "0.0.1"\nsource = "{origin}/tag/rust-v0.0.1"\nverification = "fixture"\n'
+    for arch, machine in (("amd64", "x86_64"), ("arm64", "aarch64")):
+        name = f"codex-{machine}-unknown-linux-musl"
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+        archive_url = f"{origin}/download/rust-v0.0.1/{name}.tar.gz"
+        assets[archive_url] = buffer.getvalue()
         release += (
-            f'[{arch}]\nurl = "{archive_url}"\nmember = "codex"\n'
-            f'sha256 = "{hashlib.sha256(archive_data).hexdigest()}"\n'
+            f'[{arch}]\nurl = "{archive_url}"\nmember = "{name}"\n'
+            f'sha256 = "{hashlib.sha256(assets[archive_url]).hexdigest()}"\n'
         )
     (resources / "catalogs/codex.toml").write_text(release)
-    upstream = "https://raw.githubusercontent.com/serrja/baseRules/" + rules["commit"]
-    assets = {
-        upstream + "/" + rules["document"]: contract,
-        upstream + "/LICENSE": notice,
-        archive_url: archive_data,
-    }
     monkeypatch.setattr(app_configs, "read_https", lambda url, _: assets[url])
     app_configs.configure_codex(project)
     result = active.read_text()

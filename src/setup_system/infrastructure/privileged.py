@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 from pathlib import Path
 
-from setup_system.infrastructure import release_loader, trusted_bootstrap
+from setup_system.bootstrap import loader
+from setup_system.domain.system_commands import COMMAND, PrivilegedCommand, ReleaseIdentity
 
 
 class PrivilegedExecutor:
@@ -18,39 +18,22 @@ class PrivilegedExecutor:
     @classmethod
     def from_marker(cls, path: Path) -> PrivilegedExecutor | None:
         """Read the user's delivery hint. Root verifies the published tag independently."""
-        from setup_system.infrastructure.config_store import safe_file
+        from setup_system.infrastructure.user_storage import safe_file
 
         safe_file(path, os.getuid())
         if not path.exists():
             return None
         if path.stat().st_size > 8192:
             raise ValueError("Invalid release record size")
-        record = json.loads(path.read_bytes())
-        if not isinstance(record, dict) or record.keys() != {"release", "source_sha"}:
-            raise ValueError("Unknown delivery record")
-        tag, sha = record["release"], record["source_sha"]
-        if (
-            not isinstance(tag, str)
-            or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-dev\.[0-9]+)?", tag)
-            or not isinstance(sha, str)
-            or not re.fullmatch(r"[0-9a-f]{40}", sha)
-        ):
-            raise ValueError("Invalid delivery identity")
-        return cls(tag, sha)
+        record = ReleaseIdentity.model_validate_json(path.read_bytes())
+        return cls(record.release, record.source_sha)
 
-    def run(self, action: str, settings: dict[str, object]) -> None:
+    def run(self, command: PrivilegedCommand) -> None:
         if os.geteuid() == 0:
             raise ValueError("The UI must remain unprivileged")
-        if action not in trusted_bootstrap.SYSTEM_ACTIONS:
-            raise ValueError("Unexpected privileged action")
-        payload = json.dumps(
-            {
-                "release": self.release,
-                "source_sha": self.source_sha,
-                "action": action,
-                "settings": settings,
-            }
-        )
+        checked = COMMAND.validate_python(command)
+        identity = ReleaseIdentity(release=self.release, source_sha=self.source_sha)
+        payload = json.dumps({**identity.model_dump(), **checked.model_dump(mode="json")})
         try:
             # The root adapter owns command deadlines. Never kill dpkg from the UI.
             result = subprocess.run(
@@ -63,7 +46,7 @@ class PrivilegedExecutor:
                     "-B",
                     "-S",
                     "-c",
-                    release_loader.PROGRAM,
+                    loader.PROGRAM,
                 ],
                 input=payload,
                 capture_output=True,

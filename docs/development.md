@@ -4,10 +4,20 @@ Run from the exact repository root. Native checks use uv 0.12.15, locked depende
 and Python 3.14.7; CI additionally checks the CLI's Python 3.12 minimum. They need no
 Docker, sudo, GitHub credentials or graphical session. The isolated resolver regressions
 require `apt-get` and `apt-cache`; they use private cached indexes and simulated plans,
-without network access, package installation or host APT state changes. Source-access
-probes and user operations reuse the running application interpreter; the Debian quality image
-does not install a separate system Python.
-The locked development and application runtime remains Python 3.14.7.
+without network access, package installation or host APT state changes.
+
+The native gate uses an isolated interpreter matching the Debian system ABI to load
+the privileged command service from the built sdist. Prepare that interpreter in the
+uv cache before an offline run. Developers can inspect the selected version in
+[the platform matrix](../manifests/platforms.toml).
+
+When updating Pydantic or its dependencies, copy the upstream wheels recorded in
+the new `uv.lock` into `src/setup_system/resources/privileged_wheels/`.
+Include the pure-Python distributions and the native wheel for each reviewed Debian
+system ABI. Keep the upstream files and their license text intact. The native gate
+checks the exact wheel inventory, hashes and sizes on both architectures, compares
+the resources with both built distributions, and imports the isolated runtime on the
+build machine's architecture.
 
 ```bash
 uv python install 3.14.7

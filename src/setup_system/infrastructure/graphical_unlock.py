@@ -13,13 +13,12 @@ import stat
 import subprocess
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
-from setup_system import installation as system
-from setup_system.infrastructure.boot_recovery import BootRecovery, copy_verified, digest
+from setup_system.bootstrap.source import protected
+from setup_system.domain.system_receipts import UnlockPlan
+from setup_system.infrastructure.boot_recovery import BootRecovery, digest
 from setup_system.infrastructure.palette import palette
-from setup_system.infrastructure.trusted_bootstrap import protected
 
 BOOT = Path("/boot")
 SYS = Path("/sys")
@@ -28,14 +27,6 @@ STATE = Path("/var/lib/setup-system/boot")
 THEMES = Path("/usr/share/plymouth/themes")
 THEME = "setup-system-mocha"
 MIN_SPACE = 64 * 1024 * 1024
-
-
-@dataclass(frozen=True)
-class UnlockPlan:
-    description: str
-    identity: str | None
-    blockers: tuple[str, ...] = ()
-    packages: tuple[str, ...] = ()
 
 
 def _command(args: list[str]) -> str:
@@ -178,18 +169,21 @@ def inspect_unlock() -> UnlockPlan:
             if isinstance(exc, ValueError)
             else "Native boot metadata could not be inspected"
         )
-        return UnlockPlan("Graphical initramfs password prompt", None, (reason,))
+        return UnlockPlan(
+            description="Graphical initramfs password prompt", identity=None, blockers=(reason,)
+        )
     needed = prerequisites()
     dependency = "; install " + ", ".join(needed) + " after backup" if needed else ""
     return UnlockPlan(
-        f"Rebuild {_kernel()} initramfs with a backup and verify GRUB recovery" + dependency,
-        identity,
+        description=f"Rebuild {_kernel()} initramfs with a backup and verify GRUB recovery"
+        + dependency,
+        identity=identity,
         packages=needed,
     )
 
 
-def _theme() -> bytes:
-    colors = palette()
+def _theme(root: Path | None = None) -> bytes:
+    colors = palette(root)
 
     def color(key: str) -> str:
         return "0x" + colors[key][1:]
@@ -273,6 +267,7 @@ def _check_password_unlock() -> None:
 def apply_unlock(
     expected: object,
     *,
+    root: Path | None = None,
     packages: object = (),
     install: Callable[[tuple[str, ...]], None] | None = None,
 ) -> None:
@@ -300,7 +295,7 @@ def apply_unlock(
         if path.exists() and (not path.is_file() or path.stat().st_nlink != 1):
             raise ValueError("Unsupported boot file type or link count")
     desired = {
-        theme: _theme(),
+        theme: _theme(root),
         splash: (
             b'case " $GRUB_CMDLINE_LINUX_DEFAULT " in *" splash "*) ;;\n'
             b'*) GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} splash" ;; esac\n'
@@ -335,6 +330,16 @@ def apply_unlock(
     backup_dir = Path(tempfile.mkdtemp(prefix="unlock-", dir=STATE))
     recovery = BootRecovery(backup_dir, kernel, destinations)
     try:
+        if _identity() != expected:
+            raise ValueError("Boot state changed while backing up the reviewed configuration")
+        config_backup = recovery.originals[config]
+        desired[config] = _theme_config(config_backup[0].read_bytes() if config_backup else b"")
+        for path, content in desired.items():
+            if path != config and recovery.before[path] not in {
+                None,
+                hashlib.sha256(content).hexdigest(),
+            }:
+                raise ValueError(f"Managed boot destination changed during preparation: {path}")
         if needed:
             assert install is not None
             recovery.checkpoint("installing_prerequisites")
@@ -349,6 +354,7 @@ def apply_unlock(
                     if observed is None:
                         raise RuntimeError("A boot package removed a previously installed file")
                     recovery.after[path] = observed
+                    recovery.after_modes[path] = stat.S_IMODE(path.lstat().st_mode)
                     recovery.verify(path)
             desired[config] = _theme_config(config.read_bytes() if config.exists() else b"")
         for path, data in desired.items():
@@ -357,9 +363,7 @@ def apply_unlock(
             if not path.parent.exists():
                 path.parent.mkdir(mode=0o755)
             prior = recovery.originals[path]
-            recovery.intend(path, hashlib.sha256(data).hexdigest())
-            system._write_system(path, data, prior[1] if prior else 0o644)
-            recovery.verify(path)
+            recovery.publish(path, data, prior[1] if prior else 0o644)
         with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=BOOT) as directory:
             candidate = Path(directory) / "initrd"
             fresh_grub = Path(directory) / "grub.cfg"
@@ -369,12 +373,9 @@ def apply_unlock(
             _verify_grub(fresh_grub, kernel)
             for path, prepared in ((image, candidate), (grub, fresh_grub)):
                 prior = recovery.originals[path]
-                expected_digest = digest(prepared)
-                if prior is None or expected_digest is None:
+                if prior is None:
                     raise ValueError("Required boot file disappeared during rebuild")
-                recovery.intend(path, expected_digest)
-                copy_verified(prepared, path, prior[1])
-                recovery.verify(path)
+                recovery.publish(path, prepared, prior[1])
         recovery.checkpoint("needs_reboot")
     except BaseException:
         recovery.restore(packages_attempted=bool(needed))

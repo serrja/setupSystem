@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.application import shell
-from setup_system.application.project_layout import (
+from setup_system.domain.workspace_facts import ShellStatus
+from setup_system.infrastructure import shell
+from setup_system.infrastructure.project_layout import (
     load_layout,
     prepare_owner_directories,
 )
@@ -54,7 +55,14 @@ def test_debian_profile_install_keeps_user_zsh_text_and_history(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
     monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local/state"))
-    status = shell.ShellStatus("fixture", home, home, Path("/bin/bash"), Path("/bin/zsh"), True)
+    status = ShellStatus(
+        user="fixture",
+        home=home,
+        startup_dir=home,
+        login_shell=Path("/bin/bash"),
+        zsh=Path("/bin/zsh"),
+        registered=True,
+    )
     source = Path(__file__).resolve().parents[1]
     targets = shell._targets(source, status)
     assert targets[home / ".zshrc"].startswith(b"# personal setting\n")

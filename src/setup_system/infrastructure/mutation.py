@@ -18,6 +18,9 @@ def user_operation(home: Path | None = None) -> Iterator[None]:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError("Another configuration operation is running for this user") from None
+        from setup_system.infrastructure.encryption import validate_home_access
+
+        validate_home_access(home)
         yield
     finally:
         os.close(descriptor)

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import replace
-from pathlib import Path
+from collections.abc import Callable
 from threading import Event
-from typing import ClassVar, Literal, Protocol, cast
+from typing import ClassVar, Literal, cast
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -28,17 +27,12 @@ from textual.widgets import (
     TabPane,
 )
 
-from setup_system.application.installer import InstallationService, InstallRequest, Operation
+from setup_system.application.ui_ports import InstallationPort, ViewServices
 from setup_system.diagnostics import PartialApplyError, error_text
-from setup_system.domain.catalog import components
 from setup_system.domain.displays import MonitorLayout
-from setup_system.domain.settings import Section, SystemSettings, ThemeSettings, UserSettings
-from setup_system.infrastructure.config_store import ConfigStore, SettingsPaths, save_intentions
-from setup_system.infrastructure.theme import palette, preview
-
-
-class InstallationPort(Protocol):
-    def run(self, request: InstallRequest) -> int: ...
+from setup_system.domain.operations import InstallRequest, Operation
+from setup_system.domain.settings import Section, SystemSettings, ThemeSettings
+from setup_system.domain.tool_requests import ToolRequest, mutates
 
 
 class Prompt(ModalScreen[str | None]):
@@ -146,18 +140,11 @@ class InstallationApp(App[int]):
     ]
 
     def __init__(
-        self, root: Path, request: InstallRequest, *, service: InstallationPort | None = None
+        self, request: InstallRequest, *, service: InstallationPort, views: ViewServices
     ) -> None:
         super().__init__()
-        self.root, self.request = root, request
+        self.request, self.service, self.views = request, service, views
         self.interaction = TextualInteraction(self)
-        self.service = (
-            service
-            if service is not None
-            else InstallationService(
-                root, interaction=self.interaction, authorize=self.authenticate
-            )
-        )
         self.busy, self.last_code, self.quit_pending = False, 0, False
         self.cancel_requested = Event()
         self.output_lines: list[str] = []
@@ -168,7 +155,7 @@ class InstallationApp(App[int]):
         self.settings = request.settings
         self.system = request.system
         self.running_request: InstallRequest | None = None
-        colors = palette()
+        colors = views.palette
         self.register_theme(
             Theme(
                 name="mocha-green",
@@ -247,20 +234,18 @@ class InstallationApp(App[int]):
                     placeholder="Rounding: 0-24",
                     id="rounding",
                 )
-                yield Label(preview(self.settings.theme), id="theme-preview")
+                yield Label(self.views.preview(self.settings.theme), id="theme-preview")
                 selected = {
                     *self.settings.apps,
                     *self.settings.optional_apps,
                     *self.settings.language_profiles,
                 }
-                from setup_system.infrastructure.catalog_deb import last_attempt
-
-                for entry in components():
+                for entry in self.views.catalog.components():
                     title = (
                         entry.title if entry.blocker is None else f"{entry.title} · {entry.blocker}"
                     )
                     yield Checkbox(title, value=entry.id in selected, id=entry.id.replace("_", "-"))
-                    attempt = last_attempt(entry.id)
+                    attempt = self.views.last_attempt(entry.id)
                     if attempt:
                         yield Label(f"Last download: {attempt}", markup=False)
                 yield Select(
@@ -274,9 +259,7 @@ class InstallationApp(App[int]):
                     allow_blank=False,
                 )
                 yield Label("Optional cleanup (nothing selected by default)")
-                from setup_system.infrastructure.cleanup import cleanup_catalog
-
-                for name in sorted(cleanup_catalog()):
+                for name in self.views.cleanup:
                     yield Checkbox(
                         name,
                         value=name in self.settings.cleanup,
@@ -294,43 +277,26 @@ class InstallationApp(App[int]):
         yield Footer()
 
     def on_mount(self) -> None:
-        if not isinstance(self.service, InstallationService):
-            return
         try:
-            self.settings, self.settings_revision = ConfigStore(
-                SettingsPaths().user, UserSettings
-            ).read()
-            draft = SettingsPaths().user.parent / "system-intentions.toml"
-            try:
-                stored, self.root_revision = ConfigStore(
-                    SettingsPaths().system, SystemSettings, uid=0
-                ).read()
-            except PermissionError:
-                stored = SystemSettings()
-                self.notify(
-                    "Base system settings are unreadable. See the system directory recovery "
-                    "procedure in docs/configuration.md.",
-                    severity="warning",
-                )
-            if draft.exists():
-                self.system, self.system_revision = ConfigStore(draft, SystemSettings).read()
-            else:
-                self.system = stored
+            saved = self.views.settings.read()
+            self.settings, self.settings_revision = saved.user, saved.user_revision
+            self.system, self.system_revision = saved.system, saved.draft_revision
+            self.root_revision = saved.system_revision
+            if saved.warning:
+                self.notify(saved.warning, severity="warning")
             self.revisions_loaded = True
             selected = {
                 *self.settings.apps,
                 *self.settings.optional_apps,
                 *self.settings.language_profiles,
             }
-            for entry in components():
+            for entry in self.views.catalog.components():
                 self.query_one("#" + entry.id.replace("_", "-"), Checkbox).value = (
                     entry.id in selected
                 )
             self.query_one("#desktop-theme", Checkbox).value = self.settings.desktop_theme
             self.query_one("#cleanup-mode", Select).value = self.settings.cleanup_mode
-            from setup_system.infrastructure.cleanup import cleanup_catalog
-
-            for name in cleanup_catalog():
+            for name in self.views.cleanup:
                 self.query_one("#cleanup-" + name.replace(".", "-"), Checkbox).value = (
                     name in self.settings.cleanup
                 )
@@ -344,7 +310,7 @@ class InstallationApp(App[int]):
             self.query_one("#effects", Checkbox).value = self.settings.theme.effects
             self.query_one("#opacity", Input).value = str(self.settings.theme.opacity)
             self.query_one("#rounding", Input).value = str(self.settings.theme.rounding)
-            self.query_one("#theme-preview", Label).update(preview(self.settings.theme))
+            self.query_one("#theme-preview", Label).update(self.views.preview(self.settings.theme))
         except (OSError, ValueError) as exc:
             self.query_one("#apply", Button).disabled = True
             self.query_one("#save", Button).disabled = True
@@ -357,7 +323,7 @@ class InstallationApp(App[int]):
     def update_preview(self) -> None:
         try:
             selected = self.snapshot(Operation.PLAN).settings.theme
-            self.query_one("#theme-preview", Label).update(preview(selected))
+            self.query_one("#theme-preview", Label).update(self.views.preview(selected))
         except (OSError, ValueError):
             pass
 
@@ -374,14 +340,16 @@ class InstallationApp(App[int]):
             opacity=float(self.query_one("#opacity", Input).value),
             rounding=int(self.query_one("#rounding", Input).value),
         )
-        from setup_system.infrastructure.cleanup import cleanup_catalog
-
-        settings = self.settings.model_copy(
-            update={
+        settings = self.settings.validated(
+            **{
                 "theme": theme,
                 "desktop_theme": checked("desktop-theme"),
                 **{
-                    field: tuple(e.id for e in components(kind) if checked(e.id.replace("_", "-")))
+                    field: tuple(
+                        e.id
+                        for e in self.views.catalog.components(kind)
+                        if checked(e.id.replace("_", "-"))
+                    )
                     for field, kind in (
                         ("apps", "app"),
                         ("language_profiles", "language"),
@@ -391,7 +359,7 @@ class InstallationApp(App[int]):
                 "cleanup_mode": self.query_one("#cleanup-mode", Select).value,
                 "cleanup": tuple(
                     name
-                    for name in sorted(cleanup_catalog())
+                    for name in self.views.cleanup
                     if checked("cleanup-" + name.replace(".", "-"))
                 ),
             }
@@ -407,8 +375,8 @@ class InstallationApp(App[int]):
             plymouth=checked("plymouth"),
         )
         section = Section(self.query_one("#sections", TabbedContent).active)
-        return replace(
-            self.request,
+        self.views.catalog.validate_settings(settings)
+        return self.request.validated(
             operation=operation,
             section=section,
             system=system,
@@ -422,14 +390,13 @@ class InstallationApp(App[int]):
 
     @on(Button.Pressed, "#monitors")
     def monitors(self) -> None:
-        from setup_system.infrastructure.displays import discover_outputs
         from setup_system.tui.displays import DisplaysScreen
 
         if self.busy:
             self.notify("Wait for the running operation before previewing a display change.")
             return
         try:
-            outputs = discover_outputs()
+            outputs = self.views.displays.discover()
             if not outputs:
                 raise ValueError("No connected Hyprland displays")
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
@@ -438,14 +405,15 @@ class InstallationApp(App[int]):
 
         def selected(layouts: tuple[MonitorLayout, ...] | None) -> None:
             if layouts is not None:
-                self.settings = self.settings.model_copy(update={"monitors": layouts})
+                self.settings = self.settings.validated(monitors=layouts)
                 self.query_one("#desktop-theme", Checkbox).value = True
 
-        self.push_screen(DisplaysScreen(outputs, self.settings.monitors), selected)
+        self.push_screen(
+            DisplaysScreen(outputs, self.settings.monitors, self.views.displays), selected
+        )
 
     @on(Button.Pressed, "#tools")
     def tools(self) -> None:
-        from setup_system.application.tools import ToolRequest
         from setup_system.tui.tools import ToolsScreen
 
         def selected(request: ToolRequest | None) -> None:
@@ -459,31 +427,16 @@ class InstallationApp(App[int]):
                 self.execute_tool(request)
 
         try:
-            self.push_screen(ToolsScreen(self.root), selected)
+            self.push_screen(ToolsScreen(self.views.tools.choices()), selected)
         except (ValueError, OSError, RuntimeError) as exc:
             self.notify(error_text(exc), severity="error")
 
     @work(thread=True, exclusive=True, exit_on_error=False)
-    def execute_tool(self, request: object) -> None:
-        from setup_system.application.tools import MUTATING_TOOLS, ToolRequest, execute
-
-        assert isinstance(request, ToolRequest)
+    def execute_tool(self, request: ToolRequest) -> None:
         try:
             confirmed = True
-            if request.action in MUTATING_TOOLS:
-                details = [
-                    str(value)
-                    for value in (
-                        request.name,
-                        request.destination,
-                        request.version,
-                        request.owner_directory,
-                        request.backup_id,
-                    )
-                    if value
-                ]
-                if request.action == "restore":
-                    details.append(execute(self.root, replace(request, action="restore_preview")))
+            if mutates(request):
+                details = self.views.tools.describe(request)
                 confirmed = self.interaction.confirm(
                     "\n".join([request.action.replace("_", " ").capitalize() + "?", *details])
                 )
@@ -491,14 +444,11 @@ class InstallationApp(App[int]):
                 self.post_message(Finished(2))
                 return
             if request.action in {"open_project", "open_codex"}:
-
-                def open_editor() -> str:
-                    with self.suspend():
-                        return execute(self.root, request, confirmed=True)
-
-                result = self.call_from_thread(open_editor)
+                result = self.with_terminal(
+                    lambda: self.views.tools.execute(request, confirmed=True)
+                )
             else:
-                result = execute(self.root, request, confirmed=confirmed)
+                result = self.views.tools.execute(request, confirmed=confirmed)
             self.post_message(Output(result))
             code = 0
         except PartialApplyError as exc:
@@ -517,12 +467,9 @@ class InstallationApp(App[int]):
             return
         try:
             request = self.snapshot(Operation.PLAN)
-            from setup_system.infrastructure.mutation import user_operation
-
-            with user_operation(Path.home()):
-                self.settings_revision, self.system_revision = save_intentions(
-                    request.settings, request.system, self.settings_revision, self.system_revision
-                )
+            self.settings_revision, self.system_revision = self.views.settings.save(
+                request.settings, request.system, self.settings_revision, self.system_revision
+            )
             self.settings = request.settings
             self.system = request.system
             self.query_one("#status", Label).update("Intentions saved; no system changes applied.")
@@ -540,8 +487,7 @@ class InstallationApp(App[int]):
     @on(Button.Pressed, "#stop")
     def stop(self) -> None:
         self.cancel_requested.set()
-        if isinstance(self.service, InstallationService):
-            self.service.cancel.set()
+        self.service.cancel.set()
         self.query_one("#status", Label).update(
             "Cancellation requested; waiting for a safe boundary."
         )
@@ -556,7 +502,7 @@ class InstallationApp(App[int]):
 
     def _start(self, operation: Operation) -> None:
         if self.busy:
-            if operation == Operation.PLAN and isinstance(self.service, InstallationService):
+            if operation == Operation.PLAN:
                 try:
                     self.query_one("#output", RichLog).write(
                         "\n".join(self.service.plan(self.snapshot(operation)).describe())
@@ -565,12 +511,10 @@ class InstallationApp(App[int]):
                     self.notify(error_text(exc), severity="error")
             return
         try:
-            if isinstance(self.service, InstallationService) and operation == Operation.APPLY:
+            if operation == Operation.APPLY:
                 if not self.revisions_loaded:
                     raise ValueError("Reload valid settings before applying changes")
-                draft = SettingsPaths().user.parent / "system-intentions.toml"
-                if ConfigStore(draft, SystemSettings).read()[1] != self.system_revision:
-                    raise ValueError("System intentions changed on disk. Reopen the application.")
+                self.views.settings.check_draft(self.system_revision)
             request = self.snapshot(operation)
         except (ValueError, OSError) as exc:
             self.notify(error_text(exc), severity="error")
@@ -592,19 +536,17 @@ class InstallationApp(App[int]):
             code = self.service.run(request)
         except Exception as exc:
             self.post_message(Output("FAILED: " + error_text(exc)))
-            code = 5
+            self.post_message(Finished(5, "Failed"))
+            return
+        status = self.service.status
         self.post_message(
-            Finished(
-                code, self.service.status if isinstance(self.service, InstallationService) else None
-            )
+            Finished(code, status.value.replace("_", " ").capitalize() if status else None)
         )
 
-    def authenticate(self) -> bool:
-        """Sudo reads its password from the terminal; Python never receives it."""
-
-        def run() -> bool:
+    def with_terminal[T](self, callback: Callable[[], T]) -> T:
+        def run() -> T:
             with self.suspend():
-                return subprocess.run(["/usr/bin/sudo", "-v"], check=False).returncode == 0
+                return callback()
 
         return self.call_from_thread(run)
 
@@ -617,20 +559,19 @@ class InstallationApp(App[int]):
     def finished(self, message: Finished) -> None:
         self.last_code, self.busy = message.code, False
         if (
-            isinstance(self.service, InstallationService)
-            and self.running_request is not None
+            self.running_request is not None
             and self.running_request.operation == Operation.APPLY
             and "system_settings" in self.service.completed
         ):
             try:
-                stored, revision = ConfigStore(SettingsPaths().system, SystemSettings, uid=0).read()
+                stored, revision = self.views.settings.system()
                 if stored != self.running_request.system:
                     raise ValueError("System settings changed after Apply. Reopen the application.")
                 self.root_revision = revision
             except (OSError, ValueError) as exc:
                 self.revisions_loaded = False
                 self.notify(error_text(exc), severity="error")
-        valid = self.revisions_loaded or not isinstance(self.service, InstallationService)
+        valid = self.revisions_loaded
         self.query_one("#save", Button).disabled = not valid
         self.query_one("#apply", Button).disabled = not valid
         self.query_one("#stop", Button).disabled = True
