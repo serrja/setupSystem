@@ -13,8 +13,7 @@ import types
 from pathlib import Path
 
 import pytest
-
-from setup_system.infrastructure.theme import render
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets/hyprland"
@@ -22,6 +21,64 @@ panel = types.ModuleType("managed_hyprland_panel")
 panel.__file__ = str(ASSETS / "panel.py")
 sys.modules[panel.__name__] = panel
 exec(compile((ASSETS / "panel.py").read_text(), panel.__file__, "exec"), panel.__dict__)
+
+
+@pytest.fixture(scope="module")
+def waybar_template(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Render the production Waybar task with the packaged workspace filter and palette."""
+    run = tmp_path_factory.mktemp("panel-render")
+    (run / "files").mkdir()
+    tasks = yaml.safe_load((ROOT / "ansible/tasks/user_plan.yml").read_text())
+    task = next(task for task in tasks if "ansible.builtin.template" in task)
+    play = {
+        "hosts": "localhost",
+        "gather_facts": False,
+        "vars": {
+            "run_dir": str(run),
+            "release_root": str(ROOT),
+            "intent": {"theme": {}},
+            "facts": {"xdg": {}},
+            "render_ctx": (
+                "{{ (lookup('ansible.builtin.file', release_root + "
+                "'/config/shared/palette.toml') | native_toml) "
+                "| workspace_context(intent, facts) }}"
+            ),
+            "templates": [
+                {
+                    "source": str(ASSETS / "waybar.json"),
+                    "path": "waybar.json",
+                    "mode": "0600",
+                    "binary": "",
+                }
+            ],
+        },
+        "tasks": [task],
+    }
+    fixture = run / "panel.yml"
+    fixture.write_text(yaml.safe_dump([play]))
+    result = subprocess.run(
+        [
+            str(Path(sys.executable).with_name("ansible-playbook")),
+            "-i",
+            "localhost,",
+            "-c",
+            "local",
+            str(fixture),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        env={
+            "HOME": str(run),
+            "PATH": os.defpath,
+            "LANG": "C.UTF-8",
+            "ANSIBLE_CONFIG": str(ROOT / "ansible.cfg"),
+            "ANSIBLE_FILTER_PLUGINS": str(ROOT / "ansible/filter_plugins"),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return (run / "files/waybar.json").read_text()
 
 
 def device(root: Path, group: str, name: str, **attributes: str) -> None:
@@ -43,8 +100,10 @@ def test_hardware_selects_real_system_batteries_and_native_backlight(tmp_path: P
     assert panel.hardware(tmp_path) == (("BAT7",), "native")
 
 
-def test_generated_panel_has_no_fake_desktop_battery_or_legacy_dispatch(tmp_path: Path) -> None:
-    template = json.loads(render((ASSETS / "waybar.json").read_text()))
+def test_generated_panel_has_no_fake_desktop_battery_or_legacy_dispatch(
+    waybar_template: str, tmp_path: Path
+) -> None:
+    template = json.loads(waybar_template)
     config = panel.configuration(template, tmp_path / "cache with 'quotes", tmp_path)
     assert "battery" not in config["modules-right"]
     assert "backlight" not in config["modules-right"]
@@ -60,13 +119,12 @@ def test_generated_panel_has_no_fake_desktop_battery_or_legacy_dispatch(tmp_path
 
 
 def test_battery_instances_show_each_real_device_without_fabricated_aggregate(
+    waybar_template: str,
     tmp_path: Path,
 ) -> None:
     for name in ("BAT0", "BAT1"):
         device(tmp_path, "power_supply", name, type="Battery", scope="System", present="1")
-    config = panel.configuration(
-        json.loads(render((ASSETS / "waybar.json").read_text())), tmp_path, tmp_path
-    )
+    config = panel.configuration(json.loads(waybar_template), tmp_path, tmp_path)
     batteries = [config[name] for name in config["modules-right"] if name.startswith("battery#")]
     assert [item["bat"] for item in batteries] == ["BAT0", "BAT1"]
     assert all("format-charging" in item and "format-full" in item for item in batteries)
@@ -94,7 +152,9 @@ def executable(path: Path, source: str) -> None:
     path.chmod(0o700)
 
 
-def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(tmp_path: Path) -> None:
+def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(
+    waybar_template: str, tmp_path: Path
+) -> None:
     tools = tmp_path / "tools"
     tools.mkdir()
     record = tmp_path / "calls"
@@ -107,9 +167,7 @@ def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(tmp_pat
     state = tmp_path / "cache with 'quotes"
     state.mkdir()
     panel.publish(state, {1: {"text": "1", "class": ["active"]}})
-    config = panel.configuration(
-        json.loads(render((ASSETS / "waybar.json").read_text())), state, tmp_path
-    )
+    config = panel.configuration(json.loads(waybar_template), state, tmp_path)
     module = config["custom/workspace-1"]
     env = {"PATH": str(tools) + os.pathsep + os.defpath, "CALLS": str(record)}
     result = subprocess.run(
@@ -122,7 +180,7 @@ def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(tmp_pat
 
 
 def test_broker_observes_real_unix_events_and_refreshes_one_owned_waybar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    waybar_template: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A proc cwd alias keeps AF_UNIX addresses below108 bytes inside deep G03 fixtures.
     monkeypatch.chdir(tmp_path)
@@ -171,7 +229,7 @@ while True:
     }
     profile = tmp_path / "profile"
     profile.mkdir()
-    (profile / "waybar.json").write_text(render((ASSETS / "waybar.json").read_text()))
+    (profile / "waybar.json").write_text(waybar_template)
     (profile / "style.css").touch()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind("runtime/hypr/fixture/.socket2.sock")
@@ -218,9 +276,6 @@ def test_optional_audio_bus_failure_does_not_prevent_desktop_helpers(tmp_path: P
         "from pathlib import Path\n"
         "with Path(os.environ['CALLS']).open('a') as f:f.write('panel\\n')\n"
     )
-    python = data / "setup-system/runtime/bin/python"
-    python.parent.mkdir(parents=True)
-    python.symlink_to(sys.executable)
     for name in ("mako", "hypridle", "swaybg", "wl-paste", "fixture-agent"):
         executable(
             tools / name,
@@ -277,9 +332,6 @@ while True:
  signal.pause()
 """
     (profile / "panel.py").write_text(helper)
-    python = data / "setup-system/runtime/bin/python"
-    python.parent.mkdir(parents=True)
-    python.symlink_to(sys.executable)
     for name in ("mako", "hypridle", "swaybg", "wl-paste", "fixture-agent"):
         executable(tools / name, helper)
     executable(tools / "dbus-update-activation-environment", "raise SystemExit(0)\n")

@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import os
 import re
+import runpy
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 
-from setup_system.adapters.debian.hyprland import package_arguments
+ROOT = Path(__file__).resolve().parents[1]
 
 STABLE_XKB = "1.7.0-2"
 BACKPORT_XKB = "1.13.1-1~bpo13+1"
@@ -126,15 +128,11 @@ def run_apt(
     )
 
 
-def profile_arguments(architecture: str) -> list[str]:
-    return [
-        argument
-        for argument in package_arguments(
-            os_release={"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
-            architecture=architecture,
-        )
-        if argument.split("=", 1)[0] in PROFILE_PACKAGES
-    ]
+def profile_arguments() -> list[str]:
+    native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
+    catalog = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
+    selected = native["package_names"]({"hyprland": True}, catalog, {})
+    return [p for p in selected if p.partition("/")[0] in PROFILE_PACKAGES]
 
 
 def simulate(configuration: Path, packages: list[str]) -> subprocess.CompletedProcess[str]:
@@ -162,7 +160,7 @@ def test_profile_resolves_coherent_xkb_backports_without_removal(
     assert policy.stdout.count(f"Candidate: {STABLE_XKB}") == 3, policy.stdout
     assert f"{BACKPORT_XKB} 100" in policy.stdout, policy.stdout
     assert f"{STABLE_XKB} 500" in policy.stdout, policy.stdout
-    result = simulate(configuration, profile_arguments(architecture))
+    result = simulate(configuration, profile_arguments())
     assert result.returncode == 0, result.stdout + result.stderr
     for name in XKB_PACKAGES:
         planned = next(
@@ -171,7 +169,7 @@ def test_profile_resolves_coherent_xkb_backports_without_removal(
         assert f"({BACKPORT_XKB} " in planned, result.stdout
     assert "Remv " not in result.stdout
     assert "downgraded" not in result.stdout.lower()
-    repeated = simulate(configuration, profile_arguments(architecture))
+    repeated = simulate(configuration, profile_arguments())
     assert repeated.returncode == 0, repeated.stdout + repeated.stderr
     assert repeated.stdout == result.stdout
     assert (tmp_path / "state/status").read_bytes() == before
@@ -191,7 +189,7 @@ def test_profile_resolves_coherent_xkb_backports_without_removal(
             if (fields["Package"], fields["Version"]) in selected:
                 records.append(record + "\nStatus: install ok installed\n\n")
     (tmp_path / "state/status").write_text("".join(records))
-    completed = simulate(configuration, profile_arguments(architecture))
+    completed = simulate(configuration, profile_arguments())
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert not any(line.startswith(("Inst ", "Remv ")) for line in completed.stdout.splitlines())
 
@@ -207,10 +205,11 @@ def test_resolver_rejects_incomplete_xkb_backports_cohort(
     configuration = apt_workspace(tmp_path, architecture, installed=False)
     packages = [
         argument
-        for argument in profile_arguments(architecture)
-        if argument.split("=", 1)[0] not in XKB_PACKAGES
+        for argument in profile_arguments()
+        if argument.partition("/")[0] not in XKB_PACKAGES
     ]
-    packages.extend(f"{name}={BACKPORT_XKB}" for name in XKB_PACKAGES[:partial_pins])
+    packages.extend(f"{name}/trixie-backports" for name in XKB_PACKAGES[:partial_pins])
+    packages.extend(f"{name}/trixie" for name in XKB_PACKAGES[partial_pins:])
     result = simulate(configuration, packages)
     assert result.returncode == 100, result.stdout + result.stderr
     assert "libxkbcommon0" in result.stdout + result.stderr

@@ -1,36 +1,24 @@
-"""The installed entrypoint opens Textual; private adapters are not a second user UI."""
+"""Open the packaged Make target from an installed Python distribution."""
 
-from __future__ import annotations
-
-import argparse
 import os
 import sys
 from pathlib import Path
 
-from setup_system.resource_locator import ResourceLocator
+from setup_system.runner import _environment, resource_root
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Open the setupSystem Textual application.")
-    parser.add_argument(
-        "--source", type=Path, default=ResourceLocator.for_root().root, help=argparse.SUPPRESS
-    )
-    parser.add_argument("--user", help=argparse.SUPPRESS)
-    arguments = parser.parse_args()
-    if os.geteuid() == 0:
-        parser.error("Open setup-system as the normal desktop user; sudo is requested on Apply")
-    from setup_system.infrastructure.identity import resolve_target
-
-    target = resolve_target(arguments.user)
-    if Path.home() != target.home:
-        parser.error("HOME must match the current account's passwd entry")
-    if arguments.user is not None:
-        import pwd
-
-        if pwd.getpwnam(arguments.user).pw_uid != os.getuid():
-            parser.error("The selected user differs from the current account")
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        parser.error("An interactive terminal is required")
-    from setup_system.composition import build_app
-
-    raise SystemExit(build_app(arguments.source.resolve()).run() or 0)
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print("setup-system opens the Textual workstation configurator.")
+        return
+    if sys.argv[1:]:
+        print("Usage: setup-system", file=sys.stderr)
+        raise SystemExit(2)
+    if os.getuid() == 0 or os.geteuid() != os.getuid():
+        print("Run setup-system as a normal user", file=sys.stderr)
+        raise SystemExit(2)
+    root = resource_root()
+    env = _environment()
+    env["PATH"] = str(Path(sys.executable).parent) + ":/usr/bin:/bin"
+    os.chdir(root)
+    os.execve("/usr/bin/make", ["make", "-rR", "-j1", "-f", str(root / "Makefile"), "run"], env)

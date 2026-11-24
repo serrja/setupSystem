@@ -25,14 +25,14 @@ class RtkStatus(ContractModel):
     version: str | None
     product_matches: StrictBool
 
-    def describe(self, pinned_version: str) -> str:
+    def describe(self, selected_version: str) -> str:
         if self.path is not None and not self.product_matches:
             return "blocked: command named rtk is not rtk-ai/rtk"
-        if self.version == pinned_version:
-            return "unchanged: pinned RTK is already available"
+        if self.version == selected_version:
+            return "unchanged: selected RTK is already available"
         if self.path is not None:
-            return f"update available: installed {self.version}, pinned {pinned_version}"
-        return f"install available: pinned {pinned_version}"
+            return f"update available: managed RTK → {selected_version}"
+        return f"install available: selected {selected_version}"
 
 
 class GitIdentity(ContractModel):

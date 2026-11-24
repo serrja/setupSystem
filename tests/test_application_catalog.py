@@ -1,219 +1,152 @@
-"""Validate release data and exercise a real local Debian archive without installing it."""
+"""Exercise native catalog resolution, Debian archive identity and safe Codex merges."""
 
 import hashlib
-import json
+import runpy
 import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
+from ansible.errors import AnsibleFilterError
 
-from setup_system.domain.settings import UserSettings
-from setup_system.infrastructure import catalog_deb
-from setup_system.infrastructure.app_configs import codex_settings
-from setup_system.infrastructure.catalog_repository import load_components
-from setup_system.infrastructure.downloads import DownloadError, DownloadFailure, DownloadResult
+from setup_system.file_tasks import restore
+from setup_system.infrastructure import codex_profile, happ_facts
+from setup_system.infrastructure.managed_files import apply_files
+from setup_system.suggestions import Catalog
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_every_component_round_trips_through_selection() -> None:
-    catalog = load_components()
-    for entry in catalog.components():
-        key = {"app": "apps", "language": "language_profiles", "optional": "optional_apps"}[
-            entry.kind
-        ]
-        settings = UserSettings.model_validate({key: [entry.id]})
-        assert catalog.selected(settings) == (entry,)
-    with pytest.raises(ValueError, match="catalog"):
-        catalog.selected(UserSettings.model_validate({"apps": ["arbitrary_executor"]}))
+    config = ROOT / "config"
+    picker = Catalog(config)
+    entries = tomllib.loads((config / "workspace/applications.toml").read_text())
+    validate = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["validate_request"]
+    for name, entry in entries.items():
+        field = "languages" if entry["kind"] == "language" else "apps"
+        assert getattr(picker, field)[name] == entry["title"]
+        request = {"schema": 1, "settings": {field: [name]}, "expected": None}
+        assert validate(request, "workspace", entries, picker.cleanup)[field] == [name]
+    with pytest.raises(AnsibleFilterError, match="catalog"):
+        validate(
+            {"schema": 1, "settings": {"apps": ["unknown"]}, "expected": None},
+            "workspace",
+            entries,
+            picker.cleanup,
+        )
 
 
 def test_codex_preserves_account_choices_and_permission_profiles() -> None:
-    existing = b'# owner choice\nmodel="my-model"\nmodel_reasoning_effort="medium"\n'
-    existing += b'default_permissions="private"\n'
-    result = codex_settings(existing)
+    profile = b'# owner choice\nmodel="my-model"\nmodel_reasoning_effort="medium"\n'
+    result = codex_profile.codex_settings(profile + b'default_permissions="private"\n')
     parsed = tomllib.loads(result.decode())
     assert b"# owner choice" in result
     assert parsed["model_reasoning_effort"] == "medium" and parsed["model"] == "my-model"
     assert parsed["default_permissions"] == "private" and "sandbox_mode" not in parsed
-    assert tomllib.loads(codex_settings(b"").decode()) == {
+    assert tomllib.loads(codex_profile.codex_settings(b"").decode()) == {
         "sandbox_mode": "workspace-write",
         "approval_policy": "on-request",
     }
 
 
 def test_release_policy_pin_matches_repository_instructions() -> None:
-    root = Path(__file__).resolve().parents[1]
-    catalog = tomllib.loads((root / "manifests/projects.toml").read_text())
-    baseline = next(
-        item["policy"] for item in catalog["project"] if item["id"] == "serrja/baseRules"
-    )
-    assert f"/blob/{baseline['commit']}/{baseline['document']}" in (root / "AGENTS.md").read_text()
+    baseline = tomllib.loads((ROOT / "config/workspace/rules.toml").read_text())
+    assert f"/blob/{baseline['commit']}/{baseline['document']}" in (ROOT / "AGENTS.md").read_text()
+    raw = (ROOT / "config/workspace/codex/engineering.md").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == baseline["sha256"]
 
 
-def test_catalog_archive_verification_retry_and_readback(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    package = tmp_path / "pkg/DEBIAN"
-    package.mkdir(parents=True)
-    package.chmod(0o755)
-    (package / "control").write_text(
-        "Package: chatgpt\nVersion: 1.0\nArchitecture: amd64\n"
-        "Maintainer: Fixture <test@example.invalid>\nDescription: synthetic data\n"
+def test_catalog_archive_verification_retry_and_readback(tmp_path):
+    validate = runpy.run_path(str(ROOT / "ansible/files/apt_apply.py"))["validate_deb"]
+    directory = tmp_path / "pkg/DEBIAN"
+    directory.mkdir(parents=True, mode=0o755)
+    directory.chmod(0o755)
+    (directory / "control").write_text(
+        "Package: happ\nVersion: 1.0-1\nArchitecture: amd64\n"
+        "Maintainer: Fixture <test@example.invalid>\nDescription: Synthetic fixture\n"
     )
     archive = tmp_path / "test.deb"
     subprocess.run(
-        ["dpkg-deb", "--build", "--root-owner-group", str(package.parent), str(archive)], check=True
+        ["dpkg-deb", "--build", "--root-owner-group", str(directory.parent), str(archive)],
+        check=True,
     )
-    data = archive.read_bytes()
-    sha = hashlib.sha256(data).hexdigest()
-    manifests = tmp_path / "manifests"
-    manifests.mkdir()
-    (manifests / "platforms.toml").write_bytes(
-        (Path(__file__).resolve().parents[1] / "manifests/platforms.toml").read_bytes()
-    )
-    manifest = manifests / "applications.toml"
-    manifest.write_text(
-        '[chatgpt]\nkind="app"\ntitle="ChatGPT"\nhandler="catalog_deb"\n[chatgpt.artifacts.amd64]\nversion="1.0"\n'
-        f'url="https://persistent.oaistatic.com/pinned.deb"\nsha256="{sha}"\n'
-    )
-    records = tmp_path / "attempts"
-    monkeypatch.setattr(catalog_deb, "ATTEMPTS", records)
-
-    # System state is redirected to the private fixture. No host paths are opened.
-    def record(path, content, mode=0o600):
-        assert path.parent == records
-        records.mkdir(exist_ok=True)
-        path.write_bytes(content)
-
-    monkeypatch.setattr(catalog_deb, "write_system", record)
-
-    def fail(*args):
-        raise DownloadError(DownloadFailure.HTTP, host="persistent.oaistatic.com", status=403)
-
-    monkeypatch.setattr(catalog_deb, "copy_https", fail)
-    (tmp_path / "first").mkdir()
-    with pytest.raises(DownloadError):
-        catalog_deb.stage_deb(tmp_path, "chatgpt", "amd64", tmp_path / "first")
-    row = json.loads((records / "chatgpt.json").read_bytes())
-    assert row["time"] and "403" in row["result"]
-
-    def acquire(url, target, policy):
-        target.write(data)
-        return DownloadResult(len(data), sha)
-
-    monkeypatch.setattr(catalog_deb, "copy_https", acquire)
-    stage = tmp_path / "retry"
-    stage.mkdir()
-    assert catalog_deb.stage_deb(tmp_path, "chatgpt", "amd64", stage).read_bytes() == data
-    catalog_deb.record_reported_attempts(capsys.readouterr().out)
-    assert "verified" in catalog_deb.last_attempt("chatgpt")
-    with pytest.raises(ValueError, match="No verified"):
-        catalog_deb.stage_deb(tmp_path, "chatgpt", "arm64", stage)
-    manifest.write_text(manifest.read_text().replace(sha, "0" * 64))
-    (tmp_path / "changed").mkdir()
-    with pytest.raises(ValueError, match="checksum"):
-        catalog_deb.stage_deb(tmp_path, "chatgpt", "amd64", tmp_path / "changed")
-    catalog_deb.record_reported_attempts(capsys.readouterr().out)
-    assert "checksum" in catalog_deb.last_attempt("chatgpt")
+    record = {
+        "checksum": "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "version": "1.0",
+    }
+    with pytest.raises(ValueError, match="changed"):
+        validate(archive, "happ", {**record, "checksum": "sha256:" + "0" * 64}, "amd64")
+    assert validate(archive, "happ", record, "amd64") == "1.0-1"
+    with pytest.raises(ValueError, match="identity"):
+        validate(archive, "happ", record, "arm64")
 
 
 @pytest.mark.parametrize(
-    ("current", "active", "accepted"),
-    [
-        ("1.0", 3, True),
-        ("1.0", 0, False),
-        ("2.0", 3, False),
-        (None, 3, False),
-    ],
+    ("current", "active", "accept"),
+    [("1.0", False, True), ("1.0", True, False), ("2.0", False, False), (None, False, False)],
 )
 def test_happ_upgrade_requires_confirmed_version_and_disconnected_service(
-    current, active, accepted
+    monkeypatch, current, active, accept
 ):
-    from setup_system.adapters.debian.happ_service import check_existing_happ
-
-    def command(argv, **kwargs):
-        if argv[0] == "/usr/bin/dpkg-query":
-            state = f"install ok installed\n{current}\n" if current else ""
-            return subprocess.CompletedProcess(argv, 0 if current else 1, state)
-        assert argv == ["/usr/bin/systemctl", "--quiet", "is-active", "happd.service"]
-        return subprocess.CompletedProcess(argv, active)
-
-    if accepted:
-        check_existing_happ("3.0", expected_happ_version="1.0", run=command)
+    inactive = {"ActiveState": "inactive"}
+    monkeypatch.setattr(happ_facts, "installed_version", lambda: current)
+    monkeypatch.setattr(
+        happ_facts, "unit_info", lambda: {"ActiveState": "active"} if active else inactive
+    )
+    monkeypatch.setattr(
+        happ_facts.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 1)
+    )
+    expected = {"installed": "1.0", "unit": inactive}
+    if accept:
+        happ_facts.verify_before(expected, "3.0")
     else:
         with pytest.raises(ValueError):
-            check_existing_happ("3.0", expected_happ_version="1.0", run=command)
+            happ_facts.verify_before(expected, "3.0")
 
 
 def test_codex_delivers_verified_policy_in_effective_override(tmp_path, monkeypatch):
-    import io
-    import tarfile
-
-    from setup_system.infrastructure import app_configs
-
     home = tmp_path / "home"
-    config = home / ".codex"
-    config.mkdir(parents=True)
+    directory = home / ".codex"
+    directory.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("CODEX_HOME", str(config))
+    monkeypatch.setenv("CODEX_HOME", str(directory))
     for kind in ("CONFIG", "STATE", "CACHE", "DATA"):
         monkeypatch.setenv("XDG_" + kind + "_HOME", str(home / kind.lower()))
     preferences = 'model = "owner-choice"\nsandbox_mode = "read-only"\napproval_policy = "never"\n'
-    (config / "config.toml").write_text(preferences)
-    (config / "AGENTS.md").write_text("Lower priority owner instructions.\n")
-    active = config / "AGENTS.override.md"
-    active.write_text(
-        "Keep my heading.\n\n# >>> setupSystem >>>\nObsolete policy pointer.\n"
-        "# <<< setupSystem <<<\n\nKeep my final paragraph.\n"
-    )
-    root = Path(__file__).resolve().parents[1]
-    project = tmp_path / "source"
-    manifests = project / "manifests"
-    manifests.mkdir(parents=True)
-    (manifests / "platforms.toml").write_bytes((root / "manifests/platforms.toml").read_bytes())
-    metadata = (root / "manifests/projects.toml").read_text()
-    rules = next(
-        item["policy"]
-        for item in tomllib.loads(metadata)["project"]
-        if item["id"] == "serrja/baseRules"
-    )
-    contract = b"# Fixture contract\n\nUse the audited project root.\n"
-    notice = b"Synthetic license notice.\n"
-    (manifests / "projects.toml").write_text(
-        metadata.replace(rules["sha256"], hashlib.sha256(contract).hexdigest())
-    )
-    resources = project / "resources"
-    (resources / "catalogs").mkdir(parents=True)
-    payload = b"#!/bin/sh\necho 'codex-cli 0.0.1'\n"
-    upstream = "https://raw.githubusercontent.com/serrja/baseRules/" + rules["commit"]
-    assets = {upstream + "/" + rules["document"]: contract, upstream + "/LICENSE": notice}
-    origin = "https://github.com/openai/codex/releases"
-    release = f'version = "0.0.1"\nsource = "{origin}/tag/rust-v0.0.1"\nverification = "fixture"\n'
-    for arch, machine in (("amd64", "x86_64"), ("arm64", "aarch64")):
-        name = f"codex-{machine}-unknown-linux-musl"
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-            member = tarfile.TarInfo(name)
-            member.size = len(payload)
-            archive.addfile(member, io.BytesIO(payload))
-        archive_url = f"{origin}/download/rust-v0.0.1/{name}.tar.gz"
-        assets[archive_url] = buffer.getvalue()
-        release += (
-            f'[{arch}]\nurl = "{archive_url}"\nmember = "{name}"\n'
-            f'sha256 = "{hashlib.sha256(assets[archive_url]).hexdigest()}"\n'
-        )
-    (resources / "catalogs/codex.toml").write_text(release)
-    monkeypatch.setattr(app_configs, "read_https", lambda url, _: assets[url])
-    app_configs.configure_codex(project)
-    result = active.read_text()
-    assert result.count(contract.decode().strip()) == 1
-    assert rules["commit"] in result
-    assert "Obsolete policy pointer." not in result
-    assert "Keep my heading." in result and "Keep my final paragraph." in result
-    assert (config / "AGENTS.md").read_text() == "Lower priority owner instructions.\n"
-    assert (config / "config.toml").read_text() == preferences
-    policy = home / "config/setup-system/policy"
-    assert (policy / "engineering.md").read_bytes() == contract
-    assert (policy / "LICENSE").read_bytes() == notice
-    app_configs.configure_codex(project)
-    assert active.read_text() == result
+    (directory / "config.toml").write_text(preferences)
+    notes = directory / "AGENTS.md"
+    notes.write_text("Lower priority owner instructions.\n")
+    active = directory / "AGENTS.override.md"
+    text = "My heading.\n\n# >>> setupSystem >>>\nOld rules.\n# <<< setupSystem <<<\nMy ending.\n"
+    active.write_text(text)
+    (directory / "auth.json").symlink_to(tmp_path / "never-open")
+    desired, before = codex_profile.files(ROOT / "config")
+    receipt = apply_files(desired, expected=before)
+    merged = active.read_text()
+    assert merged.count((ROOT / "config/workspace/codex/engineering.md").read_text().strip()) == 1
+    assert "My heading." in merged and "My ending." in merged and "Old rules." not in merged
+    assert notes.read_text() == "Lower priority owner instructions.\n"
+    assert (directory / "config.toml").read_text() == preferences
+    assert codex_profile.files(ROOT / "config")[0] == desired
+    assert (home / "config/setup-system/policy/LICENSE").read_bytes() == (
+        ROOT / "config/workspace/codex/LICENSE"
+    ).read_bytes()
+    restore(receipt.name, apply=True)
+    assert active.read_text() == text and not (home / "config/setup-system/policy/LICENSE").exists()
+
+
+def test_failed_signed_source_is_separate_from_catalog_and_a_later_retry(tmp_path, monkeypatch):
+    from setup_system.infrastructure import source_attempt
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert "No recorded" in source_attempt.previous()
+    failed = source_attempt.observe(False, "https://example.invalid/?token=private 403 Forbidden")
+    assert failed.checked.tzinfo and "HTTP 403" in failed.reason
+    assert not (tmp_path / "state").exists()
+    source_attempt.remember(failed)
+    assert "HTTP 403" in source_attempt.previous()
+    assert "private" not in source_attempt.previous()
+    assert "chatgpt" in Catalog(ROOT / "config").apps
+    source_attempt.remember(source_attempt.observe(True, ""))
+    assert "verified" in source_attempt.previous()

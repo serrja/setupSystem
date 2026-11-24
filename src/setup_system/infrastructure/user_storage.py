@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
 import stat
 import tempfile
-import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 
 def state_root() -> Path:
-    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "setup-system"
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "setup-system"
 
 
 def inside_home(path: Path) -> Path:
@@ -65,43 +61,6 @@ def atomic_write(
     finally:
         candidate.unlink(missing_ok=True)
     return "changed"
-
-
-def new_backup(paths: list[Path]) -> Path:
-    base = inside_home(state_root() / "backups")
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    folder = base / run_id
-    folder.mkdir(parents=True, mode=0o700, exist_ok=False)
-    folder.chmod(0o700)
-    home = Path.home().resolve()
-    items: list[dict[str, str | int]] = []
-    for source in sorted(set(paths)):
-        target = inside_home(source)
-        if not target.exists():
-            continue
-        if not target.is_file():
-            raise ValueError(f"Backup source is not a regular file: {target}")
-        relative = target.relative_to(home)
-        backup = folder / "files" / relative
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(target, backup)
-        backup.chmod(0o600)
-        items.append(
-            {
-                "source": str(target),
-                "home_relative": str(relative),
-                "backup": str(backup.relative_to(folder)),
-                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-                "mode": stat.S_IMODE(target.stat().st_mode),
-            }
-        )
-    manifest = folder / "manifest.json"
-    manifest.write_text(
-        json.dumps({"run_id": run_id, "items": items, "moves": []}, ensure_ascii=False, indent=2)
-        + "\n"
-    )
-    manifest.chmod(0o600)
-    return folder
 
 
 def safe_file(path: Path, uid: int) -> None:

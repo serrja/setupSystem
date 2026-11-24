@@ -1,13 +1,43 @@
 """Immutable plans and results for reviewed project templates."""
 
+import json
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, StrictBool, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    JsonValue,
+    PlainSerializer,
+    StrictBool,
+    TypeAdapter,
+    model_validator,
+)
 
 from setup_system.domain.contracts import ContractModel
 from setup_system.domain.projects import TemplateMetadata, TemplateVersion
-from setup_system.domain.tool_requests import AnswerSnapshot
+
+_JSON_ANSWERS = TypeAdapter(dict[str, JsonValue])
+
+
+def answer_values(encoded: bytes) -> dict[str, JsonValue]:
+    return _JSON_ANSWERS.validate_json(encoded, strict=True)
+
+
+def snapshot_answers(value: object) -> bytes:
+    values = (
+        answer_values(value)
+        if isinstance(value, bytes)
+        else _JSON_ANSWERS.validate_python(value, strict=True)
+    )
+    if any(key.startswith("_") for key in values):
+        raise ValueError("Internal Copier answers cannot be supplied")
+    return json.dumps(
+        values, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+
+
+AnswerSnapshot = Annotated[bytes, BeforeValidator(snapshot_answers), PlainSerializer(answer_values)]
 
 
 class TemplateSource(ContractModel):

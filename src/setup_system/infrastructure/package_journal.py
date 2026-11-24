@@ -1,17 +1,15 @@
-"""Preserve recognized historical package receipts before a new transaction starts."""
+"""Read published installation history for Base inspection without opening a writer."""
 
 from __future__ import annotations
 
-import hashlib
-import json
+import os
+import stat
 from pathlib import Path
 from typing import Literal
 
 from pydantic import ConfigDict, Field
 
 from setup_system.domain.contracts import ContractModel
-from setup_system.domain.package_journal import InstallJournal
-from setup_system.infrastructure.system_files import validate_system_path, write_system
 
 
 class HistoricalJournal(ContractModel):
@@ -41,32 +39,41 @@ class HistoricalJournal(ContractModel):
     error: str | None = None
 
 
-def prepare_journal(path: Path) -> None:
-    """Reject unknown receipts and retain the original v1 record by digest."""
-    validate_system_path(path)
+class HistoricalV2(ContractModel):
+    schema_version: Literal[2] = Field(alias="schema")
+    status: Literal["running", "prepared", "packages-complete", "system-complete", "failed"]
+    stage: Literal["metadata", "resolution", "downloads", "packages", "source", "happ-service"]
+    completed: tuple[
+        Literal["metadata", "resolution", "downloads", "packages", "source", "happ-service"], ...
+    ] = ()
+    error: str | None = None
+
+
+def historical_status(
+    path: Path = Path("/var/lib/setup-system/install.json"), *, owner: int = 0
+) -> str:
+    """Return only validated public stage names. Preserve all original bytes."""
     try:
-        details = path.lstat()
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != owner
+                or info.st_nlink != 1
+                or info.st_mode & 0o022
+            ):
+                raise ValueError
+            data = stream.read(1024 * 1024 + 1)
+            if len(data) > 1024 * 1024:
+                raise ValueError
+        for schema in (HistoricalJournal, HistoricalV2):
+            try:
+                row = schema.model_validate_json(data, strict=True)
+            except ValueError:
+                continue
+            return f"{row.status} ({row.stage})"
+        raise ValueError
     except FileNotFoundError:
-        return
-    if details.st_nlink != 1 or details.st_size > 1024 * 1024:
-        raise ValueError("Unsafe installation journal")
-    content = path.read_bytes()
-    try:
-        document = json.loads(content)
-        if not isinstance(document, dict):
-            raise ValueError
-        if document.get("schema") == 2:
-            InstallJournal.model_validate_json(content, strict=True)
-            return
-        HistoricalJournal.model_validate_json(content, strict=True)
-    except ValueError:
-        raise ValueError(
-            "Unrecognized installation journal; inspect the original receipt"
-        ) from None
-    backup = (
-        path.parent / "migration" / ("install-v1-" + hashlib.sha256(content).hexdigest() + ".json")
-    )
-    validate_system_path(backup)
-    if backup.exists() and backup.read_bytes() != content:
-        raise ValueError("Installation journal migration backup conflicts with the original")
-    write_system(backup, content)
+        return "No previous package journal"
+    except (OSError, ValueError):
+        return "Previous package journal unavailable or unrecognized"

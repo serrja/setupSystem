@@ -1,0 +1,95 @@
+schemaVersion = 1
+projectsRoot = "$HOME/Projects"
+ownerGroups = ["serrja", "pokerlost"]
+
+[[project]]
+id = "serrja/setupSystem"
+origin = "git@github.com:serrja/setupSystem.git"
+
+[[project]]
+id = "serrja/pythonTemplate"
+template = { alias = "python" }
+origin = "git@github.com:serrja/pythonTemplate.git"
+
+[[project]]
+id = "serrja/typerTemplate"
+template = { alias = "typer" }
+origin = "git@github.com:serrja/typerTemplate.git"
+
+[[project]]
+id = "serrja/fastapiTemplate"
+template = { alias = "fastapi" }
+origin = "git@github.com:serrja/fastapiTemplate.git"
+
+[[project]]
+id = "serrja/serrja"
+origin = "git@github.com:serrja/serrja.git"
+
+[[project]]
+id = "pokerlost/.github"
+origin = "git@github.com:pokerlost/.github.git"
+
+[[project]]
+id = "pokerlost/pokerlost"
+origin = "git@github.com:pokerlost/pokerlost.git"
+
+[[project]]
+id = "pokerlost/serviceTemplate"
+template = { alias = "service" }
+origin = "git@github.com:pokerlost/serviceTemplate.git"
+
+[[project]]
+id = "pokerlost/pypokerlost"
+origin = "git@github.com:pokerlost/pypokerlost.git"
+
+[[project]]
+id = "pokerlost/pokerengine"
+origin = "git@github.com:pokerlost/pokerengine.git"
+
+[[project]]
+id = "pokerlost/authService"
+origin = "git@github.com:pokerlost/authService.git"
+
+[[project]]
+id = "pokerlost/accountsService"
+origin = "git@github.com:pokerlost/accountsService.git"
+
+[[project]]
+id = "pokerlost/virtualMoney"
+origin = "https://github.com/pokerlost/virtualMoney.git"
+
+[[project]]
+id = "pokerlost/pokerService"
+origin = "git@github.com:pokerlost/pokerService.git"
+
+[[project]]
+id = "pokerlost/pokerClient"
+origin = "git@github.com:pokerlost/pokerClient.git"
+
+[[project]]
+id = "pokerlost/cryptoService"
+origin = "git@github.com:pokerlost/cryptoService.git"
+
+[[project]]
+id = "pokerlost/pokerWeb"
+origin = "git@github.com:pokerlost/pokerWeb.git"
+
+[[project]]
+id = "pokerlost/pokerGateway"
+origin = "git@github.com:pokerlost/pokerGateway.git"
+
+[[project]]
+id = "pokerlost/platformInfra"
+origin = "git@github.com:pokerlost/platformInfra.git"
+
+[[project]]
+id = "serrja/baseRules"
+origin = "git@github.com:serrja/baseRules.git"
+
+[[project]]
+id = "pokerlost/projectRules"
+origin = "git@github.com:pokerlost/projectRules.git"
+
+[[project]]
+id = "pokerlost/pokerDemo"
+origin = "git@github.com:pokerlost/pokerDemo.git"

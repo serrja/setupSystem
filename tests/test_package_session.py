@@ -1,95 +1,83 @@
-"""Pure package/session policy stays typed without executing system commands."""
+"""Exercise the actual privileged transaction argument boundary with no host install."""
 
-from __future__ import annotations
-
+import contextlib
+import json
+import runpy
+import subprocess
 from pathlib import Path
 
 import pytest
-
-from setup_system.adapters.debian.package_session import (
-    AptCommands,
-    AptSources,
-)
-from setup_system.domain.happ import HappPin
-from setup_system.infrastructure.fonts import _font_cache, font_manifest
+from ansible.errors import AnsibleFilterError
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_frozen_selection_is_shared_by_download_and_offline_apply(tmp_path: Path) -> None:
-    initial = AptCommands(tmp_path / "APT cache with spaces", ("foot",))
-    frozen = initial.freeze(["foot=1.2", "dependency=2.3", str(tmp_path / "happ.deb")])
-    online, offline = frozen.download(), frozen.apply()
-    assert initial.selection == ("foot",)
-    assert online[online.index("install") + 1 :] == offline[offline.index("install") + 1 :]
-    assert offline[:4] == ["/usr/bin/unshare", "--net", "--", "/usr/bin/apt-get"]
-    assert "--download-only" in online and "--no-download" in offline
-    for command in (frozen.simulate(), online, offline):
-        assert "--no-remove" in command and "--no-install-recommends" in command
-        assert "Acquire::AllowInsecureRepositories=false" in command
-        assert "APT::Get::AllowUnauthenticated=false" in command
-    assert not any("127.0.0.1" in argument for argument in offline)
-    assert "Acquire::http::Proxy=DIRECT" in offline
-    assert "Acquire::https::Proxy=DIRECT" in offline
-    online.clear()
-    assert frozen.download() and frozen.selection == (
-        "foot=1.2",
-        "dependency=2.3",
-        str(tmp_path / "happ.deb"),
+def fixture(tmp_path, monkeypatch, packages):
+    module = runpy.run_path(str(ROOT / "ansible/files/apt_apply.py"))
+    enter = module["run"]
+    scope = enter.__globals__
+    (tmp_path / "transaction.json").write_text(
+        json.dumps(
+            [
+                "/untrusted/frontend/apt",
+                "--no-remove",
+                "--no-install-recommends",
+                "install",
+                "--",
+                *packages,
+            ]
+        )
     )
-    assert not list(tmp_path.iterdir())
+    monkeypatch.setitem(scope, "ROOT", ROOT)
+    monkeypatch.setitem(scope, "reviewed", lambda stage: None)
+    monkeypatch.setitem(scope, "verify_sources", lambda root, vendor: None)
+    monkeypatch.setitem(scope, "defer_services", lambda path: contextlib.nullcontext())
+    return enter
 
 
-def test_sources_use_one_official_origin_and_explicit_keyring(tmp_path: Path) -> None:
-    keyring = tmp_path / "keyring with spaces.pgp"
-    sources = AptSources("trixie", "trixie-backports", keyring)
-    managed = sources.managed_backports().decode()
-    staged = sources.staging()
-    assert "Suites: trixie-backports\n" in managed
-    assert "Suites: trixie trixie-updates trixie-backports\n" in staged
-    assert "Suites: trixie-security\n" in staged
-    assert "URIs: https://deb.debian.org/debian\n" in managed
-    assert "URIs: https://deb.debian.org/debian\n" in staged
-    assert "URIs: https://security.debian.org/debian-security\n" in staged
-    assert managed.count(f"Signed-By: {keyring}") == 1
-    assert staged.count(f"Signed-By: {keyring}") == 2
-    assert not list(tmp_path.iterdir())
+def test_native_transaction_reconstructs_fixed_sources_and_defers_services(tmp_path, monkeypatch):
+    enter = fixture(tmp_path, monkeypatch, ["foot"])
+    calls = []
+
+    def record(argv, *, check, env):
+        calls.append((argv, env))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", record)
+    enter(tmp_path)
+    [(args, env)] = calls
+    assert args[0] == "/usr/bin/apt-get" and args[-5:] == [
+        "--no-remove",
+        "--no-install-recommends",
+        "install",
+        "--",
+        "foot",
+    ]
+    assert any(s.startswith("DPkg::Pre-Install-Pkgs::=") for s in args)
+    assert "Dir::State::lists=" + str(tmp_path / "lists") in args
+    assert "Dir::Etc::sourceparts=-" in args
+    assert env["SYSTEMD_OFFLINE"] == "1" and env["DEBIAN_FRONTEND"] == "noninteractive"
+    assert env["APT_CONFIG"] == str(ROOT / "config/base/apt.conf") and all(
+        "proxy" not in k.lower() for k in env
+    )
 
 
 @pytest.mark.parametrize(
-    "metadata",
-    [
-        "Package: happ\nVersion: 4.5.4-333\nArchitecture: arm64\n",
-        "Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\nPackage: happ\n",
-        "Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\nUnexpected: field\n",
-        "Package: happ\nVersion: other\nArchitecture: amd64\n",
-    ],
+    "package", ["-o", "../unknown.deb", "/somewhere/happ.deb", "systemd-remover"]
 )
-def test_pinned_happ_identity_rejects_changed_or_duplicate_metadata(metadata: str) -> None:
-    pin = HappPin(
-        digest="1" * 64, version="4.5.4-333", architecture="amd64", url="https://github.com/example"
+def test_unreviewed_user_package_never_reaches_apt(tmp_path, monkeypatch, package):
+    enter = fixture(tmp_path, monkeypatch, [package])
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: pytest.fail("An unreviewed package reached APT")
     )
-    pin.validate_metadata("Package: happ\nVersion: 4.5.4-333\nArchitecture: amd64\n")
-    assert pin.cache_name() == "happ_4.5.4-333_amd64.deb"
-    with pytest.raises(ValueError, match="metadata"):
-        pin.validate_metadata(metadata)
+    with pytest.raises(ValueError, match="Unreviewed package"):
+        enter(tmp_path)
 
 
-def test_font_cache_names_follow_changed_manifest_pins(tmp_path: Path) -> None:
-    root = tmp_path / "source"
-    (root / "manifests").mkdir(parents=True)
-    (root / "assets/hyprland").mkdir(parents=True)
-    (root / "manifests/platforms.toml").write_bytes(
-        (ROOT / "manifests/platforms.toml").read_bytes()
-    )
-    font = (ROOT / "manifests/fonts.toml").read_text()
-    current = font_manifest(ROOT).jetbrains_mono_nerd_font
-    version, digest = "3.5.6", "1" * 64
-    font = font.replace(current.version, version).replace(current.sha256, digest)
-    (root / "manifests/fonts.toml").write_text(font)
-    policy = font_manifest(root).jetbrains_mono_nerd_font
-    name = policy.cache_name
-    assert name == f"JetBrainsMono-{version}-{digest}.zip"
-    archive, receipt, _ = _font_cache(policy)
-    assert archive.name == name
-    assert receipt.name == name + ".json"
+@pytest.mark.parametrize(
+    "preview", ["Remv systemd [1]", "The following packages will be DOWNGRADED:\n example"]
+)
+def test_native_preview_refuses_removal_or_downgrade(preview):
+    native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
+    with pytest.raises(AnsibleFilterError):
+        native["apt_closure"](preview, False)

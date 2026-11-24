@@ -1,0 +1,52 @@
+#!/bin/sh
+# Execute one packaged play as the invoking user. Only individual tasks may become root.
+set -eu
+PATH=/usr/bin:/bin
+export PATH
+umask 077
+root=$(pwd -P)
+[ "$(id -u)" != 0 ] || { echo 'Run the configurator as a normal user.' >&2; exit 2; }
+case "$1/$2" in
+    base/apply|workspace/apply|workspace/cleanup-apply)
+        [ "$root" = /usr/lib/setup-system ] || { echo 'Install the Debian package before system Apply.' >&2; exit 2; }
+        set -- "$1" "$2" --ask-become-pass
+        ;;
+    base/inspect|base/plan|base/user-apply|workspace/inspect|workspace/plan|workspace/cleanup-plan|workspace/user-apply)
+        set -- "$1" "$2"
+        ;;
+    *) echo 'Unknown packaged operation.' >&2; exit 2 ;;
+esac
+section=$1
+action=$2
+shift 2
+request=${SETUP_SYSTEM_REQUEST:?Missing run snapshot}
+result=${SETUP_SYSTEM_RESULT:?Missing run result destination}
+stage=$(dirname -- "$request")
+[ "$result" = "$stage/result.json" ] || exit 2
+[ "$(stat -c '%u:%a:%F' -- "$stage")" = "$(id -u):700:directory" ] || exit 2
+[ "$(stat -c '%u:%a:%F' -- "$request")" = "$(id -u):600:regular file" ] || exit 2
+interpreter=/usr/bin/python3
+playbook=/usr/bin/ansible-playbook
+if [ "$root" != /usr/lib/setup-system ] && [ -x "$root/.venv/bin/ansible-playbook" ]; then
+    interpreter="$root/.venv/bin/python"
+    playbook="$root/.venv/bin/ansible-playbook"
+elif [ "$root" != /usr/lib/setup-system ] && [ -n "${SETUP_SYSTEM_INTERPRETER:-}" ]; then
+    interpreter=$SETUP_SYSTEM_INTERPRETER
+    playbook=$(dirname -- "$interpreter")/ansible-playbook
+fi
+[ -f "$playbook" ] || { echo 'Ansible is missing. Install the package or prepare the development dependencies.' >&2; exit 2; }
+case "$action" in
+    apply|user-apply|cleanup-apply) set -- /bin/sh "$root/libexec/locked" "$interpreter" -I -B "$playbook" -i localhost, -c local "$root/ansible/$section.yml" -e "setup_action=$action" "$@" ;;
+    *) set -- "$interpreter" -I -B "$playbook" -i localhost, -c local "$root/ansible/$section.yml" -e "setup_action=$action" "$@" ;;
+esac
+exec /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" LANG=C.UTF-8 \
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}" \
+    XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}" XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}" \
+    CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" \
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+    HYPRLAND_INSTANCE_SIGNATURE="${HYPRLAND_INSTANCE_SIGNATURE:-}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    SETUP_SYSTEM_REQUEST="$request" SETUP_SYSTEM_RESULT="$result" SETUP_SYSTEM_CANCEL="$stage/cancel" \
+    ANSIBLE_CONFIG="$root/ansible.cfg" ANSIBLE_HOME=/usr/share/ansible \
+    ANSIBLE_LOCAL_TEMP="$stage/local" ANSIBLE_REMOTE_TEMP="$stage/remote" \
+    ANSIBLE_PIPELINING=true ANSIBLE_NOCOLOR=true ANSIBLE_BECOME_ASK_PASS=false \
+    "$@"

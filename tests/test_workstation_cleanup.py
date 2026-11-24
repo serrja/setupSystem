@@ -1,172 +1,275 @@
-"""Removal must stop on any unexpected dependency or protected package."""
+"""Verify the actual native removal boundary with synthetic dpkg observations."""
+
+import json
+import runpy
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import yaml
+from jinja2 import StrictUndefined
+from jinja2.nativetypes import NativeEnvironment
 
-from setup_system.domain.cleanup import CleanupCandidate, validate_removals
-from setup_system.domain.system_commands import CleanupOptions
-from setup_system.infrastructure import cleanup
-from setup_system.infrastructure.catalog_repository import load_cleanup
+ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_optional_closure_cannot_expand_even_to_another_candidate() -> None:
-    with pytest.raises(ValueError, match="closure"):
-        validate_removals(
-            frozenset({"reportbug"}),
-            frozenset({"reportbug", "nano"}),
-            frozenset(),
-            catalog=load_cleanup(),
-            editor_verified=True,
-        )
+def review(monkeypatch, selected, closure, records, mode="remove"):
+    module = runpy.run_path(str(ROOT / "ansible/files/removals.py"))
+
+    def inventory(argv, **kwargs):
+        assert argv[0:2] == ["/usr/bin/dpkg-query", "-W"]
+        return SimpleNamespace(stdout="\n".join(records))
+
+    monkeypatch.setattr(module["subprocess"], "run", inventory)
+    module["check"]({"selected": selected, "closure": closure, "mode": mode})
 
 
 @pytest.mark.parametrize(
-    "package", ["apt", "sudo", "linux-image-amd64", "cryptsetup", "hyprland", "openssh-server"]
+    "name",
+    ["apt", "systemd", "cryptsetup", "linux-image-amd64", "network-manager", "hyprland", "neovim"],
 )
-def test_critical_packages_are_never_cleanup_candidates(package: str) -> None:
+def test_critical_package_cannot_be_selected(monkeypatch, name):
     with pytest.raises(ValueError):
-        validate_removals(
-            frozenset({package}),
-            frozenset({package}),
-            frozenset(),
-            catalog=load_cleanup(),
-            editor_verified=True,
+        review(monkeypatch, [name], [f"Remv {name} [1]"], [])
+
+
+@pytest.mark.parametrize("protected", ["install|yes|no", "install|no|yes", "hold|no|no"])
+def test_dpkg_protection_overrides_catalog(monkeypatch, protected):
+    with pytest.raises(ValueError, match=r"held|protected"):
+        review(
+            monkeypatch, ["reportbug"], ["Remv reportbug [1]"], ["reportbug|installed|" + protected]
         )
 
 
-def test_fallback_editor_replacement_is_required() -> None:
-    with pytest.raises(ValueError, match="Neovim"):
-        validate_removals(
-            frozenset({"nano"}),
-            frozenset({"nano"}),
-            frozenset(),
-            catalog=load_cleanup(),
-            editor_verified=False,
-        )
-    validate_removals(
-        frozenset({"nano"}),
-        frozenset({"nano"}),
-        frozenset(),
-        catalog=load_cleanup(),
-        editor_verified=True,
-    )
-
-
-def test_real_essential_flag_overrides_catalog_candidate() -> None:
-    with pytest.raises(ValueError, match="Essential"):
-        validate_removals(
-            frozenset({"reportbug"}),
-            frozenset({"reportbug"}),
-            frozenset({"reportbug"}),
-            catalog=load_cleanup(),
-            editor_verified=True,
-        )
-
-
-def test_preview_uses_dpkg_and_simulation_without_mutation(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = []
-
-    def run(argv):
-        calls.append(argv)
-        if "dpkg-query" in argv[0]:
-            return "reportbug\tinstalled\tinstall\tno\tno\napt\tinstalled\tinstall\tyes\tno\n"
-        assert "--simulate" in argv
-        return "Remv reportbug [13.0]\n"
-
-    monkeypatch.setattr(cleanup, "_run", run)
-    plan = cleanup.preview(("reportbug",))
-    assert plan.removed == frozenset({"reportbug"})
-    assert len(calls) == 2
-
-
-def test_absent_candidates_do_not_resolve_another_removal(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = []
-    monkeypatch.setattr(cleanup, "_run", lambda argv: calls.append(argv) or "")
-    assert not cleanup.preview(("reportbug",)).requested
-    assert len(calls) == 1
-    assert load_cleanup()["nano"].requires_verified_editor
-
-
-def test_apply_removes_exact_confirmed_set_without_another_resolver(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    from types import SimpleNamespace
-
-    from setup_system.bootstrap import source as trusted_bootstrap
-    from setup_system.infrastructure import admin_editor, processes, system_files
-
-    monkeypatch.setattr(
-        trusted_bootstrap,
-        "caller",
-        lambda: SimpleNamespace(pw_name="fixture", pw_dir=str(tmp_path)),
-    )
-    monkeypatch.setattr(cleanup.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(
-        admin_editor,
-        "editor_ready",
-        lambda *args: pytest.fail("Document removal does not execute an editor"),
-    )
-    selected = frozenset({"reportbug"})
-    results = iter((selected, frozenset(), selected))
-    monkeypatch.setattr(
-        cleanup,
-        "preview",
-        lambda *args, **kwargs: cleanup.CleanupPlan(
-            requested=next(results), removed=selected, essential=frozenset(), simulation=""
-        ),
-    )
-    records = []
-    calls = []
-    monkeypatch.setattr(system_files, "write_system", lambda path, data: records.append(data))
-    monkeypatch.setattr(processes, "run_command", lambda argv, **kwargs: calls.append(argv))
-    cleanup.apply_cleanup(
-        CleanupOptions.model_validate(
-            {"mode": "remove", "packages": ["reportbug"], "closure": ["reportbug"]}
-        )
-    )
-    assert calls == [["/usr/bin/dpkg", "--remove", "--", "reportbug"]]
-    assert b'"status": "complete"' in records[-1]
-    with pytest.raises(ValueError, match="closure changed"):
-        cleanup.apply_cleanup(
-            CleanupOptions.model_validate(
-                {"mode": "remove", "packages": ["reportbug"], "closure": []}
-            )
-        )
-    assert len(calls) == 1
-
-
-def test_apt_hold_blocks_catalog_candidate(monkeypatch):
-    def run(args):
-        if "dpkg-query" in args[0]:
-            return "reportbug\tinstalled\thold\tno\tno\n"
-        return "Remv reportbug [1.0]\n"
-
-    monkeypatch.setattr(cleanup, "_run", run)
-    with pytest.raises(ValueError, match="Protected"):
-        cleanup.preview(("reportbug",))
-
-
-def test_catalog_controls_editor_requirement():
-    selected = frozenset({"reportbug"})
-    with pytest.raises(ValueError, match="Neovim"):
-        validate_removals(
-            selected,
-            selected,
-            frozenset(),
-            catalog={"reportbug": CleanupCandidate(requires_verified_editor=True)},
-            editor_verified=False,
+def test_extra_dependency_is_rejected_even_if_reviewed(monkeypatch):
+    with pytest.raises(ValueError, match="outside"):
+        review(
+            monkeypatch,
+            ["reportbug"],
+            ["Remv reportbug [1]", "Remv nano [1]"],
+            ["reportbug|installed|install|no|no"],
         )
 
 
 @pytest.mark.parametrize(
-    "mode,packages",
-    [("remove", ["--", "reportbug"]), ("purge", ["--", "reportbug"]), ("autoremove", [])],
+    "mode,action", [("remove", "Remv"), ("purge", "Purg"), ("autoremove", "Remv")]
 )
-def test_each_cleanup_mode_has_its_own_simulation(monkeypatch, mode, packages):
-    def run(args):
-        if "dpkg-query" in args[0]:
-            return "reportbug\tinstalled\tinstall\tno\tno\n"
-        assert args == ["/usr/bin/apt-get", "--simulate", mode, *packages]
-        return ("Purg" if mode == "purge" else "Remv") + " reportbug [1.0]\n"
+def test_exact_native_closure_is_accepted(monkeypatch, mode, action):
+    review(
+        monkeypatch,
+        ["reportbug"],
+        [f"{action} reportbug [1]"],
+        ["reportbug|installed|install|no|no"],
+        mode,
+    )
 
-    monkeypatch.setattr(cleanup, "_run", run)
-    assert cleanup.preview(("reportbug",), mode=mode).removed == {"reportbug"}
+
+def test_absent_candidate_only_accepts_empty_plan(monkeypatch):
+    review(monkeypatch, ["reportbug"], [], [])
+    with pytest.raises(ValueError, match="outside"):
+        review(monkeypatch, ["reportbug"], ["Remv reportbug [1]"], [])
+
+
+def task(name, match):
+    for item in yaml.safe_load((ROOT / f"ansible/tasks/{name}.yml").read_text()):
+        if item.get("name", "").startswith(match):
+            return item
+    raise AssertionError(match)
+
+
+def render(expression, **values):
+    env = NativeEnvironment(undefined=StrictUndefined)
+    env.filters["from_json"] = json.loads
+    return env.from_string(expression).render(**values)
+
+
+def simulate_args(mode):
+    choose = task("apt_plan", "Choose the explicit native package plan")
+    args = render(
+        choose["ansible.builtin.set_fact"]["apt_args"],
+        intent={"cleanup_mode": mode},
+        cleanup=["reportbug"],
+    )
+    simulation = task("apt_plan", "Simulate the entire selected Debian transaction")
+    return render(
+        simulation["ansible.builtin.command"]["argv"], apt=["/usr/bin/apt-get"], apt_args=args
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("remove", ["remove", "--", "reportbug"]),
+        ("purge", ["purge", "--", "reportbug"]),
+        ("autoremove", ["autoremove"]),
+    ],
+)
+def test_each_cleanup_mode_has_its_own_simulation(mode, expected):
+    assert simulate_args(mode) == ["/usr/bin/apt-get", "--simulate", *expected]
+
+
+def test_preview_uses_dpkg_and_simulation_without_mutation(tmp_path, monkeypatch, capsys):
+    status = tmp_path / "status"
+    status.write_text(
+        "Package: reportbug\nStatus: install ok installed\nArchitecture: all\n"
+        "Version: 1.0\nDescription: Synthetic removal preview\n\n"
+    )
+    before = status.read_bytes()
+    base, *args = simulate_args("remove")
+    simulation = subprocess.run(
+        [
+            base,
+            "-o",
+            "Dir::Etc::sourcelist=/dev/null",
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            f"Dir::State::status={status}",
+            "-o",
+            f"Dir::State::lists={tmp_path}",
+            "-o",
+            "Dir::Cache::pkgcache=",
+            "-o",
+            "Dir::Cache::srcpkgcache=",
+            "-o",
+            "Debug::NoLocking=true",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+    )
+    filters = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
+    closure = filters["apt_closure"](simulation.stdout, True)
+    assert closure == ["Remv reportbug [1.0]"]
+    check = runpy.run_path(str(ROOT / "ansible/files/removals.py"))["check"]
+
+    def observe(argv, **options):
+        assert argv[:2] == ["/usr/bin/dpkg-query", "-W"]
+        return subprocess.run([argv[0], "--admindir=" + str(tmp_path), *argv[1:]], **options)
+
+    monkeypatch.setitem(check.__globals__, "subprocess", SimpleNamespace(run=observe))
+    check({"mode": "remove", "selected": ["reportbug"], "closure": closure})
+    assert json.loads(capsys.readouterr().out) == ["reportbug"]
+    assert status.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("mode", "step"), [("remove", "--remove"), ("autoremove", "--remove"), ("purge", "--purge")]
+)
+def test_apply_removes_exact_confirmed_set_without_another_resolver(
+    monkeypatch, capsys, mode, step
+):
+    line = ("Purg" if mode == "purge" else "Remv") + " reportbug [1]"
+    review(monkeypatch, ["reportbug"], [line], ["reportbug|installed|install|no|no"], mode)
+    approved = capsys.readouterr().out
+    remove = task("apply", "Remove exactly the approved packages")
+    argv = render(
+        remove["ansible.builtin.command"]["argv"],
+        intent={"cleanup_mode": mode},
+        removals={"stdout": approved},
+    )
+    assert argv == ["/usr/bin/dpkg", step, "--", "reportbug"]
+    with pytest.raises(ValueError, match="outside"):
+        review(
+            monkeypatch,
+            ["reportbug"],
+            [line, line.replace("reportbug", "nano")],
+            ["reportbug|installed|install|no|no"],
+            mode,
+        )
+    assert capsys.readouterr().out == ""
+
+
+def editor_fixture(tmp_path, monkeypatch, selected, fallback_owner, metadata):
+    root = tmp_path / "release"
+    catalog = root / "config/workspace/optional_cleanup.toml"
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text(f"[candidates.{selected}]\nrequires_verified_editor = {metadata}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("nvim", "vim.tiny"):
+        (bin_dir / name).touch(mode=0o755)
+    (bin_dir / "editor").symlink_to(bin_dir / "nvim")
+    (bin_dir / "vi").symlink_to(bin_dir / "vim.tiny")
+    home = tmp_path / "home"
+    editor = home / "config/environment.d/90-setup-system-editor.conf"
+    editor.parent.mkdir(parents=True)
+    editor.write_text("EDITOR=nvim\nVISUAL=nvim\n")
+    check = runpy.run_path(str(ROOT / "ansible/files/removals.py"))["check"]
+
+    def fixture_path(value):
+        path = Path(value)
+        return bin_dir / path.name if path.parent == Path("/usr/bin") else path
+
+    def run(argv, **options):
+        if argv[:2] == ["/usr/bin/dpkg-query", "-W"]:
+            return SimpleNamespace(stdout=f"{selected}|installed|install|no|no\n")
+        if argv[0] == "/usr/bin/python3":
+            assert argv[-1] == str(editor)
+            return subprocess.run(argv, **options)
+        assert argv == ["/usr/bin/nvim", "--clean", "--headless", "-n", "-i", "NONE", "+q"]
+        return SimpleNamespace(returncode=0)
+
+    def which_package(argv, **options):
+        assert argv[:2] == ["/usr/bin/dpkg-query", "-S"]
+        return f"{fallback_owner}:amd64: {argv[-1]}\n"
+
+    monkeypatch.setitem(check.__globals__, "__file__", str(root / "ansible/files/removals.py"))
+    monkeypatch.setitem(check.__globals__, "Path", fixture_path)
+    monkeypatch.setitem(
+        check.__globals__, "subprocess", SimpleNamespace(run=run, check_output=which_package)
+    )
+    monkeypatch.setitem(
+        check.__globals__,
+        "pwd",
+        SimpleNamespace(getpwuid=lambda uid: SimpleNamespace(pw_dir=str(home), pw_name="fixture")),
+    )
+    return lambda: check(
+        {
+            "selected": [selected],
+            "closure": [f"Remv {selected} [1]"],
+            "mode": "remove",
+            "home": str(home),
+            "xdg": {"config": str(home / "config")},
+        }
+    )
+
+
+@pytest.mark.parametrize("valid", [False, True])
+def test_fallback_editor_replacement_is_required(tmp_path, monkeypatch, valid):
+    check = editor_fixture(
+        tmp_path, monkeypatch, "vim-tiny", "vim" if valid else "vim-tiny", "true"
+    )
+    if valid:
+        check()
+    else:
+        with pytest.raises(ValueError, match="independent"):
+            check()
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_catalog_controls_editor_requirement(tmp_path, monkeypatch, required):
+    check = editor_fixture(tmp_path, monkeypatch, "reportbug", "reportbug", str(required).lower())
+    if required:
+        with pytest.raises(ValueError, match="independent"):
+            check()
+    else:
+        check()
+
+
+@pytest.mark.parametrize(
+    ("mode", "closure"),
+    [
+        ("remove", ["Purg reportbug [1]"]),
+        ("purge", ["Remv reportbug [1]"]),
+        ("autoremove", ["Remv reportbug:riscv64 [1]"]),
+        ("different", ["Remv reportbug [1]"]),
+        ("remove", ["Remv reportbug [1]", "Remv reportbug [1]"]),
+    ],
+)
+def test_changed_mode_architecture_or_repeated_removal_is_rejected(monkeypatch, mode, closure):
+    with pytest.raises(ValueError, match="removal"):
+        review(monkeypatch, ["reportbug"], closure, ["reportbug|installed|install|no|no"], mode)

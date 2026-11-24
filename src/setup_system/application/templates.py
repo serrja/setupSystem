@@ -9,9 +9,9 @@ from typing import Literal
 
 from pydantic import JsonValue
 
-from setup_system.domain.templates import TemplatePlan, TemplateSource
-from setup_system.domain.tool_requests import snapshot_answers
-from setup_system.infrastructure.catalog_repository import load_projects
+from setup_system.domain.projects import TemplateMetadata
+from setup_system.domain.templates import TemplatePlan, TemplateSource, snapshot_answers
+from setup_system.infrastructure.project_layout import load_projects
 
 
 def load_templates(root: Path) -> dict[str, TemplateSource]:
@@ -22,7 +22,9 @@ def load_templates(root: Path) -> dict[str, TemplateSource]:
         raise ValueError("Invalid project/template catalog") from error
     return {
         row.template.alias: TemplateSource(
-            project=row.id, url=f"https://github.com/{row.id}.git", metadata=row.template
+            project=row.id,
+            url=f"https://github.com/{row.id}.git",
+            metadata=TemplateMetadata(alias=row.template.alias),
         )
         for row in catalog.project
         if row.template is not None
@@ -51,7 +53,7 @@ def plan_template(
         raise ValueError("No reviewed version; choose a version from templates versions")
     if any(key.startswith("_") for key in data or {}):
         raise ValueError("Internal Copier answers cannot be supplied")
-    cache = cache_root or Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    cache = cache_root or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     return TemplatePlan(
         operation=operation,
         source=source,

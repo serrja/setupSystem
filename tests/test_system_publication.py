@@ -5,8 +5,8 @@ import os
 
 import pytest
 
-from setup_system.domain.settings import SystemSettings
-from setup_system.infrastructure import firefox_policy, system_publication, system_settings
+from setup_system.infrastructure import firefox_policy, system_publication
+from setup_system.infrastructure.system_publication import observe_file, publish_file, save_backup
 
 
 @pytest.mark.parametrize("kind", ["system", "firefox"])
@@ -22,11 +22,14 @@ def test_edit_after_backup_survives_target_publication(tmp_path, monkeypatch, ki
     if kind == "system":
         initial = b'keyboard = "us"\n'
         path.write_bytes(initial)
-        settings = SystemSettings(keyboard="us,ru")
+        path.chmod(0o644)
+        observed = observe_file(path)
+        assert observed is not None
 
         def apply():
-            system_settings.save(
-                settings, expected=hashlib.sha256(initial).hexdigest(), path=path, backups=backups
+            save_backup(backups / (observed.digest + ".toml"), observed)
+            publish_file(
+                path, b'keyboard = "us,ru"\n', observed, mode=observed.mode, parent_mode=0o755
             )
     else:
         firefox_policy.apply(firefox_policy.inspect(path), backups=backups)
@@ -65,12 +68,9 @@ def test_live_descriptor_survives_successful_settings_publish(tmp_path):
     path.chmod(0o640)
     original = path.stat()
     with path.open("ab", buffering=0) as edit:
-        system_settings.save(
-            SystemSettings(keyboard="us"),
-            expected=hashlib.sha256(initial).hexdigest(),
-            path=path,
-            backups=tmp_path / "backups",
-        )
+        observed = observe_file(path)
+        assert observed is not None
+        publish_file(path, b'keyboard = "us"\n', observed, mode=observed.mode, parent_mode=0o755)
         edit.write(b"# Later edit from an open file descriptor\n")
         os.fsync(edit.fileno())
     (retained,) = path.parent.glob(".setup-system-system.toml-*/original")
@@ -92,6 +92,7 @@ def test_destination_appearing_during_publish_preserves_both_versions(
     initial = None
     if existed:
         path.write_bytes(b"original state")
+        path.chmod(0o644)
         initial = path.stat()
     move = system_publication.move_new
 
@@ -102,12 +103,7 @@ def test_destination_appearing_during_publish_preserves_both_versions(
 
     monkeypatch.setattr(system_publication, "move_new", concurrent)
     with pytest.raises(ValueError, match=r"conflict|appeared"):
-        system_settings.save(
-            SystemSettings(),
-            expected=hashlib.sha256(b"original state").hexdigest() if existed else None,
-            path=path,
-            backups=tmp_path / "backups",
-        )
+        publish_file(path, b"new state", observe_file(path), mode=0o644, parent_mode=0o755)
     if initial is not None:
         (retained,) = path.parent.glob(".setup-system-system.toml-*/original")
         assert (
@@ -119,6 +115,7 @@ def test_destination_appearing_during_publish_preserves_both_versions(
 def test_late_open_descriptor_edit_is_detected_before_completion(tmp_path, monkeypatch):
     path = tmp_path / "system.toml"
     path.write_bytes(b"initial")
+    path.chmod(0o644)
     old = path.stat().st_ino
     move = system_publication.move_new
     with path.open("ab", buffering=0) as writer:
@@ -131,12 +128,7 @@ def test_late_open_descriptor_edit_is_detected_before_completion(tmp_path, monke
 
         monkeypatch.setattr(system_publication, "move_new", late_edit)
         with pytest.raises(ValueError, match="changed"):
-            system_settings.save(
-                SystemSettings(),
-                expected=hashlib.sha256(b"initial").hexdigest(),
-                path=path,
-                backups=tmp_path / "history",
-            )
+            publish_file(path, b"new state", observe_file(path), mode=0o644, parent_mode=0o755)
     assert path.read_bytes() == b"initial later" and path.stat().st_ino == old
 
 
@@ -144,18 +136,17 @@ def test_private_umask_does_not_break_retention(tmp_path):
     path = tmp_path / "etc/system.toml"
     mask = os.umask(0o777)
     try:
-        system_settings.save(
-            SystemSettings(), expected=None, path=path, backups=tmp_path / "history"
-        )
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        system_settings.save(
-            SystemSettings(keyboard="us"), expected=digest, path=path, backups=tmp_path / "history"
-        )
+        publish_file(path, b"original", None, mode=0o644, parent_mode=0o755)
+        current = observe_file(path)
+        assert current is not None
+        backup = tmp_path / "history" / (current.digest + ".toml")
+        save_backup(backup, current)
+        publish_file(path, b"updated", current, mode=current.mode, parent_mode=0o755)
     finally:
         os.umask(mask)
     (retained,) = path.parent.glob(".setup-system-system.toml-*/original")
     assert retained.parent.stat().st_mode & 0o777 == 0o700
-    assert (tmp_path / "history" / (digest + ".toml")).stat().st_mode & 0o777 == 0o600
+    assert backup.stat().st_mode & 0o777 == 0o600
 
 
 def test_settings_preserve_the_administrators_posix_access_acl(tmp_path):
@@ -174,10 +165,7 @@ def test_settings_preserve_the_administrators_posix_access_acl(tmp_path):
     ]
     encoded = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in records)
     os.setxattr(path, "system.posix_acl_access", encoded)
-    system_settings.save(
-        SystemSettings(),
-        expected=hashlib.sha256(b"initial").hexdigest(),
-        path=path,
-        backups=tmp_path / "backups",
-    )
+    current = observe_file(path)
+    assert current is not None
+    publish_file(path, b"updated", current, mode=current.mode, parent_mode=0o755)
     assert os.getxattr(path, "system.posix_acl_access") == encoded

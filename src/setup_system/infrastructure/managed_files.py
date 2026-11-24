@@ -1,15 +1,13 @@
-"""Apply reviewed user file changes with a private journal and local Ansible role."""
+"""Apply reviewed user file changes with a private journal and verified publication."""
 
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from setup_system.diagnostics import PartialApplyError, error_text
 from setup_system.domain.receipts import (
@@ -21,10 +19,10 @@ from setup_system.domain.receipts import (
     digest,
 )
 from setup_system.infrastructure.file_publication import (
-    apply_stage,
     has_displaced_original,
     observe,
     prepared_target,
+    publish_prepared,
     same_filesystem,
 )
 from setup_system.infrastructure.receipt_repository import (
@@ -41,7 +39,6 @@ from setup_system.infrastructure.user_storage import (
     state_root,
     target_path,
 )
-from setup_system.resource_locator import ResourceLocator
 
 
 def require_recovered(index: Ownership, targets: Iterable[Path]) -> None:
@@ -62,7 +59,7 @@ def require_recovered(index: Ownership, targets: Iterable[Path]) -> None:
 def _changes(
     desired: Mapping[Path, str],
     modes: Mapping[Path, int],
-    expected: Mapping[Path, str | None],
+    expected: Mapping[Path, str | FileState | None],
     index: Ownership,
 ) -> list[FileChange]:
     changes = []
@@ -71,7 +68,8 @@ def _changes(
         target_path(relative)
         before = observe(path)
         current = before.sha256 if before else None
-        if path in expected and current != expected[path]:
+        observed = before if isinstance(expected.get(path), FileState) else current
+        if path in expected and observed != expected[path]:
             raise ValueError(f"Configuration changed since inspection: {path}")
         mode = modes.get(path, before.mode if before else 0o644)
         if mode < 0 or mode & ~0o755 or mode & 0o022:
@@ -105,7 +103,7 @@ def changed_digests(
     desired: Mapping[Path, str],
     *,
     modes: Mapping[Path, int] | None = None,
-    expected: Mapping[Path, str | None] | None = None,
+    expected: Mapping[Path, str | FileState | None] | None = None,
 ) -> tuple[Path, ...]:
     """Compare release digests with actual file state without fetching or writing."""
     rows = _changes(desired, modes or {}, expected or {}, ownership())
@@ -116,7 +114,7 @@ def changed_files(
     desired: Mapping[Path, bytes],
     *,
     modes: Mapping[Path, int] | None = None,
-    expected: Mapping[Path, str | None] | None = None,
+    expected: Mapping[Path, str | FileState | None] | None = None,
 ) -> tuple[Path, ...]:
     return changed_digests(
         {p: digest(data) for p, data in desired.items()}, modes=modes, expected=expected
@@ -166,79 +164,9 @@ def _prepare_publication(
     row.prepared_inode = prepared.stat().st_ino
 
 
-def _run_role(
-    changes: list[FileChange],
-    desired: Mapping[Path, bytes],
-    record_write: Callable[[Path], None],
-) -> int:
-    import ansible_runner  # type: ignore[import-untyped]
-
-    with tempfile.TemporaryDirectory(prefix="setup-system-ansible-") as temporary:
-        stage = Path(temporary)
-        cfg = stage / "ansible.cfg"
-        cfg.write_text("[defaults]\nhost_key_checking=True\nretry_files_enabled=False\n")
-        entries = []
-        for row in changes:
-            path = target_path(row.relative)
-            area = apply_stage(row, path)
-            if area is None or observe(path) != row.before:
-                raise ValueError(f"File changed before applying configuration: {path}")
-            entries.append(
-                {
-                    "source": str(area / "prepared"),
-                    "destination": str(path),
-                    "mode": format(row.after.mode, "04o"),
-                    "change": row.model_dump(mode="json"),
-                }
-            )
-        playbook: list[dict[str, Any]] = [
-            {
-                "name": "Apply selected user files",
-                "hosts": "localhost",
-                "gather_facts": False,
-                "connection": "local",
-                "become": False,
-                "roles": [{"role": str(ResourceLocator.for_root().resource("roles/user_files"))}],
-            }
-        ]
-
-        messages = []
-
-        def on_event(event: dict[str, Any]) -> bool:
-            result_data = event.get("event_data", {}).get("res", {})
-            if event.get("event") == "runner_item_on_failed":
-                message = result_data.get("msg")
-                if isinstance(message, str):
-                    messages.append(error_text(message))
-            if event.get("event") == "runner_item_on_ok":
-                destination = result_data.get("dest")
-                if isinstance(destination, str):
-                    record_write(Path(destination))
-            return False
-
-        result = ansible_runner.run(
-            event_handler=on_event,
-            private_data_dir=str(stage),
-            playbook=playbook,
-            inventory="localhost,",
-            extravars={
-                "user_files_managed_files": entries,
-                "ansible_python_interpreter": sys.executable,
-            },
-            envvars={
-                "PATH": str(Path(sys.executable).parent) + os.pathsep + os.defpath,
-                "ANSIBLE_CONFIG": str(cfg),
-                "ANSIBLE_HOME": str(stage / "ansible"),
-                "ANSIBLE_NOCOLOR": "1",
-                "ANSIBLE_LOCAL_TEMP": str(stage / "local"),
-                "ANSIBLE_REMOTE_TEMP": str(stage / "remote"),
-            },
-            quiet=True,
-            timeout=300,
-        )
-        if result.rc != 0 and messages:
-            raise ValueError(messages[0])
-        return int(result.rc)
+def _publish_changes(changes: list[FileChange], record_write: Callable[[Path], None]) -> None:
+    for row in changes:
+        record_write(publish_prepared(row))
 
 
 def apply_files(
@@ -246,7 +174,7 @@ def apply_files(
     *,
     directories: tuple[Path, ...] = (),
     modes: Mapping[Path, int] | None = None,
-    expected: Mapping[Path, str | None] | None = None,
+    expected: Mapping[Path, str | FileState | None] | None = None,
 ) -> Path:
     """Write managed files, or merge confirmed inputs guarded by their exact before hashes."""
     if os.geteuid() == 0:
@@ -319,7 +247,8 @@ def apply_files(
             save_ownership(index)
             for directory in directories:
                 _create_parents(directory / ".setup-system-dir", op, folder)
-            rc = _run_role(changes, desired, record_write) if changes else 0
+            _publish_changes(changes, record_write)
+            rc = 0
         except Exception as exc:
             failure = exc
         finally:

@@ -1,7 +1,0 @@
----
-- name: Publish validated user configuration files without replacing concurrent edits
-  setup_system_publish:
-    change: "{{ item.change }}"
-  loop: "{{ user_files_managed_files }}"
-  loop_control:
-    label: "{{ item.destination }}"

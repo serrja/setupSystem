@@ -6,8 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from setup_system.domain.login import DesktopFile
-from setup_system.domain.system_facts import ClockSnapshot, Platform
+from setup_system.domain.system_facts import ClockSnapshot
 from setup_system.domain.system_receipts import BootFile, BootReceipt, RegionalReceipt
+from setup_system.models import PlanSnapshot
 
 
 @pytest.mark.parametrize("mode", [True, False, "420", 1.0, -1, 0o10000])
@@ -24,15 +25,15 @@ def test_file_mode_requires_a_bounded_integer(mode):
 def test_observed_flags_require_booleans(value):
     with pytest.raises(ValidationError):
         ClockSnapshot(timezone="UTC", can_ntp=value)
-    with pytest.raises(ValidationError):
-        Platform(
-            distribution="debian",
-            version="13",
-            architecture="arm64",
-            implemented=value,
-            verified=False,
-            reason="",
-        )
+    for flag in ("needs_system", "needs_user"):
+        observed = {"needs_system": True, "needs_user": True, flag: value}
+        with pytest.raises(ValidationError):
+            PlanSnapshot.capture(
+                "workspace",
+                {},
+                {"status": "ready", "actions": ["Set editor"], "observed": observed},
+                None,
+            )
     with pytest.raises(ValidationError):
         RegionalReceipt(setting="keyboard", before=None, after="us", locale_gen_existed=value)
     with pytest.raises(ValidationError):

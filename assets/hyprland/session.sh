@@ -42,8 +42,7 @@ start() {
         warn "$role is unavailable: $1"
     fi
 }
-runtime_python="${XDG_DATA_HOME:-$HOME/.local/share}/setup-system/runtime/bin/python"
-start panel "$runtime_python" -I -B "$profile_dir/panel.py" "$profile_dir"
+start panel /usr/bin/python3 -I -B "$profile_dir/panel.py" "$profile_dir"
 start notifications mako --config "$profile_dir/mako.conf"
 start idle hypridle -c "$profile_dir/hypridle.conf"
 start wallpaper swaybg -i "$profile_dir/wallpaper.svg" -m fill

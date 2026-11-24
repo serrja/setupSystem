@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 
 import pytest
+from historical_receipts import historical_backup
 
-from setup_system.composition import restore
 from setup_system.domain.managed_text import managed_block
+from setup_system.file_tasks import restore
 from setup_system.infrastructure import user_storage
 
 
@@ -50,7 +51,7 @@ def test_atomic_write_rejects_escape_and_symlink(sandbox: Path, tmp_path: Path) 
 def test_backup_preview_conflict_then_restore_missing_original(sandbox: Path) -> None:
     path = sandbox / "config/user.txt"
     user_storage.atomic_write(path, b"original", 0o640)
-    backup = user_storage.new_backup([path, path, sandbox / "absent"])
+    backup = historical_backup([path, path, sandbox / "absent"])
     assert backup.stat().st_mode & 0o777 == 0o700
     manifest = json.loads((backup / "manifest.json").read_text())
     assert len(manifest["items"]) == 1
@@ -74,7 +75,7 @@ def test_backup_preview_conflict_then_restore_missing_original(sandbox: Path) ->
 def test_restore_rejects_tampered_input_before_writing(sandbox: Path, problem: str) -> None:
     path = sandbox / "user.txt"
     user_storage.atomic_write(path, b"protected")
-    backup = user_storage.new_backup([path])
+    backup = historical_backup([path])
     file = backup / "manifest.json"
     manifest = json.loads(file.read_text())
     item = manifest["items"][0]

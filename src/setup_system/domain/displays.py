@@ -14,9 +14,9 @@ AdvertisedMode = Annotated[
 class MonitorLayout(ContractModel):
     output: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$")
     mode: AdvertisedMode
-    scale: StrictFloat = Field(ge=0.25, le=8, allow_inf_nan=False)
-    x: StrictInt = Field(ge=-65535, le=65535)
-    y: StrictInt = Field(ge=-65535, le=65535)
+    scale: StrictFloat = Field(default=1, ge=0.25, le=8, allow_inf_nan=False)
+    x: StrictInt = Field(default=0, ge=-65535, le=65535)
+    y: StrictInt = Field(default=0, ge=-65535, le=65535)
 
     def rule(self) -> str:
         """All string values have a closed ASCII grammar at the settings boundary."""
