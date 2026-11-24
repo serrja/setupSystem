@@ -2,7 +2,6 @@
 - name: Read release catalogs and the private user snapshot
   ansible.builtin.set_fact:
     release_root: "{{ playbook_dir | dirname }}"
-    request: "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'SETUP_SYSTEM_REQUEST')) | from_json }}"
     app_catalog: "{{ lookup('ansible.builtin.file', playbook_dir + '/../config/workspace/applications.toml') | native_toml }}"
     cleanup_catalog: "{{ (lookup('ansible.builtin.file', playbook_dir + '/../config/workspace/optional_cleanup.toml') | native_toml).candidates }}"
     base_catalog: "{{ lookup('ansible.builtin.file', playbook_dir + '/../config/base/packages.toml') | native_toml }}"
@@ -22,15 +21,17 @@
 
 - name: Execute the selected local operation
   block:
+    - name: Read the bounded private operation request
+      ansible.builtin.set_fact:
+        request: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_REQUEST') | native_read_request }}"
     - name: Validate the operation and envelope
       ansible.builtin.assert:
         that:
           - setup_action in ['inspect', 'plan', 'apply', 'user-apply', 'cleanup-plan', 'cleanup-apply']
           - section == 'workspace' or setup_action not in ['cleanup-plan', 'cleanup-apply']
-          - request | native_request(section, app_catalog, cleanup_catalog) is mapping
     - name: Record validated selections
       ansible.builtin.set_fact:
-        intent: "{{ request | native_request(section, app_catalog, cleanup_catalog) }}"
+        intent: "{{ request | native_request(section, app_catalog, cleanup_catalog, setup_action) }}"
         system_run: "{{ setup_action in ['apply', 'cleanup-apply'] }}"
         execute_run: "{{ setup_action not in ['inspect', 'plan', 'cleanup-plan'] }}"
     - name: Inspect local platform and user capabilities
@@ -77,19 +78,24 @@
           status: >-
             {{ 'blocked' if blockers else ('ready' if setup_action == 'inspect' or
                apt_changes or system_actions or user_changes else ('no_changes' if has_selection else 'nothing_selected')) }}
-          actions: "{{ apt_changes + system_actions + user_changes }}"
+          actions: "{{ (apt_changes | native_apt_actions) + system_actions + user_changes }}"
           blockers: "{{ blockers }}"
           observed: >-
             {{ facts | combine({'section':section, 'selection':intent, 'debs':latest_debs,
                 'tools':latest_tools, 'boot':boot_facts, 'files':files_preview | default({}),
                 'needs_system':(apt_changes | length > 0 or system_actions | length > 0),
                 'needs_user':user_changes | length > 0}) }}
+    - name: Freeze validated native actions and their observed preconditions
+      ansible.builtin.set_fact:
+        plan: "{{ plan | native_result }}"
+        system_kinds: "{{ system_actions | map(attribute='kind') | list }}"
     - name: Verify consent before any selected change
       ansible.builtin.assert:
         that:
-          - request.expected == plan
+          - (request.expected | native_same_plan(plan))
           - not blockers
           - setup_action != 'user-apply' or not plan.observed.needs_system
+          - setup_action != 'apply' or plan.observed.needs_system
           - setup_action != 'cleanup-apply' or cleanup | length > 0
         fail_msg: "The selected state or source changed after confirmation. Review a new plan."
       when: execute_run
@@ -99,7 +105,7 @@
     - name: Set the result for the front end
       ansible.builtin.set_fact:
         outcome: >-
-          {{ plan | combine({'status': ('needs_reboot' if 'plymouth' in changed_stages else
+          {{ plan | combine({'status': ('needs_reboot' if 'plymouth' in (changed_stages | map(attribute='kind') | list) else
              ('requires_user_login' if notices else ('complete' if changed_stages else 'no_changes'))),
              'actions': changed_stages + notices}) if execute_run and plan.status == 'ready' else plan }}
   rescue:
@@ -108,7 +114,7 @@
         outcome:
           status: >-
             {{ 'cancelled' if cancel_requested else ('partial' if mutation_started or changed_stages
-               else ('failed' if (execute_run | default(false)) and plan is defined and request.expected == plan else 'blocked')) }}
+               else ('failed' if (execute_run | default(false)) and plan is defined and (request.expected | native_same_plan(plan)) else 'blocked')) }}
           actions: "{{ changed_stages }}"
           blockers:
             - >-
@@ -134,7 +140,7 @@
         - signed_indexes.rc is defined
     - name: Publish the result as the calling user
       ansible.builtin.copy:
-        content: "{{ outcome | to_json }}\n"
+        content: "{{ outcome | native_result | to_json }}\n"
         dest: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_RESULT') }}"
         mode: "0600"
       become: false

@@ -6,8 +6,8 @@ import asyncio
 import json
 import os
 import sys
-import threading
 from contextlib import nullcontext
+from pathlib import Path
 from typing import ClassVar, Literal
 
 from textual import on
@@ -27,6 +27,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from setup_system.domain.observations import NativeObservations, ProjectObservations
 from setup_system.infrastructure.palette import palette
 from setup_system.models import (
     BaseOptions,
@@ -34,14 +35,22 @@ from setup_system.models import (
     PlanTask,
     ProjectTask,
     Section,
-    TaskResult,
     WorkspaceOptions,
 )
-from setup_system.runner import FOREGROUND, BecomePassword, MakeRunner, Target
+from setup_system.runner import (
+    FOREGROUND,
+    INSTALLED,
+    AsyncMakeRunner,
+    BecomePassword,
+    Command,
+    RunEvent,
+    Target,
+)
 from setup_system.settings import Loaded, Settings
 from setup_system.suggestions import Catalog, Suggestions, config_root
 from setup_system.ui.dialogs import Consent, Password
 from setup_system.ui.forms import BaseForm, WorkspaceForm
+from setup_system.ui.help import Help
 from setup_system.ui.projects import ProjectTools, ToolChoice
 
 Group = Literal["projects", "templates", "git"]
@@ -62,6 +71,7 @@ GROUPS: dict[str, Group] = {
 }
 RUN_BUTTONS = (
     "inspect",
+    "admin-plan",
     "plan",
     "cleanup-plan",
     "restore-plan",
@@ -77,6 +87,7 @@ ERRORS = (OSError, ValueError, RuntimeError)
 class SetupApp(App[None]):
     TITLE = "setupSystem"
     BINDINGS: ClassVar[list[BindingType]] = [
+        ("f1", "help", "Help"),
         ("ctrl+1", "base", "Base"),
         ("ctrl+2", "workspace", "Workspace"),
         ("ctrl+q", "quit", "Quit"),
@@ -97,12 +108,12 @@ class SetupApp(App[None]):
 
     def __init__(
         self,
-        runner: MakeRunner | None = None,
+        runner: AsyncMakeRunner | None = None,
         settings: Settings | None = None,
         catalog: Catalog | None = None,
     ) -> None:
         super().__init__()
-        self.runner = runner if runner is not None else MakeRunner()
+        self.runner = runner if runner is not None else AsyncMakeRunner()
         self.settings = settings if settings is not None else Settings()
         self.catalog = catalog if catalog is not None else Catalog(config_root())
         colors = palette(self.catalog.config.parent)
@@ -123,8 +134,16 @@ class SetupApp(App[None]):
         self.suggestions = Suggestions(self.catalog.config, self.settings.home)
         self.loaded: dict[Section, Loaded] = {}
         self.pending: PlanSnapshot | None = None
-        self.cancel_event: threading.Event | None = None
+        self.cancel_event: asyncio.Event | None = None
         self.quit_when_finished = False
+        self.saving: set[Section] = set()
+        self.reloading: set[Section] = set()
+        self.reviewing: PlanSnapshot | None = None
+        self.controls: dict[str, Button] = {}
+        self.navigation: TabbedContent
+        self.base_form: BaseForm
+        self.workspace_form: WorkspaceForm
+        self.feedback: Static
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -144,55 +163,89 @@ class SetupApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        for section in ("base", "workspace"):
-            self.reload(section)
+        self.navigation = self.query_one("#sections", TabbedContent)
+        self.base_form = self.query_one(BaseForm)
+        self.workspace_form = self.query_one(WorkspaceForm)
+        self.feedback = self.query_one("#feedback", Static)
+        self.controls = {
+            name: self.query_one("#" + name, Button) for name in (*RUN_BUTTONS, "apply", "cancel")
+        }
+        self.run_worker(self.reload("base"), name="load-base")
+        self.run_worker(self.reload("workspace"), name="load-workspace")
+
+    def action_help(self) -> None:
+        root = self.catalog.config.parent
+        directory = Path("/usr/share/doc/setup-system/docs") if root == INSTALLED else root / "docs"
+        self.push_screen(Help(directory))
 
     def action_base(self) -> None:
-        self.query_one("#sections", TabbedContent).active = "base"
+        self.navigation.active = "base"
 
     def action_workspace(self) -> None:
-        self.query_one("#sections", TabbedContent).active = "workspace"
+        self.navigation.active = "workspace"
 
     @property
     def section(self) -> Section:
-        return (
-            "base" if self.query_one("#sections", TabbedContent).active == "base" else "workspace"
-        )
+        return "base" if self.navigation.active == "base" else "workspace"
 
     def report(self, message: str) -> None:
-        self.query_one("#feedback", Static).update(message)
+        if self.feedback.is_attached and not self.quit_when_finished:
+            self.feedback.update(message)
 
-    def reload(self, section: Section) -> None:
+    async def reload(self, section: Section, *, announce: bool = False) -> None:
+        if section in self.reloading or section in self.saving:
+            return
+        self.reloading.add(section)
         self.loaded.pop(section, None)
+        form = self.base_form if section == "base" else self.workspace_form
+        form.disabled = True
         try:
-            saved = self.settings.load(section)
+            saved = await self.settings.read(section)
+            if self.quit_when_finished or not form.is_attached:
+                return
             if isinstance(saved.options, BaseOptions):
-                self.query_one(BaseForm).populate(saved.options)
+                self.base_form.populate(saved.options)
             else:
-                self.query_one(WorkspaceForm).populate(saved.options)
+                self.workspace_form.populate(saved.options)
             self.loaded[section] = saved
+            if announce:
+                self.report(f"Reloaded {section} intentions")
         except ERRORS as exc:
             self.report(f"{section.capitalize()} settings: {exc}")
+        finally:
+            form.disabled = False
+            self.reloading.discard(section)
+
+    async def save_section(
+        self, section: Section, options: BaseOptions | WorkspaceOptions, revision: str
+    ) -> None:
+        try:
+            self.loaded[section] = await self.settings.publish(section, options, revision)
+            if not self.quit_when_finished:
+                self.report(f"Saved {section} intentions")
+        except ERRORS as exc:
+            if not self.quit_when_finished:
+                self.report(str(exc))
+        finally:
+            self.saving.discard(section)
+            if self.quit_when_finished and not self.saving and self.cancel_event is None:
+                self.exit()
 
     def options(self, section: Section) -> BaseOptions | WorkspaceOptions:
         if section not in self.loaded:
             raise ValueError(f"Review the {section} settings and reload")
-        return (
-            self.query_one(BaseForm).options()
-            if section == "base"
-            else self.query_one(WorkspaceForm).options()
-        )
+        return self.base_form.options() if section == "base" else self.workspace_form.options()
 
-    def verify_revision(self, section: Section, revision: str | None) -> None:
-        if revision is not None and self.settings.load(section).revision != revision:
+    async def verify_revision(self, section: Section, revision: str | None) -> None:
+        if revision is not None and (await self.settings.read(section)).revision != revision:
             raise ValueError("Settings changed since inspection. Reload and review a new plan.")
 
     def buttons(self) -> None:
-        running = self.cancel_event is not None
+        running = self.cancel_event is not None or self.reviewing is not None
         for name in RUN_BUTTONS:
-            self.query_one("#" + name, Button).disabled = running
-        self.query_one("#apply", Button).disabled = running or self.pending is None
-        self.query_one("#cancel", Button).disabled = not running and self.pending is None
+            self.controls[name].disabled = running
+        self.controls["apply"].disabled = running or self.pending is None
+        self.controls["cancel"].disabled = not running and self.pending is None
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
@@ -202,28 +255,32 @@ class SetupApp(App[None]):
             if name in ("set-layout", "forget-layout"):
                 self.query_one(WorkspaceForm).update_layout(name == "forget-layout")
             elif name == "save":
-                saved = self.settings.save(
-                    section, self.options(section), self.loaded[section].revision
-                )
-                self.loaded[section] = saved
-                self.report(f"Saved {section} intentions")
-            elif name == "reload":
-                self.reload(section)
-                if section in self.loaded:
-                    self.report(f"Reloaded {section} intentions")
-            elif name == "apply" and self.pending and self.cancel_event is None:
-                self.verify_revision(
-                    "base" if self.pending.task == "base" else "workspace", self.pending.revision
-                )
-                self.push_screen(Consent(self.pending), self.confirmed)
+                if section not in self.saving:
+                    options = self.options(section)
+                    revision = self.loaded[section].revision
+                    self.saving.add(section)
+                    self.run_worker(
+                        self.save_section(section, options, revision), name="save-" + section
+                    )
+            elif name == "reload" and section not in self.saving:
+                self.run_worker(self.reload(section, announce=True), name="reload-" + section)
+            elif name == "apply" and self.pending and not (self.cancel_event or self.reviewing):
+                self.reviewing = self.pending
+                self.buttons()
+                self.run_worker(self.review_apply(self.pending), name="review-apply")
             elif name == "cancel":
                 self.cancel()
-            elif name in RUN_BUTTONS and self.cancel_event is None:
+            elif name in RUN_BUTTONS and not (self.cancel_event or self.reviewing):
                 self.request(name, section)
         except ERRORS as exc:
             self.report(str(exc))
 
     def request(self, name: str, section: Section) -> None:
+        if name == "admin-plan":
+            username = self.query_one("#admin-account", Input).value.strip()
+            self.pending = None
+            self.start(name, {"username": username}, "base", ("admin", None))
+            return
         if name == "inspect":
             self.start(f"{section}-inspect", {}, section, None)
             return
@@ -256,7 +313,6 @@ class SetupApp(App[None]):
         revision = self.loaded[section].revision if section in self.loaded else None
         if revision is None:
             raise ValueError(f"Review the {section} settings and reload")
-        self.verify_revision(section, revision)
         task: PlanTask = section
         if name == "cleanup-plan":
             task = "cleanup"
@@ -280,52 +336,62 @@ class SetupApp(App[None]):
             self.pending = None
         self.start(choice.target.value, choice.values, "workspace", (task, None) if task else None)
 
-    def confirmed(self, answer: bool | None) -> None:
-        if not answer or self.pending is None:
-            self.report("Apply cancelled")
-            return
-        try:
-            self.verify_revision(
-                "base" if self.pending.task == "base" else "workspace", self.pending.revision
-            )
-        except ERRORS as exc:
-            self.pending = None
-            self.report(str(exc))
-            self.buttons()
-            return
-        if self.pending.needs_password:
-            self.push_screen(Password(), self.authorized)
-        else:
-            self.launch_apply(None)
+    async def review_apply(self, plan: PlanSnapshot) -> None:
+        """Keep consent and its one-use credential bound to the same preview."""
+        section: Section = "base" if plan.task in {"base", "admin"} else "workspace"
+        password = None
 
-    def authorized(self, password: BecomePassword | None) -> None:
-        if not password:
-            self.report("Authorization cancelled")
-            return
-        self.launch_apply(password)
+        def current() -> bool:
+            return self.pending is plan and self.reviewing is plan and not self.quit_when_finished
 
-    def launch_apply(self, password: BecomePassword | None) -> None:
-        assert self.pending is not None
-        active = self.pending
-        section: Section = "base" if active.task == "base" else "workspace"
         try:
-            self.verify_revision(section, active.revision)
-            self.pending = None
+            await self.verify_revision(section, plan.revision)
+            if not current():
+                return
+            if not await self.push_screen(Consent(plan), wait_for_dismiss=True):
+                self.report("Apply cancelled")
+                return
+            await self.verify_revision(section, plan.revision)
+            if not current():
+                return
+            if plan.needs_password:
+                await self.runner.check_authorization()
+                if not current():
+                    return
+                password = await self.push_screen(
+                    Password(root_account=plan.task == "admin"), wait_for_dismiss=True
+                )
+                if password is None:
+                    self.report("Authorization cancelled")
+                    return
+                await self.verify_revision(section, plan.revision)
+                if not current():
+                    return
             target = (
-                active.task + "-user-apply"
-                if active.task in {"workspace", "base"} and not active.needs_password
-                else active.task + "-apply"
+                plan.task + "-user-apply"
+                if plan.task in {"workspace", "base"} and not plan.needs_password
+                else plan.task + "-apply"
             )
+            self.pending = None
             self.start(
                 target,
-                json.loads(active.settings_json),
+                json.loads(plan.settings_json),
                 section,
                 None,
-                expected=json.loads(active.expected_json),
+                expected=json.loads(plan.expected_json),
                 password=password,
             )
+            password = None  # The operation worker owns it now.
         except ERRORS as exc:
+            if self.pending is plan:
+                self.pending = None
             self.report(str(exc))
+        finally:
+            if password is not None:
+                password.discard()
+            if self.reviewing is plan:
+                self.reviewing = None
+                self.buttons()
 
     def start(
         self,
@@ -338,38 +404,46 @@ class SetupApp(App[None]):
         expected: dict[str, object] | None = None,
         password: BecomePassword | None = None,
     ) -> None:
-        cancel = threading.Event()
+        command = Command.capture(target, {"schema": 1, "settings": settings, "expected": expected})
+        cancel = asyncio.Event()
         self.cancel_event = cancel
         self.buttons()
         self.report(f"Running {target}")
-        payload = {"schema": 1, "settings": settings, "expected": expected}
+
+        def progress(event: RunEvent) -> None:
+            if not self.quit_when_finished:
+                self.report(event.message)
 
         async def perform() -> None:
             nonlocal password
             try:
-                goal = Target(target)
-                with self.suspend() if goal in FOREGROUND else nullcontext():
-                    reply = await asyncio.to_thread(
-                        self.runner.run, goal, payload, password=password, cancel=cancel
+                if planning:
+                    await self.verify_revision(section, planning[1])
+                    if cancel.is_set():
+                        self.report("Plan cancelled")
+                        return
+                with self.suspend() if command.target in FOREGROUND else nullcontext():
+                    result = await self.runner.run(
+                        command, password=password, cancel=cancel, on_event=progress
                     )
                 if self.quit_when_finished:
                     return
-                result = TaskResult.model_validate(reply)
+                observed = result.observed.model_dump(mode="json", exclude_unset=True)
                 if group and result.status == "ready" and self.section == "workspace":
-
-                    def entries(key: str) -> dict[str, str]:
-                        value = result.observed.get(key)
-                        if not isinstance(value, dict):
-                            return {}
-                        return {k: v for k, v in value.items() if isinstance(v, str)}
-
+                    if not isinstance(result.observed, ProjectObservations):
+                        raise ValueError("The project operation returned incompatible facts")
                     tools = ProjectTools(
-                        group, entries("projects"), entries("templates"), entries("git_profiles")
+                        group,
+                        result.observed.projects,
+                        result.observed.templates,
+                        result.observed.git_profiles,
                     )
                     self.push_screen(tools, self.tool_request)
                 if target in {"base-inspect", "workspace-inspect"}:
-                    self.suggestions.refresh(section, result.observed)
-                    self.query_one(WorkspaceForm).refresh_modes()
+                    if not isinstance(result.observed, NativeObservations):
+                        raise ValueError("Inspection returned incompatible facts")
+                    await self.suggestions.refresh(section, result.observed)
+                    self.workspace_form.refresh_modes()
                 if (
                     planning
                     and not cancel.is_set()
@@ -377,19 +451,24 @@ class SetupApp(App[None]):
                     and result.actions
                     and not result.blockers
                 ):
-                    self.pending = PlanSnapshot.capture(planning[0], settings, reply, planning[1])
+                    self.pending = PlanSnapshot.capture(
+                        planning[0],
+                        json.loads(command.request_json)["settings"],
+                        result.model_dump(mode="json", exclude_unset=True),
+                        planning[1],
+                    )
                 details = result.describe()
                 if target.endswith("-inspect") or target == "project-check":
                     facts = [
                         f"{key.replace('_', ' ')}: {value}"
-                        for key, value in result.observed.items()
+                        for key, value in observed.items()
                         if isinstance(value, (str, bool, int))
                     ]
                     details = "\n".join((details, *facts))
-                if target == "template-versions":
-                    versions = result.observed.get("versions")
-                    if isinstance(versions, list):
-                        details += "\n" + ", ".join(str(v) for v in versions)
+                if target == "template-versions" and isinstance(
+                    result.observed, ProjectObservations
+                ):
+                    details += "\n" + ", ".join(result.observed.versions)
                 self.report(details)
             except ERRORS as exc:
                 if not self.quit_when_finished:
@@ -400,7 +479,8 @@ class SetupApp(App[None]):
                 password = None
                 self.cancel_event = None
                 if self.quit_when_finished:
-                    self.exit()
+                    if not self.saving:
+                        self.exit()
                 else:
                     self.buttons()
 
@@ -412,13 +492,15 @@ class SetupApp(App[None]):
             self.report("Cancellation requested. Waiting for the current safe boundary.")
         else:
             self.pending = None
+            self.reviewing = None
             self.report("Plan cancelled")
             self.buttons()
 
     async def action_quit(self) -> None:
-        if self.cancel_event:
-            self.quit_when_finished = True
-            self.cancel()
+        self.quit_when_finished = True
+        if self.cancel_event or self.saving:
+            if self.cancel_event:
+                self.cancel()
         else:
             self.exit()
 

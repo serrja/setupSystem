@@ -3,95 +3,33 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, get_args
 
 from pydantic import (
     AfterValidator,
-    BaseModel,
-    ConfigDict,
     Field,
     JsonValue,
     StrictBool,
-    StrictFloat,
-    StrictInt,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
 
-from setup_system.domain.displays import MonitorLayout
+from setup_system.domain.actions import Action
+from setup_system.domain.administration import AdminAccount, AdminIntent
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES
+from setup_system.domain.contracts import ContractModel as Model
+from setup_system.domain.intentions import BaseOptions as BaseOptions
+from setup_system.domain.intentions import Identifier
+from setup_system.domain.intentions import Monitor as Monitor
+from setup_system.domain.intentions import Section as Section
+from setup_system.domain.intentions import Theme as Theme
+from setup_system.domain.intentions import WorkspaceOptions as WorkspaceOptions
+from setup_system.domain.manifest_types import Digest
+from setup_system.domain.observations import NativeObservations, Observations, ProjectObservations
 from setup_system.domain.receipts import RunId
-
-Section = Literal["base", "workspace"]
-Monitor = MonitorLayout
-Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
-
-
-class Model(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        validate_default=True,
-        allow_inf_nan=False,
-        hide_input_in_errors=True,
-    )
-
-
-class BaseOptions(Model):
-    hyprland: StrictBool = False
-    graphical_login: StrictBool = False
-    plymouth: StrictBool = False
-    timezone: str | None = Field(
-        None, max_length=100, pattern=r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$"
-    )
-    locale: str | None = Field(None, max_length=64, pattern=r"^(C|[a-z]{2,3}_[A-Z]{2})\.UTF-8$")
-    keyboard: str | None = Field(
-        None, pattern=r"^[a-z][a-z0-9_-]{0,15}(,[a-z][a-z0-9_-]{0,15}){0,3}$"
-    )
-
-    @field_validator("timezone")
-    @classmethod
-    def canonical_zone(cls, value: str | None) -> str | None:
-        if value and value.partition("/")[0] in {"posix", "right"}:
-            raise ValueError("Choose a canonical timezone")
-        return value
-
-
-class Theme(Model):
-    compact_panel: StrictBool = False
-    effects: StrictBool = False
-    opacity: StrictFloat = Field(default=0.96, ge=0.75, le=1)
-    rounding: StrictInt = Field(default=12, ge=0, le=24)
-
-
-class WorkspaceOptions(Model):
-    desktop_theme: StrictBool = False
-    theme: Theme = Theme()
-    monitors: tuple[Monitor, ...] = ()
-    apps: tuple[Identifier, ...] = ()
-    languages: tuple[Identifier, ...] = ()
-    cleanup: tuple[Identifier, ...] = ()
-    cleanup_mode: Literal["remove", "purge", "autoremove"] = "remove"
-    project: str | None = Field(None, max_length=4000, min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")
-
-    @field_validator("project")
-    @classmethod
-    def absolute_project(cls, value: str | None) -> str | None:
-        if value is not None and (not Path(value).is_absolute() or ".." in Path(value).parts):
-            raise ValueError("Choose an absolute project path")
-        return value
-
-    @model_validator(mode="after")
-    def unique(self) -> Self:
-        for values in (
-            self.apps,
-            self.languages,
-            self.cleanup,
-            tuple(m.output for m in self.monitors),
-        ):
-            if len(values) != len(set(values)):
-                raise ValueError("Duplicate selection")
-        return self
 
 
 class CleanupOptions(Model):
@@ -120,7 +58,7 @@ ProjectTask = Literal[
     "shell-configure",
     "rtk-install",
 ]
-PlanTask = Literal["base", "workspace", "cleanup", "restore"] | ProjectTask
+PlanTask = Literal["base", "workspace", "cleanup", "restore", "admin"] | ProjectTask
 Name = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\x00-\x1f\x7f]+$")]
 
 
@@ -139,6 +77,10 @@ Location = Annotated[Path, AfterValidator(absolute_location)]
 
 class Empty(Model):
     """An operation without user-supplied arguments."""
+
+
+class ProjectDirectory(Model):
+    project: Location
 
 
 class ProjectChoice(Model):
@@ -220,62 +162,220 @@ Status = Literal[
 ]
 
 
+class AdminObservations(Observations):
+    account: AdminAccount
+    boot_identity: Digest
+
+
+def bounded_json(value: object) -> object:
+    """Bound nesting and object cardinality for direct callers as well as process input."""
+    work = [(value, 0)]
+    count = 0
+    characters = 0
+    while work:
+        node, depth = work.pop()
+        count += 1
+        if count > 48000 or depth > 24 or characters > MAX_MESSAGE_BYTES:
+            raise ValueError("Operation payload exceeds the supported structure limits")
+        if isinstance(node, dict):
+            if len(node) > 8192 or any(not isinstance(k, str) or len(k) > 4096 for k in node):
+                raise ValueError("Invalid operation data keys")
+            characters += sum(len(k) for k in node)
+            work.extend((v, depth + 1) for v in node.values())
+        elif isinstance(node, (tuple, list)):
+            if len(node) > 8192:
+                raise ValueError("Operation collection exceeds the limit")
+            work.extend((v, depth + 1) for v in node)
+        elif isinstance(node, str):
+            characters += len(node)
+            if len(node) > 16384 or characters > MAX_MESSAGE_BYTES:
+                raise ValueError("Operation text exceeds the limit")
+    return value
+
+
 class TaskResult(Model):
     status: Status
-    actions: tuple[str, ...] = ()
-    blockers: tuple[str, ...] = ()
-    observed: dict[str, JsonValue] = Field(default_factory=dict)
+    actions: tuple[Action, ...] = Field(default=(), max_length=8192)
+    blockers: tuple[str, ...] = Field(default=(), max_length=512)
+    observed: NativeObservations | ProjectObservations | AdminObservations = Field(
+        default_factory=NativeObservations
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def bounded(cls, value: object) -> object:
+        return bounded_json(value)
 
     def describe(self) -> str:
-        lines = [self.status.replace("_", " ").capitalize(), *self.actions, *self.blockers]
+        lines = [
+            self.status.replace("_", " ").capitalize(),
+            *(action.label for action in self.actions),
+            *self.blockers,
+        ]
+        if isinstance(self.observed, AdminObservations):
+            account = self.observed.account
+            membership = "yes" if account.member else "no"
+            lines.extend(
+                [
+                    f"Account {account.username} (UID {account.uid}, GID {account.gid})",
+                    f"Home: {account.home}",
+                    f"Login shell: {account.shell}",
+                    f"Member of sudo group (GID {account.sudo_gid}): {membership}",
+                ]
+            )
+            if self.status == "no_changes" and account.member:
+                lines.append("Effective sudo access requires a privileged policy check.")
         return "\n".join(lines)
+
+    def same_plan(self, other: TaskResult) -> bool:
+        """Compare ordered operation inputs and facts independently of action labels."""
+        exclude = {"actions": {"__all__": {"label"}}}
+        return self.model_dump(
+            mode="json", exclude=exclude, exclude_unset=True
+        ) == other.model_dump(mode="json", exclude=exclude, exclude_unset=True)
+
+
+def settings_model(task: str) -> type[Model]:
+    models: dict[str, type[Model]] = {
+        "base": BaseOptions,
+        "workspace": WorkspaceOptions,
+        "cleanup": CleanupOptions,
+        "display-preview": WorkspaceOptions,
+        "project-check": ProjectDirectory,
+        "restore": RestoreOptions,
+        "admin": AdminIntent,
+        **_PROJECT_MODELS,
+    }
+    if task not in models:
+        raise ValueError("Unknown operation target")
+    return models[task]
+
+
+class RequestEnvelope(Model):
+    schema_version: Literal[1] = Field(alias="schema")
+    settings: dict[str, JsonValue]
+    expected: TaskResult | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def bounded(cls, value: object) -> object:
+        return bounded_json(value)
+
+    def for_target(self, target: str) -> Self:
+        operations = {
+            "base": {"inspect", "plan", "apply", "user-apply"},
+            "workspace": {"inspect", "plan", "apply", "user-apply"},
+            "admin": {"inspect", "plan", "apply"},
+            "restore": {"plan", "apply"},
+            "cleanup": {"plan", "apply"},
+            **{key: {"plan", "apply"} for key in get_args(ProjectTask)},
+        }
+        if target in {
+            "project-check",
+            "display-preview",
+            *(_PROJECT_MODELS.keys() - operations.keys()),
+        }:
+            operation = target
+        else:
+            names = {
+                f"{key}-{phase}": key for key, phases in operations.items() for phase in phases
+            }
+            if target not in names:
+                raise ValueError("Unknown operation target")
+            operation = names[target]
+        settings_model(operation).model_validate(self.settings)
+        if target.endswith("-apply"):
+            if self.expected is None:
+                raise ValueError("Apply requires a confirmed plan")
+            plan = PlanSnapshot.capture(
+                TypeAdapter(PlanTask).validate_python(operation),
+                self.settings,
+                self.expected.model_dump(mode="json", exclude_unset=True),
+                None,
+            )
+            if (
+                operation in {"base", "workspace"}
+                and target.endswith("-user-apply") == plan.needs_password
+            ):
+                raise ValueError("The Apply target must match the plan's system and user scope")
+        elif self.expected is not None:
+            raise ValueError("Read-only operations cannot consume a confirmed plan")
+        return self
 
 
 class PlanSnapshot(Model):
     """Keep the exact JSON sent and received, including native identity and closure."""
 
     task: PlanTask
-    settings_json: str
-    expected_json: str
-    revision: str | None
+    settings_json: str = Field(max_length=MAX_MESSAGE_BYTES)
+    expected_json: str = Field(max_length=MAX_MESSAGE_BYTES)
+    revision: str | None = Field(max_length=256)
 
     @classmethod
     def capture(
         cls,
         task: PlanTask,
-        settings: dict[str, object],
-        reply: dict[str, object],
+        settings: Mapping[str, object],
+        reply: Mapping[str, object],
         revision: str | None,
     ) -> Self:
+        bounded_json(dict(settings))
+        bounded_json(dict(reply))
         return cls(
             task=task,
-            settings_json=json.dumps(settings, allow_nan=False),
-            expected_json=json.dumps(reply, allow_nan=False),
+            settings_json=json.dumps(dict(settings), allow_nan=False),
+            expected_json=json.dumps(dict(reply), allow_nan=False),
             revision=revision,
         )
 
     @model_validator(mode="after")
     def executable(self) -> Self:
-        models: dict[str, type[Model]] = {
-            "base": BaseOptions,
-            "workspace": WorkspaceOptions,
-            "cleanup": CleanupOptions,
-            "restore": RestoreOptions,
-            **_PROJECT_MODELS,
-        }
-        models[self.task].model_validate_json(self.settings_json)
+        settings = settings_model(self.task).model_validate_json(self.settings_json)
         result = TaskResult.model_validate_json(self.expected_json)
         if result.status not in {"plan_ready", "ready"} or result.blockers or not result.actions:
             raise ValueError("This plan has no executable changes")
+        if isinstance(settings, AdminIntent):
+            if (
+                not isinstance(result.observed, AdminObservations)
+                or result.observed.account.username != settings.username
+                or result.observed.account.member
+                or not result.observed.needs_system
+                or result.observed.needs_user
+                or len(result.actions) != 1
+                or any(a.kind != "admin" or a.username != settings.username for a in result.actions)
+            ):
+                raise ValueError("Administrative consent must identify the same ordinary account")
         if self.task in {"base", "workspace"}:
-            flags = tuple(result.observed.get(key) for key in ("needs_system", "needs_user"))
-            if any(type(value) is not bool for value in flags) or not any(flags):
-                raise ValueError("The plan did not identify its execution scope")
+            kinds = {action.kind for action in result.actions}
+            system = (
+                {"apt", "region", "graphical_login", "plymouth"}
+                if self.task == "base"
+                else {"apt", "happ_start", "firefox_policy"}
+            )
+            user = (
+                {"user_file"}
+                if self.task == "base"
+                else {"user_file", "tool", "parsers", "editor_verify"}
+            )
+            flags = (result.observed.get("needs_system"), result.observed.get("needs_user"))
+            if kinds - (system | user) or flags != (bool(kinds & system), bool(kinds & user)):
+                raise ValueError("The native actions and their confirmed execution scope differ")
+        elif self.task == "cleanup":
+            if any(
+                a.kind != "apt" or not a.record.startswith(("Remv ", "Purg "))
+                for a in result.actions
+            ):
+                raise ValueError("Cleanup must confirm the native removal records")
+        elif self.task == "restore":
+            if any(a.kind != "restore" for a in result.actions):
+                raise ValueError("Restore must confirm journal-based file changes")
+        elif self.task != "admin" and any(a.kind != self.task for a in result.actions):
+            raise ValueError("The selected project action differs from the confirmed task")
         return self
 
     @property
     def needs_password(self) -> bool:
-        return self.task == "cleanup" or (
+        return self.task in {"cleanup", "admin"} or (
             self.task in {"base", "workspace"}
             and json.loads(self.expected_json)["observed"]["needs_system"]
         )

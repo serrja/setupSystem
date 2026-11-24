@@ -15,7 +15,7 @@ from pathlib import Path
 def verify_resources(root: Path, wheel: Path, sdist: Path) -> None:
     """Compare source, wheel and sdist bytes for every packaged runtime resource."""
     expected: dict[str, bytes] = {}
-    folders = ("assets", "config", "mk", "libexec", "ansible")
+    folders = ("assets", "config", "mk", "libexec", "ansible", "docs")
     for name in ("Makefile", "ansible.cfg", "install.sh"):
         expected[name] = (root / name).read_bytes()
     for directory in folders:

@@ -31,7 +31,13 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # A fixed fixture commit lets this test exercise changes under review. Only
     # these declared product inputs are copied into the disposable repository.
     for name in (
-        "debian/build",
+        "README.md",
+        "docs/administration.md",
+        "ansible/admin.yml",
+        "ansible/files/admin.py",
+        "mk/admin.mk",
+        "debian/setup-system.1",
+        "debian/build.py",
         "debian/publish",
         "debian/control",
         "debian/setup-system",
@@ -103,6 +109,12 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
         names = set(archive.getnames())
         for name in (
             "usr/bin/setup-system",
+            "usr/share/doc/setup-system/README.md",
+            "usr/share/doc/setup-system/docs/administration.md",
+            "usr/share/man/man1/setup-system.1.gz",
+            "usr/lib/setup-system/ansible/admin.yml",
+            "usr/lib/setup-system/ansible/files/admin.py",
+            "usr/lib/setup-system/mk/admin.mk",
             "usr/lib/setup-system/Makefile",
             "usr/lib/setup-system/ansible.cfg",
             "usr/lib/setup-system/ansible/base.yml",
@@ -222,8 +234,9 @@ def test_guard_admits_owner_ancestor_and_refuses_parallel_writer(tmp_path: Path)
         "oversized_checksum",
     ],
 )
+@pytest.mark.parametrize("auth", ["sudo", "su"])
 def test_remote_delivery_checks_precede_privilege(
-    variant: str, package: Path, tmp_path: Path
+    variant: str, auth: str, package: Path, tmp_path: Path
 ) -> None:
     sha = command("git", "rev-parse", "HEAD", cwd=package.parent / "source")
     digest = hashlib.sha256(package.read_bytes()).hexdigest()
@@ -314,7 +327,8 @@ printf '%s\\n' "$@" > "$VERIFY"
 """,
     )
     executable(tools, "id", '#!/bin/sh\n[ "$1" = -u ] && echo 1000\n')
-    executable(tools, "sudo", '#!/bin/sh\necho sudo >> "$TRACE"\nexit 91\n')
+    for method in ("su", "sudo"):
+        executable(tools, method, f'#!/bin/sh\necho {method} >> "$TRACE"\nexit 91\n')
     executable(tools, "dpkg", '#!/bin/sh\n[ "$1" = --print-architecture ] && echo amd64\n')
     release = tmp_path / "os-release"
     codename = "unknown" if variant == "wrong_codename" else "trixie"
@@ -345,7 +359,11 @@ printf '%s\\n' "$@" > "$VERIFY"
         TMPDIR=str(tmp_path),
     )
     result = subprocess.run(
-        ["sh", script, "update"], env=env, capture_output=True, text=True, check=False
+        ["sh", script, "update", *(["--auth", "su"] if auth == "su" else [])],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert personal.read_text() == "owner customization"
     assert sorted(p.name for p in home.iterdir()) == [".ecryptfs", ".local"]
@@ -358,7 +376,7 @@ printf '%s\\n' "$@" > "$VERIFY"
     if variant in ("valid", "trusted_cdn"):
         assert result.returncode == 91, result.stderr
         assert trace.read_text().splitlines() == (
-            ["latest", "cdn", "sudo"] if variant == "trusted_cdn" else ["latest", "sudo"]
+            ["latest", "cdn", auth] if variant == "trusted_cdn" else ["latest", auth]
         )
         args = verify.read_text().splitlines()
         for flag, expected in {
@@ -370,7 +388,8 @@ printf '%s\\n' "$@" > "$VERIFY"
             assert args[args.index(flag) + 1] == expected
         assert "--deny-self-hosted-runners" in args
     else:
-        assert result.returncode not in (0, 91) and "sudo" not in trace.read_text()
+        assert result.returncode not in (0, 91)
+        assert {"su", "sudo"}.isdisjoint(trace.read_text().splitlines())
 
 
 def test_reject_prerelease_and_malformed_tags_without_side_effects() -> None:
@@ -611,10 +630,22 @@ def test_publication_detects_replaced_verified_assets(publication, phase, field)
 
 @pytest.mark.parametrize(
     "scenario",
-    ["new", "missing_update", "downgrade", "same", "same_shadow", "conflict", "tampered"],
+    [
+        "new",
+        "missing_update",
+        "downgrade",
+        "same",
+        "same_shadow",
+        "conflict",
+        "tampered",
+        "su_denied",
+        "symlink",
+        "fifo",
+    ],
 )
+@pytest.mark.parametrize("auth", ["sudo", "su"])
 def test_package_transaction_checks_exact_bytes_and_version(
-    scenario: str, package: Path, tmp_path: Path
+    scenario: str, auth: str, package: Path, tmp_path: Path
 ) -> None:
     """Exercise the package-stage shell as the current uid without installing packages."""
     tools = tmp_path / "tools"
@@ -647,8 +678,25 @@ def test_package_transaction_checks_exact_bytes_and_version(
         "sudo",
         """#!/bin/sh
 set -eu
+echo sudo > "$AUTH_LOG"
+[ "$SCENARIO" != su_denied ] || exit 1
 [ "$SCENARIO" != tampered ] || printf corrupted > "$PACKAGE"
 exec "$@"
+""",
+    )
+    executable(
+        tools,
+        "su",
+        """#!/bin/sh
+set -eu
+echo su > "$AUTH_LOG"
+[ "$1" = --shell ] && [ "$2" = /bin/sh ] && [ "$3" = --command ]
+program=$4
+[ "$5" = -- ] && [ "$6" = root ] && [ "$7" = sh ] || exit 2
+shift 7
+[ "$SCENARIO" != su_denied ] || exit 1
+[ "$SCENARIO" != tampered ] || printf corrupted > "$PACKAGE"
+exec /bin/sh -ceu "$program" sh "$@"
 """,
     )
     executable(
@@ -694,6 +742,13 @@ printf 'installed 1.2.3' > "$STATE"
         "mktemp -d /run/setup-system/deb.XXXXXXXX", 'mktemp -d "$LOCK/deb.XXXXXXXX"'
     )
     content = content.replace("0:0:755", f"{os.getuid()}:{os.getgid()}:755")
+    # Keep only the fixed test-fixture inputs across the production clean environment.
+    content = content.replace(
+        "HOME=/root LANG=C flock",
+        'HOME=/nonexistent LANG=C SCENARIO="$SCENARIO" SUDO_UID="$SUDO_UID" SUDO_GID="$SUDO_GID" '
+        'PACKAGE_SOURCE="$PACKAGE_SOURCE" STATE="$STATE" SHA="$SHA" '
+        'INVOKED="$INVOKED" LOCK="$LOCK" flock',
+    )
     (tmp_path / "install.sh").write_text(content)
     env = dict(
         os.environ,
@@ -701,6 +756,7 @@ printf 'installed 1.2.3' > "$STATE"
         SUDO_UID=str(os.getuid()),
         SUDO_GID=str(os.getgid()),
         SCENARIO=scenario,
+        AUTH_LOG=str(tmp_path / "auth"),
         SHA=sha,
         STATE=str(state),
         PACKAGE_SOURCE=str(package_source),
@@ -711,13 +767,23 @@ printf 'installed 1.2.3' > "$STATE"
         ),
         LOCK=str(lock),
     )
+    if scenario in {"symlink", "fifo"}:
+        moved = source.rename(source.with_suffix(".saved"))
+        if scenario == "symlink":
+            source.symlink_to(moved)
+        else:
+            os.mkfifo(source, 0o600)
     action = "update" if scenario in ("missing_update", "downgrade", "same_shadow") else "install"
     result = subprocess.run(
         [
+            "timeout",
+            "--kill-after=1s",
+            "5s",
             "sh",
             "-c",
-            '. ./install.sh; package_transaction "$@"',
+            '. ./install.sh; package_auth=$1; shift; package_transaction "$@"',
             "install-local",
+            auth,
             str(source),
             digest,
             VERSION,
@@ -737,6 +803,10 @@ printf 'installed 1.2.3' > "$STATE"
         assert result.returncode == 0, result.stderr
     else:
         assert result.returncode != 0, result.stdout
+    assert result.returncode not in {124, 137}, (
+        "The artifact reader blocked while holding the package lock"
+    )
+    assert (tmp_path / "auth").read_text().strip() == auth
     assert invoked.exists() == (scenario == "new")
     assert not started.exists()
     assert (
@@ -768,7 +838,12 @@ def test_apply_reports_a_live_writer_before_starting_the_operation(tmp_path, wri
         .read_text()
         .replace("lock=/run/setup-system", "lock=" + shlex.quote(str(native)))
     )
-    contents = contents.replace("/var/lib/dpkg/lock", str(database / "lock"))
+    helper = (
+        (ROOT / "libexec/dpkg_lock.py")
+        .read_text()
+        .replace("/var/lib/dpkg/lock", str(database / "lock"))
+    )
+    (tmp_path / "dpkg_lock.py").write_text(helper)
     task = executable(tmp_path, "locked", contents)
     if writer == "setup-system":
         probe = (

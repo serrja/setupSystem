@@ -8,11 +8,20 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import TypedDict
 
 from setup_system.infrastructure.native_target import current_target
 
 
-def surviving_editor(path, closure):
+class RemovalSelection(TypedDict):
+    selected: list[str]
+    closure: list[str]
+    mode: str
+    home: str
+    xdg: dict[str, str]
+
+
+def surviving_editor(path: Path, closure: set[str]) -> bool:
     resolved = path.resolve()
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         return False
@@ -24,7 +33,7 @@ def surviving_editor(path, closure):
     return bool(row and row[1] not in closure and row[2] == str(resolved))
 
 
-def check(request):
+def check(request: RemovalSelection) -> None:
     architecture, supported = current_target()
     if os.geteuid() == 0 and not supported:
         raise ValueError("Native removal requires a supported Debian target")
