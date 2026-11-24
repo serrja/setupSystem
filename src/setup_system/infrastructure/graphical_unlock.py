@@ -17,6 +17,7 @@ from pathlib import Path
 
 from setup_system.domain.system_receipts import UnlockPlan
 from setup_system.infrastructure.boot_recovery import BootRecovery, digest
+from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
 from setup_system.infrastructure.system_paths import protected
 
@@ -26,6 +27,7 @@ ETC = Path("/etc")
 STATE = Path("/var/lib/setup-system/boot")
 THEMES = Path("/usr/share/plymouth/themes")
 THEME = "setup-system-mocha"
+PACKAGE_ROOT = Path("/usr/lib/setup-system")
 MIN_SPACE = 64 * 1024 * 1024
 
 
@@ -193,20 +195,8 @@ def inspect_unlock() -> UnlockPlan:
 
 
 def _theme(root: Path | None = None) -> bytes:
-    colors = palette(root)
-
-    def color(key: str) -> str:
-        return "0x" + colors[key][1:]
-
-    return (
-        "[Plymouth Theme]\nName=Mocha Green\nDescription=Native disk password prompt\n"
-        "ModuleName=two-step\n"
-        "[two-step]\nImageDir=/usr/share/plymouth/themes/spinner\n"
-        "DialogHorizontalAlignment=.5\nDialogVerticalAlignment=.5\n"
-        f"BackgroundStartColor={color('base')}\nBackgroundEndColor={color('mantle')}\n"
-        f"ProgressBarBackgroundColor={color('surface0')}\nProgressBarForegroundColor={color('green')}\n"
-        "[boot-up]\nUseFirmwareBackground=false\nUseProgressBar=true\n"
-    ).encode()
+    root = root or PACKAGE_ROOT
+    return render_asset(root / "assets/plymouth/mocha.plymouth", palette(root))
 
 
 def _theme_config(raw: bytes) -> bytes:
@@ -243,7 +233,7 @@ def _verify_listing(image: Path, *, themed: bool) -> None:
     if themed and not (
         f"usr/share/plymouth/themes/{THEME}/{THEME}.plymouth" in names
         and any(x.endswith("/two-step.so") for x in names)
-        and any(x.endswith("/entry.png") for x in names)
+        and "usr/share/plymouth/themes/spinner/entry.png" in names
         and any(
             x.endswith("/keymap") or x.endswith("/cached.kmap.gz") or "cached_UTF-8" in x
             for x in names

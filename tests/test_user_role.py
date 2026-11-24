@@ -483,25 +483,32 @@ def test_confirmed_file_plan_includes_permissions(home: Path) -> None:
 
 
 def test_project_directories_restore_through_make_and_preserve_other_files(home):
-    from setup_system.infrastructure.receipt_repository import list_operations
-    from setup_system.runner import MakeRunner, Target
+    import asyncio
 
-    runner = MakeRunner()
+    from setup_system.infrastructure.receipt_repository import list_operations
+    from setup_system.runner import AsyncMakeRunner, Command, Target
+
+    runner = AsyncMakeRunner()
+
+    def invoke(target, payload):
+        result = asyncio.run(runner.run(Command.capture(target, payload)))
+        return result.model_dump(mode="json", exclude_unset=True)
+
     req = {"schema": 1, "settings": {}, "expected": None}
-    preview = runner.run(Target.PROJECT_PREPARE_PLAN, req)
+    preview = invoke(Target.PROJECT_PREPARE_PLAN, req)
     assert preview["status"] == "ready"
-    completed = runner.run(Target.PROJECT_PREPARE_APPLY, {**req, "expected": preview})
-    assert completed["status"] == "complete"
+    completed = invoke(Target.PROJECT_PREPARE_APPLY, {**req, "expected": preview})
+    assert completed["status"] == "complete", completed
     folder = home / "Projects"
     foreign = folder / "serrja" / "owner.md"
     foreign.write_text("keep")
     backup = list_operations()[0][0]
     req["settings"] = {"backup_id": backup}
-    preview = runner.run(Target.RESTORE_PLAN, req)
+    preview = invoke(Target.RESTORE_PLAN, req)
     assert preview["status"] == "ready"
-    assert any("pokerlost" in row for row in preview["actions"])
-    assert not any(row.endswith("/serrja") for row in preview["actions"])
-    completed = runner.run(Target.RESTORE_APPLY, {**req, "expected": preview})
-    assert completed["status"] == "complete"
+    assert any("pokerlost" in row["label"] for row in preview["actions"])
+    assert not any(row["label"].endswith("/serrja") for row in preview["actions"])
+    completed = invoke(Target.RESTORE_APPLY, {**req, "expected": preview})
+    assert completed["status"] == "complete", completed
     assert foreign.read_text() == "keep" and not (folder / "pokerlost").exists()
-    assert runner.run(Target.RESTORE_PLAN, req)["status"] == "no_changes"
+    assert invoke(Target.RESTORE_PLAN, req)["status"] == "no_changes"

@@ -1,5 +1,6 @@
 """Validate the native system boundary and migrate existing Firefox policies."""
 
+import asyncio
 import io
 import json
 import runpy
@@ -11,7 +12,7 @@ from ansible.errors import AnsibleFilterError
 
 from setup_system.infrastructure import firefox_policy
 from setup_system.infrastructure.tool_paths import personal_path
-from setup_system.runner import MakeRunner, Target
+from setup_system.runner import AsyncMakeRunner, Command, Target
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,9 +31,23 @@ def test_untrusted_settings_rejected_before_source_or_package_side_effects(tmp_p
 def test_xdg_cannot_select_privileged_resources(tmp_path, path):
     with pytest.raises(ValueError):
         personal_path(tmp_path, Path(path))
-    runner = MakeRunner(tmp_path)
+    runner = AsyncMakeRunner(tmp_path)
     with pytest.raises(ValueError, match="installed Debian"):
-        runner.run(Target.BASE_APPLY, {})
+        command = Command.capture(
+            Target.BASE_APPLY,
+            {
+                "schema": 1,
+                "settings": {},
+                "expected": {
+                    "status": "ready",
+                    "actions": [
+                        {"kind": "region", "field": "timezone", "value": "UTC", "label": "TZ"}
+                    ],
+                    "observed": {"needs_system": True, "needs_user": False},
+                },
+            },
+        )
+        asyncio.run(runner.run(command))
     assert not list(tmp_path.iterdir())
 
 

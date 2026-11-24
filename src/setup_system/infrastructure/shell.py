@@ -11,13 +11,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from jinja2 import Environment, StrictUndefined
-
 from setup_system.domain.managed_text import managed_block
 from setup_system.domain.receipts import FileState, digest
 from setup_system.domain.workspace_facts import ShellStatus
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files, changed_files
+from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
 from setup_system.infrastructure.user_storage import target_path
 
@@ -68,20 +67,7 @@ def _targets(
         raise ValueError("XDG_CONFIG_HOME outside home requires a scoped install")
     targets = {
         config_home / "zsh" / source.name: (
-            Environment(
-                undefined=StrictUndefined,
-                variable_start_string="@{",
-                variable_end_string="}@",
-                block_start_string="[%",
-                block_end_string="%]",
-                comment_start_string="[#",
-                comment_end_string="#]",
-                keep_trailing_newline=True,
-                autoescape=False,
-            )
-            .from_string(source.read_text())
-            .render(palette(root))
-            .encode()
+            render_asset(source, palette(root))
             if source.name == "prompt.zsh"
             else source.read_bytes()
         )

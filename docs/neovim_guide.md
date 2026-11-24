@@ -1,6 +1,6 @@
 # Neovim and language profiles
 
-Select **Neovim and Wayland clipboard** in **Working environment**. Plan resolves Debian's Neovim package and the reviewed plugin sources. It records the selected Git commits before Apply. The configuration loads local copies of lazy.nvim, blink.cmp, nvim-treesitter, conform.nvim, fzf-lua, Oil and Gitsigns. Startup disables automatic plugin downloads and update checks. [Editor catalog](../config/workspace/editor.toml)
+Select **Neovim and Wayland clipboard** in **Working environment**. Plan resolves Debian's Neovim package and the reviewed plugin sources. It records the selected Git commits before Apply. The configuration loads local copies of lazy.nvim, blink.cmp, nvim-treesitter, conform.nvim, fzf-lua, Oil and Gitsigns. Startup disables automatic plugin downloads and update checks. The editor catalog is `/usr/lib/setup-system/config/workspace/editor.toml`.
 
 Select language profiles for the work you intend to do. With Neovim selected, the same plan includes the corresponding parsers, language servers and formatters.
 
@@ -11,6 +11,6 @@ Select language profiles for the work you intend to do. With Neovim selected, th
 | Dart and Flutter | A user-local checkout from Flutter's official stable ref, with the bundled Dart language server and formatter. |
 | C++ | Debian's clangd and clang-format packages. |
 
-Apply installs missing Tree-sitter parsers explicitly. The editor check opens the absolute managed `init.lua` headlessly in a temporary project, parses a buffer with each selected parser, waits for each selected language server and invokes its formatter. It also checks the clipboard commands and, in a Wayland session, the clipboard provider. Inspect a partial result if packages or files changed before a check failed. [Headless checks](../ansible/files/editor_check.lua) · [Recovery](recovery.md)
+Apply installs missing Tree-sitter parsers explicitly. The editor check opens the absolute managed `init.lua` headlessly in a temporary project, parses a buffer with each selected parser, waits for each selected language server and invokes its formatter. It also checks the clipboard commands and, in a Wayland session, the clipboard provider. Inspect a partial result if packages or files changed before a check failed. The installed check is `/usr/lib/setup-system/ansible/files/editor_check.lua`. [Recovery](recovery.md)
 
 Open Neovim in a project. Use `<leader>ff` for files, `<leader>fg` for search, `-` for Oil and `<leader>cf` to format explicitly. The profile sets `EDITOR`, `VISUAL` and `GIT_EDITOR` to `nvim` through the user environment configuration. A new login picks up those values. Optional nano removal is a separate plan that checks the selected editor and requires another installed administrative editor. [Terminal and shell](terminal_guide.md)

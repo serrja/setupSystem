@@ -4,7 +4,7 @@ Open `setup-system` as the owner of an existing Debian 13 (trixie) installation 
 
 ## System packages
 
-Selecting **Hyprland, sound, portals and desktop dependencies** includes the desktop package set. Graphical login adds greetd, gtkgreet and Cage. The release lists the package names and which ones come from trixie-backports. APT selects candidates from signed Debian stable, updates, security and backports indexes. [Package selections](../config/base/packages.toml) · [Debian sources](../config/base/debian.sources)
+Selecting **Hyprland, sound, portals and desktop dependencies** includes the desktop package set. Graphical login adds greetd, gtkgreet and Cage. The release lists the package names and which ones come from trixie-backports. APT selects candidates from signed Debian stable, updates, security and backports indexes. The installed catalog and source definitions are `packages.toml` and `debian.sources` under `/usr/lib/setup-system/config/base`.
 
 **Plan** refreshes indexes in a private run directory and simulates the complete transaction. Inspect the package changes before confirming. For a system change, the app then asks for the local authorization password. Apply simulates again and compares the intended actions and versions with the package operations APT supplies immediately before dpkg. Package installation can leave completed changes after a failure. Check the application's result and Debian's package logs before retrying. [Recovery](recovery.md)
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from setup_system.infrastructure.tool_paths import personal_path
 
 
-def observe(path, repo):
+def observe(path: Path, repo: str) -> str:
     home = Path(os.environ["HOME"])
     if (
         not path.is_relative_to(home)
@@ -22,7 +22,7 @@ def observe(path, repo):
     if not (path / ".git").is_dir() or (path / ".git").is_symlink():
         raise ValueError("An existing user tool directory requires review")
 
-    def git(*args):
+    def git(*args: str) -> str:
         return subprocess.check_output(
             ["/usr/bin/git", "-c", "core.fsmonitor=false", "-C", str(path), *args],
             text=True,

@@ -1,7 +1,7 @@
 UV ?= uv
-PLAYBOOKS := ansible/base.yml ansible/workspace.yml
+PLAYBOOKS := $(wildcard ansible/*.yml)
 SHELL_SOURCES := install.sh libexec/run libexec/play libexec/locked libexec/file-task libexec/project-task \
-                 assets/hyprland/*.sh assets/hyprland/start-hyprland debian/guard debian/install-local \
+                 docker/source_identity.sh assets/hyprland/*.sh assets/hyprland/start-hyprland debian/guard debian/install-local \
                  debian/publish debian/setup-system
 
 .PHONY: lint typecheck test native-check native-build native-verify native-ci
@@ -10,6 +10,7 @@ lint:
 	$(UV) run --locked ruff format --check .
 	$(UV) run --locked ruff format --check --line-length 88 docker/release.py docker/python_release.py
 	$(UV) run --locked shellcheck $(SHELL_SOURCES)
+	$(UV) run --locked yamllint -d '{rules: {key-duplicates: enable}}' .github ansible
 	ANSIBLE_HOME="$(CURDIR)/coverage/ansible" $(UV) run --locked ansible-lint --offline ansible/
 	ANSIBLE_HOME="$(CURDIR)/coverage/ansible" $(UV) run --locked ansible-playbook --syntax-check -i localhost, $(PLAYBOOKS)
 typecheck:

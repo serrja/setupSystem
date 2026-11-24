@@ -6,6 +6,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from setup_system.infrastructure.tool_paths import personal_path
 from setup_system.infrastructure.user_storage import (
@@ -16,7 +17,14 @@ from setup_system.infrastructure.user_storage import (
 )
 
 
-def proof(request):
+class EditorInputs(TypedDict):
+    profiles: list[str]
+    parsers: list[str]
+    versions: dict[str, str]
+    files: dict[str, list[str | int]]
+
+
+def proof(request: EditorInputs) -> str | None:
     data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
     parsed = {}
     for name in request["parsers"]:
@@ -50,7 +58,7 @@ def proof(request):
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
-def run(action, request):
+def run(action: str, request: EditorInputs) -> bool:
     if os.geteuid() == 0 or action not in {"check", "record"}:
         raise ValueError("The editor receipt requires a normal user and a finite action")
     path = checked_directory(state_root()) / "editor-verification.v1"
