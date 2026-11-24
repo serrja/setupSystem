@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(autouse=True)
 def private_home(tmp_path, monkeypatch):
     home = tmp_path / "headless home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(home))
     for scope in ("config", "data", "state", "cache"):
         monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(home / scope))

@@ -188,8 +188,13 @@ class SetupApp(App[None]):
     def section(self) -> Section:
         return "base" if self.navigation.active == "base" else "workspace"
 
+    @property
+    def view_active(self) -> bool:
+        """Allow worker updates while the application is processing UI messages."""
+        return self.is_running and not self.quit_when_finished
+
     def report(self, message: str) -> None:
-        if self.feedback.is_attached and not self.quit_when_finished:
+        if self.view_active and self.feedback.is_attached:
             self.feedback.update(message)
 
     async def reload(self, section: Section, *, announce: bool = False) -> None:
@@ -201,7 +206,7 @@ class SetupApp(App[None]):
         form.disabled = True
         try:
             saved = await self.settings.read(section)
-            if self.quit_when_finished or not form.is_attached:
+            if not self.view_active or not form.is_attached:
                 return
             if isinstance(saved.options, BaseOptions):
                 self.base_form.populate(saved.options)
@@ -213,7 +218,8 @@ class SetupApp(App[None]):
         except ERRORS as exc:
             self.report(f"{section.capitalize()} settings: {exc}")
         finally:
-            form.disabled = False
+            if self.view_active and form.is_attached:
+                form.disabled = False
             self.reloading.discard(section)
 
     async def save_section(

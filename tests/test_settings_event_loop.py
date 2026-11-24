@@ -289,3 +289,42 @@ def test_reload_can_finish_behind_the_offline_help_screen(tmp_path, monkeypatch)
             assert "Reloaded base" in str(app.query_one("#feedback", Static).render())
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("quit_key", [False, True], ids=["screen-shutdown", "ctrl-q"])
+def test_startup_read_finishing_during_exit_leaves_form_untouched(tmp_path, monkeypatch, quit_key):
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        settings = app.settings
+        read = settings.read
+        ready, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        delivered = False
+
+        async def delayed(section):
+            nonlocal delivered
+            saved = await read(section)
+            if section != "base":
+                return saved
+            ready.set()
+            try:
+                await release.wait()
+                while app.is_running:
+                    await asyncio.sleep(0)
+                delivered = True
+                return saved
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(settings, "read", delayed)
+        async with app.run_test() as pilot:
+            await asyncio.wait_for(ready.wait(), 2)
+            if quit_key:
+                await pilot.press("ctrl+q")
+                assert app.quit_when_finished
+            release.set()
+        assert finished.is_set()
+        assert delivered or quit_key
+        assert "base" not in app.loaded and not tasks.calls
+
+    asyncio.run(scenario())
