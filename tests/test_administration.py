@@ -39,9 +39,14 @@ def test_account_observations_are_closed():
         sudo_gid=27,
         member=False,
     )
-    for bad in ({"uid": True}, {"gid": 0}, {"home": "../etc"}, {"password": "unused"}):
+    for bad in ({"uid": True}, {"gid": 0}, {"home": "../etc"}):
         with pytest.raises(ValidationError):
             account.validated(**bad)
+    with pytest.raises(ValidationError) as error:
+        account.validated(password=None)
+    assert [(e["loc"], e["type"]) for e in error.value.errors()] == [
+        (("password",), "extra_forbidden")
+    ]
 
 
 @pytest.fixture
