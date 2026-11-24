@@ -12,11 +12,19 @@ The following command is for stable versions that publish a Debian companion pac
 ( set -eu; delivery=$(mktemp); trap 'rm -f -- "$delivery"' EXIT; curl -qfsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/serrja/setupSystem/main/install.sh -o "$delivery"; /bin/sh "$delivery" install )
 ```
 
-APT installs the configurator and its runtime dependencies. Only the package transaction asks for sudo. Once it completes, open a terminal as the desktop user and run:
+APT installs the configurator and its runtime dependencies. Only the package transaction asks for sudo. After installation, open a terminal as the desktop user and run
 
 ```sh
-setup-system
+/usr/bin/setup-system
 ```
+
+If you previously used 0.4.x, check which launcher your shell finds.
+
+```sh
+command -v setup-system
+```
+
+Use `/usr/bin/setup-system` to open the Debian package when an older launcher takes precedence. The package leaves launchers in your home directory alone. To identify the old managed launcher, compare `sha256sum "$HOME/.local/bin/setup-system"` with the digest in `${XDG_STATE_HOME:-$HOME/.local/state}/setup-system/launcher.sha256`. If both regular files belong to you and the digest matches, you can archive that launcher under an unused name and start a fresh shell. Keep a custom or unrecognized launcher in place.
 
 ## Update or run
 
@@ -32,7 +40,7 @@ The GitHub command for a separate launch is
 ( set -eu; delivery=$(mktemp); trap 'rm -f -- "$delivery"' EXIT; curl -qfsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/serrja/setupSystem/main/install.sh -o "$delivery"; /bin/sh "$delivery" run )
 ```
 
-It opens the installed `/usr/bin/setup-system`. The local command works offline from any directory. Debian removes the configurator with `sudo apt remove setup-system`. User selections, backups and workstation applications have their own lifecycle.
+It opens the installed `/usr/bin/setup-system`. Once your shell resolves the installed launcher, the everyday command `setup-system` works offline from any directory. Debian removes the configurator with `sudo apt remove setup-system`. User selections, backups and workstation applications have their own lifecycle.
 
 ## Configure a workstation
 

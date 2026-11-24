@@ -1,6 +1,7 @@
 #!/bin/sh
 # Install or update a verified Debian package, or start the installed application.
 set -eu
+launcher_search_path=${PATH:-/usr/bin:/bin}
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 usage() { printf '%s\n' 'Usage: sh install.sh install|update [--release vX.Y.Z]' '       sh install.sh run'; }
@@ -61,7 +62,12 @@ sudo /bin/sh -ceu '
     [ "$result" != 75 ] || echo 'setup-system is busy. Retry after the current operation finishes.' >&2
     exit "$result"
 }
-printf '%s\n' 'Start it separately with: setup-system'
+if candidate=$(PATH=$launcher_search_path command -v setup-system); then
+    if [ "$(readlink -f -- "$candidate")" != /usr/bin/setup-system ]; then
+        echo 'Warning: another launcher earlier in your PATH shadows /usr/bin/setup-system.' >&2
+    fi
+fi
+printf '%s\n' 'Start it separately with: /usr/bin/setup-system'
 }
 # The development Make target sources the same, restricted package transaction.
 if [ "${0##*/}" = install-local ]; then return 0; fi
@@ -71,7 +77,7 @@ case "${1:-}" in
     run)
         [ "$#" -eq 1 ] || { usage >&2; exit 2; }
         [ "$(id -u)" != 0 ] || fail 'Start the application as the desktop user.'
-        [ -x /usr/bin/setup-system ] || fail 'Install setup-system before using run.'
+        [ -x /usr/bin/setup-system ] || fail 'Install setup-system first. See https://github.com/serrja/setupSystem#install-the-configurator for the install command.'
         exec /usr/bin/setup-system ;;
     install|update) action=$1; shift ;;
     *) usage >&2; exit 2 ;;

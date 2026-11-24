@@ -183,3 +183,24 @@ def test_legacy_settings_edit_during_migration_keeps_the_owner_version(tmp_path,
     assert original.read_text() == 'timezone = "Europe/Berlin"\n'
     assert not (settings.directory / "base.toml").exists()
     assert settings.load("base").options.timezone == "Europe/Berlin"
+
+
+@pytest.mark.parametrize("section", ["base", "workspace"])
+def test_packaged_examples_load_from_an_alternate_xdg_home(tmp_path, monkeypatch, section):
+    home = tmp_path / "Private home"
+    home.mkdir(mode=0o700)
+    config = home / "Мои настройки"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    settings = Settings()
+    assert settings.directory == config / "setup-system"
+    settings.load(section)
+    assert not config.exists()
+    source = Path(__file__).resolve().parents[1] / "config" / section / "example.toml"
+    settings.directory.mkdir(parents=True, mode=0o700)
+    (settings.directory / f"{section}.toml").write_bytes(source.read_bytes())
+    choices = settings.load(section).options
+    if section == "base":
+        assert choices.timezone == "Europe/Paris"
+    else:
+        assert choices.apps == ("firefox",) and choices.languages == ("python",)

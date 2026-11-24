@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import tomlkit
+from platformdirs import user_config_path
 
 from setup_system.infrastructure.atomic_rename import rename_new
 from setup_system.models import BaseOptions, Section, WorkspaceOptions
@@ -145,9 +146,10 @@ def _decode(section: Section, raw: bytes | None, legacy: bool) -> Options:
 class Settings:
     def __init__(self, home: Path | None = None, config: Path | None = None) -> None:
         self.home = Path.home() if home is None else home
-        self.directory = (
-            config or Path(os.environ.get("XDG_CONFIG_HOME") or self.home / ".config")
-        ) / "setup-system"
+        if config is None and home is not None and not os.environ.get("XDG_CONFIG_HOME"):
+            config = home / ".config"
+        config_home = config if config is not None else user_config_path()
+        self.directory = config_home / "setup-system"
 
     def _source(self, fd: int | None, section: Section) -> tuple[str, bytes | None]:
         name = f"{section}.toml"

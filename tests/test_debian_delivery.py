@@ -519,7 +519,8 @@ else:
 
 
 @pytest.mark.parametrize(
-    "scenario", ["new", "missing_update", "downgrade", "same", "conflict", "tampered"]
+    "scenario",
+    ["new", "missing_update", "downgrade", "same", "same_shadow", "conflict", "tampered"],
 )
 def test_package_transaction_checks_exact_bytes_and_version(
     scenario: str, package: Path, tmp_path: Path
@@ -533,9 +534,18 @@ def test_package_transaction_checks_exact_bytes_and_version(
     source.write_bytes(package.read_bytes())
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     sha = command("dpkg-deb", "-f", str(source), "X-Setup-System-Source")
+    legacy_dir = tmp_path / "old user HOME/.local/bin"
+    legacy_dir.mkdir(parents=True)
+    legacy = executable(legacy_dir, "setup-system", '#!/bin/sh\ntouch -- "$STARTED"\n')
+    original = (
+        legacy.read_bytes(),
+        legacy.stat().st_ino,
+        legacy.stat().st_mode,
+        legacy.stat().st_mtime_ns,
+    )
     state = tmp_path / "status"
     package_source = tmp_path / "source"
-    if scenario in ("same", "conflict", "downgrade"):
+    if scenario in ("same", "same_shadow", "conflict", "downgrade"):
         state.write_text("installed " + ("9.9.9" if scenario == "downgrade" else VERSION))
         package_source.write_text("a" * 40 if scenario == "conflict" else sha)
     invoked = tmp_path / "apt"
@@ -588,7 +598,7 @@ printf 'installed 1.2.3' > "$STATE"
     content = content.replace(
         "PATH=/usr/sbin:/usr/bin:/sbin:/bin", f"PATH={shlex.quote(str(tools))}:/usr/bin:/bin"
     )
-    content = content.replace("/usr/bin/setup-system", shlex.quote(str(launcher)))
+    content = content.replace("exec /usr/bin/setup-system", "exec " + shlex.quote(str(launcher)))
     content = content.replace("lock=/run/setup-system", 'lock="$LOCK"').replace(
         "mktemp -d /run/setup-system/deb.XXXXXXXX", 'mktemp -d "$LOCK/deb.XXXXXXXX"'
     )
@@ -605,9 +615,12 @@ printf 'installed 1.2.3' > "$STATE"
         PACKAGE_SOURCE=str(package_source),
         INVOKED=str(invoked),
         STARTED=str(started),
+        PATH=(
+            f"{legacy_dir}:/usr/bin:/bin" if scenario in ("new", "same_shadow") else "/usr/bin:/bin"
+        ),
         LOCK=str(lock),
     )
-    action = "update" if scenario in ("missing_update", "downgrade") else "install"
+    action = "update" if scenario in ("missing_update", "downgrade", "same_shadow") else "install"
     result = subprocess.run(
         [
             "sh",
@@ -626,15 +639,24 @@ printf 'installed 1.2.3' > "$STATE"
         text=True,
         check=False,
     )
-    assert ("Start it separately with: setup-system" in result.stdout) == (
-        scenario in ("new", "same")
+    assert ("Start it separately with: /usr/bin/setup-system" in result.stdout) == (
+        scenario in ("new", "same", "same_shadow")
     )
-    if scenario in ("new", "same"):
+    if scenario in ("new", "same", "same_shadow"):
         assert result.returncode == 0, result.stderr
     else:
         assert result.returncode != 0, result.stdout
     assert invoked.exists() == (scenario == "new")
     assert not started.exists()
+    assert (
+        legacy.read_bytes(),
+        legacy.stat().st_ino,
+        legacy.stat().st_mode,
+        legacy.stat().st_mtime_ns,
+    ) == original
+    assert ("shadows /usr/bin/setup-system" in result.stderr) == (
+        scenario in ("new", "same_shadow")
+    )
     assert list(lock.iterdir()) == []
 
 
