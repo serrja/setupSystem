@@ -352,6 +352,8 @@ class SetupApp(App[None]):
                     reply = await asyncio.to_thread(
                         self.runner.run, goal, payload, password=password, cancel=cancel
                     )
+                if self.quit_when_finished:
+                    return
                 result = TaskResult.model_validate(reply)
                 if group and result.status == "ready" and self.section == "workspace":
 
@@ -390,15 +392,17 @@ class SetupApp(App[None]):
                         details += "\n" + ", ".join(str(v) for v in versions)
                 self.report(details)
             except ERRORS as exc:
-                self.report(str(exc))
+                if not self.quit_when_finished:
+                    self.report(str(exc))
             finally:
                 if password is not None:
                     password.discard()
                 password = None
                 self.cancel_event = None
-                self.buttons()
                 if self.quit_when_finished:
                     self.exit()
+                else:
+                    self.buttons()
 
         self.run_worker(perform(), name=target)
 

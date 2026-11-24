@@ -233,8 +233,11 @@ def test_user_only_workspace_quit_waits_until_writer_reaches_a_boundary(tmp_path
             assert app.quit_when_finished
             assert app.cancel_event.is_set()
             assert app.is_running
+            # The terminal may already be dismantling its view past this point.
+            await app.query_one("#feedback").remove()
             tasks.gate.set()
-            await asyncio.to_thread(tasks.gate.wait, 1)
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
+            assert app.cancel_event is None
 
     asyncio.run(scenario())
 
