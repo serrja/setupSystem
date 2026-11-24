@@ -1,6 +1,6 @@
 # Development
 
-Use a normal account with Git, GNU Make, dpkg-deb, util-linux, the sudo package for its offline policy checkers, and uv. Run development commands from the repository root. CI exercises Python 3.14.7 and the supported minimum Python 3.12. The engineering dependency closure is recorded in `uv.lock`.
+Use a normal account with Git, GNU Make, GNU gzip, dpkg-deb, util-linux, the sudo package for its offline policy checkers, and uv. Run development commands from the repository root. CI exercises Python 3.14.7 and the supported minimum Python 3.12. The engineering dependency closure is recorded in `uv.lock`.
 
 ```sh
 uv sync --locked --all-groups --python 3.14.7
