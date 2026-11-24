@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -72,9 +73,9 @@ def local_account(tmp_path, monkeypatch):
         "exists": True,
     }
 
-    def passwd(_name):
-        if not state["exists"]:
-            raise KeyError("removed")
+    def account_record(key):
+        if not state["exists"] or key not in (state["name"], state["uid"]):
+            raise KeyError(key)
         return pwd.struct_passwd(
             (state["name"], "x", state["uid"], state["gid"], "", state["home"], state["shell"])
         )
@@ -105,11 +106,20 @@ def local_account(tmp_path, monkeypatch):
         return read(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", synthetic_files)
-    monkeypatch.setattr(pwd, "getpwnam", passwd)
-    monkeypatch.setattr(pwd, "getpwuid", passwd)
-    monkeypatch.setattr(grp, "getgrall", groups)
-    monkeypatch.setattr(grp, "getgrnam", by_name)
-    monkeypatch.setattr(grp, "getgrgid", lambda gid: next(g for g in groups() if g.gr_gid == gid))
+    monkeypatch.setattr(
+        admin_account,
+        "pwd",
+        SimpleNamespace(getpwnam=account_record, getpwuid=account_record),
+    )
+    monkeypatch.setattr(
+        admin_account,
+        "grp",
+        SimpleNamespace(
+            getgrall=groups,
+            getgrnam=by_name,
+            getgrgid=lambda gid: next(group for group in groups() if group.gr_gid == gid),
+        ),
+    )
     monkeypatch.setattr(
         os,
         "getgrouplist",
