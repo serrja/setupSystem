@@ -7,8 +7,14 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
+from setup_system.domain.actions import RegionAction, SystemAction
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES
+from setup_system.domain.identity import TargetUser
 from setup_system.domain.login import LoginConsent
+from setup_system.domain.system_receipts import RegionalKind
+from setup_system.domain.system_requests import HappInspection, StageApply, SystemIntent
 from setup_system.infrastructure import firefox_policy, graphical_unlock, happ_facts, regional
 from setup_system.infrastructure.identity import resolve_target, user_environment
 from setup_system.infrastructure.login import DesktopSystem
@@ -18,13 +24,15 @@ from setup_system.infrastructure.system_paths import protected
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def desktop(xdg):
+def desktop(xdg: dict[str, str]) -> tuple[DesktopSystem, TargetUser, dict[str, str]]:
     target = resolve_target(None)
     env = user_environment(target, {k: Path(v) for k, v in xdg.items()})
     return DesktopSystem(ROOT, run=subprocess.run), target, env
 
 
-def policy_stamp(path=Path("/etc/firefox/policies/policies.json")):
+def policy_stamp(
+    path: Path = Path("/etc/firefox/policies/policies.json"),
+) -> list[int | str] | Literal["root-only"] | None:
     try:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 1024 * 1024:
@@ -42,7 +50,7 @@ def policy_stamp(path=Path("/etc/firefox/policies/policies.json")):
         return "root-only"
 
 
-def policy_matches(stamp):
+def policy_matches(stamp: object) -> bool:
     return bool(
         isinstance(stamp, list)
         and stamp[2] == 0o644
@@ -50,12 +58,33 @@ def policy_matches(stamp):
     )
 
 
-def main():
-    request = json.load(sys.stdin)
+def main() -> None:
     op = sys.argv[1]
+    if op in {"happ-unit", "region", "login", "firefox", "boot"}:
+        if os.geteuid() != 0 or ROOT != Path("/usr/lib/setup-system") or not current_target()[1]:
+            raise ValueError("System changes require authenticated Debian 13 system execution")
+        protected(ROOT)
+    elif op not in {"plan", "happ-inspect"}:
+        raise ValueError("Unknown system operation")
+    wire = sys.stdin.read(MAX_MESSAGE_BYTES + 1)
+    if len(wire.encode()) > MAX_MESSAGE_BYTES:
+        raise ValueError("System intent exceeds the supported size")
+    request = json.loads(wire)
+    if op == "happ-inspect":
+        request = HappInspection.model_validate(request).model_dump(mode="json", exclude_unset=True)
+    elif op == "plan":
+        request = SystemIntent.model_validate(request).model_dump(mode="json", exclude_unset=True)
+    else:
+        stage = StageApply.model_validate(request)
+        stage.require_operation(op)
+        request = stage.model_dump(mode="json", exclude_unset=True)
     settings = request["settings"]
-    actions, reasons, observations = [], [], {}
-    if op == "happ-inspect" and "happ" in settings.get("apps", []):
+    actions: list[RegionAction | SystemAction] = []
+    reasons: list[str] = []
+    observations: dict[str, object] = {}
+    if op == "happ-inspect":
+        if "happ" not in settings.get("apps", []):
+            raise ValueError("Choose Happ before inspecting its service")
         unit = happ_facts.unit_info()
         installed = happ_facts.installed_version()
         if (
@@ -68,13 +97,21 @@ def main():
         return
     if op == "plan":
         if request["section"] == "base":
-            for kind in ("timezone", "locale", "keyboard"):
+            kinds: tuple[RegionalKind, ...] = ("timezone", "locale", "keyboard")
+            for kind in kinds:
                 if settings.get(kind) is not None:
                     desired = regional.validate(kind, settings[kind])
                     actual = regional.actual(kind)
                     observations[kind] = actual
                     if not regional.equivalent(kind, actual, desired):
-                        actions.append(f"Set {kind} to {desired}")
+                        actions.append(
+                            RegionAction(
+                                kind="region",
+                                field=kind,
+                                value=desired,
+                                label=f"Set {kind} to {desired}",
+                            )
+                        )
             if settings.get("graphical_login"):
                 manager, account, env = desktop(request["xdg"])
                 plan = manager.plan(account, env)
@@ -89,24 +126,38 @@ def main():
                     or plan.previous_target != "graphical.target"
                     or not plan.consent.manager_enabled
                 ):
-                    actions.append("Enable greetd with a recoverable GRUB menu")
+                    actions.append(
+                        SystemAction(
+                            kind="graphical_login",
+                            label="Enable greetd with a recoverable GRUB menu",
+                        )
+                    )
             if settings.get("plymouth"):
                 unlock = graphical_unlock.inspect_unlock()
-                observations["unlock"] = unlock.model_dump(mode="json")
+                observations["unlock"] = unlock.model_dump(mode="json", exclude={"description"})
                 reasons.extend(unlock.blockers)
                 if not unlock.blockers:
                     observations["unlock_current"] = graphical_unlock.is_current(ROOT)
                     if not observations["unlock_current"]:
-                        actions.append(unlock.description)
+                        actions.append(SystemAction(kind="plymouth", label=unlock.description))
         elif "firefox" in settings.get("apps", []):
             observations["firefox"] = policy_stamp()
             if not policy_matches(observations["firefox"]):
-                actions.append("Apply Firefox enterprise privacy policy")
-        print(json.dumps({"actions": actions, "blockers": reasons, "observed": observations}))
+                actions.append(
+                    SystemAction(
+                        kind="firefox_policy", label="Apply Firefox enterprise privacy policy"
+                    )
+                )
+        print(
+            json.dumps(
+                {
+                    "actions": [a.model_dump() for a in actions],
+                    "blockers": reasons,
+                    "observed": observations,
+                }
+            )
+        )
         return
-    if os.geteuid() != 0 or ROOT != Path("/usr/lib/setup-system") or not current_target()[1]:
-        raise ValueError("System changes require authenticated Debian 13 system execution")
-    protected(ROOT)
     before = request["observed"]
     if op == "happ-unit" and "happ" in settings.get("apps", []):
         info = happ_facts.unit_info()
@@ -123,12 +174,16 @@ def main():
             raise ValueError("The verified Debian package did not provide its service")
         print(json.dumps(info))
     elif op == "region":
-        for kind in ("timezone", "locale", "keyboard"):
-            if settings.get(kind) is not None:
-                original = before[kind]
-                if original is None and kind == "keyboard" and regional.actual(kind) == "us":
+        for item in stage.actions:
+            if isinstance(item, RegionAction):
+                original = before[item.field]
+                if (
+                    original is None
+                    and item.field == "keyboard"
+                    and regional.actual(item.field) == "us"
+                ):
                     original = "us"
-                regional.apply(kind, settings[kind], original)
+                regional.apply(item.field, item.value, original)
     elif op == "login" and settings.get("graphical_login"):
         manager, account, env = desktop(request["xdg"])
         changed = manager.apply(
@@ -144,7 +199,7 @@ def main():
     elif op == "boot" and settings.get("plymouth"):
         unlock = before["unlock"]
 
-        def install(packages):
+        def install(packages: tuple[str, ...]) -> None:
             stage = Path(request["apt_work"])
             if stage.parent != Path("/run/setup-system") or not stage.name.startswith(
                 "setup-system-apt-"

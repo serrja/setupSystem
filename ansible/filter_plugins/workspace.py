@@ -5,20 +5,47 @@ import json
 import os
 import re
 import tomllib
+from collections.abc import Iterable
 from pathlib import Path
+from typing import TypedDict
 
+from setup_system.domain.auth_screen import AuthScreen
 from setup_system.infrastructure.receipt_repository import ownership
 from setup_system.infrastructure.tool_paths import personal_path
 
 
-def editor_specs(files, info, selected, settings, catalogs):
+class RenderFacts(TypedDict):
+    home: str
+    xdg: dict[str, str]
+
+
+class RenderSelection(TypedDict, total=False):
+    hyprland: bool
+    desktop_theme: bool
+    keyboard: str
+    monitors: list[dict[str, object]]
+    languages: list[str]
+    theme: dict[str, bool | int | float]
+
+
+class FilePreview(TypedDict):
+    after: dict[str, list[str | int]]
+
+
+def editor_specs(
+    files: str,
+    info: RenderFacts,
+    selected: list[str],
+    settings: RenderSelection,
+    catalogs: dict[str, dict[str, str]],
+) -> list[dict[str, str]]:
     home = Path(info["home"])
     config = Path(info["xdg"]["config"]).relative_to(home)
     data = Path(info["xdg"]["data"]).relative_to(home)
     root = Path(files)
     rows = []
 
-    def add(source, dest, mode="0644", binary=None):
+    def add(source: Path, dest: Path, mode: str = "0644", binary: Path | None = None) -> None:
         rows.append(
             {"source": str(source), "path": str(dest), "mode": mode, "binary": str(binary or "")}
         )
@@ -90,7 +117,9 @@ def editor_specs(files, info, selected, settings, catalogs):
     return rows
 
 
-def context(palette, settings, info):
+def context(
+    palette: dict[str, str], settings: RenderSelection, info: RenderFacts
+) -> dict[str, object]:
     selected = settings.get("theme", {})
     colors = {
         k: v for k, v in palette.items() if isinstance(v, str) and re.fullmatch(r"#[a-f0-9]{6}", v)
@@ -107,6 +136,7 @@ def context(palette, settings, info):
         effects="true" if selected.get("effects", True) else "false",
         keyboard=settings.get("keyboard"),
         monitors=settings.get("monitors", []),
+        auth_screen=AuthScreen().tokens(colors),
         fonts={
             "family": "JetBrains Mono",
             "emoji_fallback": "Noto Color Emoji",
@@ -119,7 +149,7 @@ def context(palette, settings, info):
     )
 
 
-def manager_paths(data, selected):
+def manager_paths(data: str, selected: list[str]) -> bool:
     root = Path(data) / "setup-system/tools"
     home = Path(os.environ["HOME"])
     if selected:
@@ -136,7 +166,7 @@ def manager_paths(data, selected):
     return True
 
 
-def metadata_version(data, manager, name):
+def metadata_version(data: str, manager: str, name: str) -> str | None:
     root = Path(data) / "setup-system/tools"
     path = (
         root / "npm/lib/node_modules" / name / "package.json"
@@ -146,13 +176,18 @@ def metadata_version(data, manager, name):
     personal_path(Path(os.environ["HOME"]), path, regular=True)
     if path.exists():
         record = json.loads(path.read_text())
-        if manager == "npm":
-            return record.get("version")
-        return record.get("main_package", {}).get("package_version")
+        value = (
+            record.get("version")
+            if manager == "npm"
+            else record.get("main_package", {}).get("package_version")
+        )
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Manager metadata contains an invalid version")
+        return value if isinstance(value, str) else None
     return None
 
 
-def missing_parsers(data, parsers):
+def missing_parsers(data: str, parsers: list[str]) -> list[str]:
     home = Path(os.environ["HOME"])
     root = Path(data) / "setup-system/editor-parsers/parser"
     missing = []
@@ -164,7 +199,13 @@ def missing_parsers(data, parsers):
     return missing
 
 
-def editor_proof(info, profiles, parsers, tools, preview):
+def editor_proof(
+    info: RenderFacts,
+    profiles: list[str],
+    parsers: list[str],
+    tools: dict[str, dict[str, str]],
+    preview: FilePreview,
+) -> dict[str, object]:
     prefix = Path(info["xdg"]["config"]).relative_to(info["home"]) / "nvim"
     return {
         "profiles": sorted(profiles),
@@ -178,7 +219,7 @@ def editor_proof(info, profiles, parsers, tools, preview):
     }
 
 
-def stable_tag(rows, major):
+def stable_tag(rows: Iterable[dict[str, str]], major: int) -> str:
     """Choose the latest stable semantic version in the compatible upstream series."""
     choices = {}
     for row in rows:
@@ -192,7 +233,7 @@ def stable_tag(rows, major):
 
 
 class FilterModule:
-    def filters(self):
+    def filters(self) -> dict[str, object]:
         return {
             "editor_proof": editor_proof,
             "stable_tag": stable_tag,

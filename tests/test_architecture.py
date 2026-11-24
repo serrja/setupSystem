@@ -150,17 +150,18 @@ for module in sys.argv[3:]:
 
 def test_confirmed_plan_detaches_and_revalidates_nested_inputs() -> None:
     choices = ["neovim"]
-    actions = ["Configure Neovim"]
-    observed = {"needs_user": True, "needs_system": False, "closure": ["neovim"]}
+    action = {"kind": "editor_verify", "label": "Configure Neovim"}
+    actions = [action]
+    observed = {"needs_user": True, "needs_system": False, "selection": {"apps": ["neovim"]}}
     reply = {"status": "ready", "actions": actions, "observed": observed}
     plan = PlanSnapshot.capture("workspace", {"apps": choices}, reply, "revision")
     choices[:] = ["firefox"]
     actions.clear()
-    observed["closure"].clear()
+    observed["selection"]["apps"].clear()
     payload = plan.payload()
     assert payload["settings"] == {"apps": ["neovim"]}
-    assert payload["expected"]["actions"] == ["Configure Neovim"]
-    assert payload["expected"]["observed"]["closure"] == ["neovim"]
+    assert payload["expected"]["actions"] == [action]
+    assert payload["expected"]["observed"]["selection"]["apps"] == ["neovim"]
     payload["settings"]["apps"].clear()
     assert plan.payload()["settings"] == {"apps": ["neovim"]}
     fields = plan.model_dump()
@@ -221,17 +222,18 @@ def test_ui_and_apply_read_the_same_settings_at_the_bound_paths(tmp_path, monkey
 
     async def exercise():
         async with app.run_test(size=(100, 35)):
+            await app.workers.wait_for_complete()
             assert app.loaded == {"base": base, "workspace": user}
             assert app.query_one("#timezone", Input).value == "UTC"
             current = bound.directory / "base.toml"
             current.write_text('schema_version=1\ntimezone="Asia/Tokyo"\n')
             with pytest.raises(ValueError, match="changed"):
-                app.verify_revision("base", base.revision)
+                await app.verify_revision("base", base.revision)
             current.chmod(0o666)
-            app.reload("base")
+            await app.reload("base")
             assert "base" not in app.loaded and app.loaded["workspace"] == user
             with pytest.raises(ValueError, match="Unsafe"):
-                app.verify_revision("base", base.revision)
+                await app.verify_revision("base", base.revision)
 
     asyncio.run(exercise())
     assert not (tmp_path / "other").exists()
@@ -281,15 +283,21 @@ def test_project_plan_is_user_only_and_detaches_exact_requested_destination():
     settings = {"template": "python", "destination": "/work/Тест 2", "project_name": "example"}
     reply = {
         "status": "ready",
-        "actions": ["Create selected checkout"],
-        "observed": {"commit": "old"},
+        "actions": [
+            {
+                "kind": "template-create",
+                "target": settings["destination"],
+                "label": "Create selected checkout",
+            }
+        ],
+        "observed": {"source_commit": "a" * 40},
     }
     plan = PlanSnapshot.capture("template-create", settings, reply, None)
     settings["destination"] = "/work/next"
-    reply["observed"]["commit"] = "changed"
+    reply["observed"]["source_commit"] = "b" * 40
     assert not plan.needs_password
     assert plan.payload()["settings"]["destination"] == "/work/Тест 2"
-    assert plan.payload()["expected"]["observed"] == {"commit": "old"}
+    assert plan.payload()["expected"]["observed"] == {"source_commit": "a" * 40}
     assert validate_project_settings("template-cache", {"template": "python"}) == {
         "template": "python",
         "offline": False,

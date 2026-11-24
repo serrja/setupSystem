@@ -1,0 +1,105 @@
+---
+- name: Inspect or grant one existing local user's administrative access
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    request_file: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_REQUEST') }}"
+    cancel_file: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_CANCEL') }}"
+    result_file: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_RESULT') }}"
+  tasks:
+    - name: Select the fixed administrative operation
+      ansible.builtin.assert:
+        that: setup_action in ['inspect', 'plan', 'apply']
+
+    - name: Freeze the bounded administrative request as the caller
+      block:
+        - name: Require the pre-prompt identity for Apply
+          ansible.builtin.assert:
+            that: admin_request_sha is defined and admin_request_sha is string
+          when: setup_action == 'apply'
+
+        - name: Verify the file, target, consent and pre-prompt identity
+          ansible.builtin.set_fact:
+            payload: "{{ request_file | native_admin_request(setup_action, admin_request_sha | default(none)) }}"
+      rescue:
+        - name: Reject invalid administrative input before privilege
+          ansible.builtin.set_fact:
+            outcome:
+              status: blocked
+              blockers: ["Invalid or changed administrative request. Preview a new account plan."]
+
+    - name: Inspect the selected login without privilege
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/admin.py", "{{ setup_action }}"]
+        stdin: "{{ payload.wire }}"
+      register: probe
+      changed_when: false
+      when: setup_action != 'apply' and outcome is not defined
+
+    - name: Keep the inspected account and planned group change
+      ansible.builtin.set_fact:
+        outcome: "{{ probe.stdout | from_json }}"
+      when: setup_action != 'apply' and outcome is not defined
+
+    - name: Report cancellation before the administrative transaction
+      ansible.builtin.set_fact:
+        outcome:
+          status: cancelled
+          blockers: ["Cancelled before the account change."]
+      when: setup_action == 'apply' and outcome is not defined and cancel_file is file
+
+    - name: Revalidate and append through the installed account adapter
+      when: setup_action == 'apply' and outcome is not defined
+      block:
+        - name: Require root authentication for the packaged operation
+          # Raw executes the root-owned helper directly. No Python module is staged under HOME.
+          ansible.builtin.raw: >-
+            /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C HOME=/root
+            /usr/bin/python3 -I -S -B
+            -c 'import runpy, sys; from pathlib import Path; sys.path.append("/usr/lib/python3/dist-packages");
+            from setup_system.infrastructure.system_paths import protected;
+            source = Path("/usr/lib/setup-system/ansible/files/admin.py"); protected(source, directory=False);
+            runpy.run_path(str(source), run_name="__main__")'
+            apply
+            {{ payload.wire | quote }}
+          become: true
+          become_method: ansible.builtin.su
+          become_user: root
+          vars:
+            ansible_su_exe: /usr/bin/su
+            ansible_su_flags: --shell /bin/sh
+          register: grant
+          no_log: true
+          changed_when: false
+          ignore_unreachable: true
+
+        - name: Report an unavailable su or PAM account
+          ansible.builtin.set_fact:
+            outcome:
+              status: blocked
+              blockers: ["Root authentication via su/PAM was unavailable. Check the root account with an authorized administrator."]
+          when: grant.unreachable | default(false)
+
+        - name: Record the verified account outcome
+          ansible.builtin.set_fact:
+            outcome: "{{ grant.stdout | from_json }}"
+          when: outcome is not defined
+      rescue:
+        - name: Preserve the administrative verification boundary
+          ansible.builtin.set_fact:
+            outcome:
+              status: >-
+                {{ 'blocked' if 'authentication' in (ansible_failed_result.msg | default('') | lower)
+                   or 'password' in (ansible_failed_result.msg | default('') | lower)
+                   or 'authentication failure' in (ansible_failed_result.stderr | default('') | lower)
+                   or 'authentication failure' in (ansible_failed_result.stdout | default('') | lower)
+                   else 'partial' }}
+              blockers: ["Root authentication or verification failed. Ask an authorized administrator to inspect current membership before retrying."]
+
+    - name: Publish the result as the caller
+      ansible.builtin.copy:
+        content: "{{ outcome | to_json }}\n"
+        dest: "{{ result_file }}"
+        mode: "0600"

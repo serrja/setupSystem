@@ -75,19 +75,26 @@ def test_malformed_selections_fail_before_planning_or_mutation(run_env):
     assert not any(Path(run_env["HOME"]).iterdir())
 
 
-def test_render_and_publish_desktop_with_real_unprivileged_ansible(run_env):
+@pytest.mark.parametrize("section", ["base", "workspace"])
+def test_render_and_publish_desktop_with_real_unprivileged_ansible(run_env, section):
     import yaml
 
     stage = Path(run_env["SETUP_SYSTEM_REQUEST"]).parent
     home = Path(run_env["HOME"])
-    intent = {
-        "hyprland": True,
-        "desktop_theme": True,
-        "theme": {"rounding": 16, "effects": False, "compact_panel": True},
-        "monitors": [],
-        "apps": [],
-        "languages": [],
-    }
+    intent = (
+        {"hyprland": True}
+        if section == "base"
+        else {
+            "desktop_theme": True,
+            "theme": {"rounding": 16, "effects": False, "compact_panel": True},
+            "monitors": [],
+            "apps": [],
+            "languages": [],
+        }
+    )
+    Path(run_env["SETUP_SYSTEM_REQUEST"]).write_text(
+        json.dumps({"schema": 1, "settings": intent, "expected": None})
+    )
     info = {
         "home": str(home),
         "xdg": {
@@ -108,7 +115,7 @@ def test_render_and_publish_desktop_with_real_unprivileged_ansible(run_env):
     ]
     variables = {
         "release_root": str(ROOT),
-        "section": "base",
+        "section": section,
         "run_dir": str(stage),
         "facts": info,
         "intent": intent,
@@ -131,15 +138,25 @@ def test_render_and_publish_desktop_with_real_unprivileged_ansible(run_env):
     task = play([str(fixture)], run_env)
     assert task.returncode == 0, task.stdout + task.stderr
     preview = json.loads((stage / "preview.json").read_text())
-    assert ".config/hypr/hyprland.lua" in preview["changes"]
+    assert (".config/hypr/hyprland.lua" in preview["changes"]) == (section == "base")
     profile = stage / "files/.config/hypr/setup-system/profile.lua"
-    assert "rounding = 16" in profile.read_text() and "@{" not in profile.read_text()
-    assert (
-        json.loads((stage / "files/.config/hypr/setup-system/waybar.json").read_text())["height"]
-        == 30
-    )
+    assert f"rounding = {12 if section == 'base' else 16}" in profile.read_text()
+    assert "@{" not in profile.read_text()
+    assert json.loads((stage / "files/.config/hypr/setup-system/waybar.json").read_text())[
+        "height"
+    ] == (36 if section == "base" else 30)
     assert not any(home.iterdir())
-    payload = {"schema": 1, "settings": intent, "expected": {"observed": {"files": preview}}}
+    payload = {
+        "schema": 1,
+        "settings": intent,
+        "expected": {
+            "status": "ready",
+            "actions": [
+                {"kind": "user_file", "path": name, "label": name} for name in preview["changes"]
+            ],
+            "observed": {"needs_system": False, "needs_user": True, "files": preview},
+        },
+    }
     Path(run_env["SETUP_SYSTEM_REQUEST"]).write_text(json.dumps(payload))
     variables.update(
         files_preview=preview,
@@ -147,7 +164,7 @@ def test_render_and_publish_desktop_with_real_unprivileged_ansible(run_env):
         commands={},
         changed_stages=[],
         tool_prefix=str(Path(info["xdg"]["data"]) / "setup-system/tools"),
-        user_changes=preview["changes"],
+        user_changes=payload["expected"]["actions"],
     )
     fixture.write_text(
         yaml.safe_dump(
@@ -171,7 +188,9 @@ def test_render_and_publish_desktop_with_real_unprivileged_ansible(run_env):
     result = play([str(fixture)], run_env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (home / ".config/hypr/setup-system/profile.lua").read_bytes() == profile.read_bytes()
-    assert os.access(home / ".local/share/setup-system/bin/start-hyprland", os.X_OK)
+    assert os.access(home / ".local/share/setup-system/bin/start-hyprland", os.X_OK) == (
+        section == "base"
+    )
 
 
 def test_cancellation_boundary_stops_following_mutation(run_env):

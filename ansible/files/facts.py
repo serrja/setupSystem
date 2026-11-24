@@ -8,13 +8,19 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import TypedDict
 from zoneinfo import available_timezones
 
 from setup_system.infrastructure.native_target import current_target, get_release
 from setup_system.infrastructure.package_journal import historical_status
 
 
-def keyboard_choices():
+class Display(TypedDict):
+    output: str
+    modes: list[str]
+
+
+def keyboard_choices() -> list[str]:
     rules = Path("/usr/share/X11/xkb/rules/base.lst")
     layouts = []
     section = ""
@@ -27,7 +33,7 @@ def keyboard_choices():
     return sorted(set(layouts))
 
 
-def monitors():
+def monitors() -> list[Display]:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not Path("/usr/bin/hyprctl").is_file():
         return []
     try:
@@ -46,7 +52,7 @@ def monitors():
         return []
 
 
-def desktop_error():
+def desktop_error() -> str | None:
     approved = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "config/base/desktop.toml").read_text()
     )
@@ -70,7 +76,7 @@ def desktop_error():
     )
 
 
-def main():
+def main() -> None:
     if sys.argv[1:] == ["desktop-ready"]:
         issue = desktop_error()
         if issue:
@@ -115,7 +121,7 @@ def main():
         if issue:
             reason.append(issue)
     account = pwd.getpwuid(os.getuid())
-    result = dict(
+    result: dict[str, object] = dict(
         home=str(home),
         xdg=xdg,
         uid=account.pw_uid,

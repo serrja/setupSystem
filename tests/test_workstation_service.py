@@ -7,7 +7,6 @@ import os
 import runpy
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 import pytest
@@ -17,7 +16,7 @@ from test_native_ui import Tasks, app_for, idle
 from textual.widgets import Button, Input, Static
 
 from setup_system.models import PlanSnapshot, WorkspaceOptions
-from setup_system.runner import MakeRunner, Target
+from setup_system.runner import AsyncMakeRunner, Command, Target
 from setup_system.ui.dialogs import Password
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,8 +47,22 @@ def outcomes(tmp_path_factory):
         "empty": ({}, False, False, [], [], False),
         "matched": ({"apps": ["firefox"]}, False, False, [], [], False),
         "failed": ({"apps": ["firefox"]}, False, False, [], [], True),
-        "partial": ({"apps": ["firefox"]}, True, False, ["Packages"], [], True),
-        "cancel": ({"apps": ["firefox"]}, True, True, ["Packages"], [], True),
+        "partial": (
+            {"apps": ["firefox"]},
+            True,
+            False,
+            [{"kind": "packages_verified", "label": "Packages"}],
+            [],
+            True,
+        ),
+        "cancel": (
+            {"apps": ["firefox"]},
+            True,
+            True,
+            [{"kind": "packages_verified", "label": "Packages"}],
+            [],
+            True,
+        ),
         "unsupported": (
             {"desktop_theme": True},
             False,
@@ -93,7 +106,7 @@ def outcomes(tmp_path_factory):
                     "ansible.builtin.copy": {
                         "dest": str(run / key),
                         "mode": "0600",
-                        "content": "{{ outcome | to_json }}",
+                        "content": "{{ outcome | native_result | to_json }}",
                     }
                 },
             ]
@@ -136,16 +149,18 @@ def test_plan_never_calls_executor_or_creates_files(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     for key in ("CONFIG", "DATA", "STATE", "CACHE"):
         monkeypatch.setenv("XDG_" + key + "_HOME", str(home / key.lower()))
-    result = MakeRunner(ROOT).run(
-        Target.WORKSPACE_PLAN, {"schema": 1, "settings": {}, "expected": None}
+    result = asyncio.run(
+        AsyncMakeRunner(ROOT).run(
+            Command.capture(Target.WORKSPACE_PLAN, {"schema": 1, "settings": {}, "expected": None})
+        )
     )
-    assert result["status"] in ("nothing_selected", "blocked")
+    assert result.status in ("nothing_selected", "blocked")
     assert not list(home.iterdir())
 
 
 def test_unsupported_platform_blocks_apply_but_not_navigation(tmp_path, outcomes):
     class Blocked(Tasks):
-        def run(self, target, payload, **kwargs):
+        async def reply(self, target, payload, **kwargs):
             assert target == Target.WORKSPACE_PLAN
             return outcomes["unsupported"]
 
@@ -165,13 +180,13 @@ def test_unsupported_platform_blocks_apply_but_not_navigation(tmp_path, outcomes
 
 def test_cancel_is_observed_between_completed_stages(outcomes):
     assert outcomes["cancel"]["status"] == "cancelled"
-    assert outcomes["cancel"]["actions"] == ["Packages"]
+    assert outcomes["cancel"]["actions"] == [{"kind": "packages_verified", "label": "Packages"}]
     assert "Prepare next stage" in outcomes["cancel"]["blockers"][0]
 
 
 def test_partial_failure_never_reports_success(outcomes):
     assert outcomes["partial"]["status"] == "partial"
-    assert outcomes["partial"]["actions"] == ["Packages"]
+    assert outcomes["partial"]["actions"] == [{"kind": "packages_verified", "label": "Packages"}]
     assert "Synthetic failure" in outcomes["partial"]["blockers"][0]
 
 
@@ -184,7 +199,7 @@ def test_second_mutation_is_rejected(tmp_path):
             await pilot.click("#plan")
             await idle(app, pilot)
             await pilot.click("#apply")
-            tasks.gate = threading.Event()
+            tasks.gate = asyncio.Event()
             await pilot.click("#confirm")
             assert app.query_one("#apply", Button).disabled
             await pilot.click("#apply")
@@ -222,12 +237,14 @@ def test_region_changes_have_independent_operations_without_desktop(monkeypatch,
         {
             "section": "base",
             "settings": {"timezone": "Pacific/Tahiti", "keyboard": "us,ru"},
-            "xdg": {},
         },
     )
     report = json.loads(capsys.readouterr().out)
     assert set(report["observed"]) == {"timezone", "keyboard"}
-    assert report["actions"] == ["Set timezone to Pacific/Tahiti", "Set keyboard to us,ru"]
+    assert [(a["kind"], a["field"], a["value"]) for a in report["actions"]] == [
+        ("region", "timezone", "Pacific/Tahiti"),
+        ("region", "keyboard", "us,ru"),
+    ]
     assert not report["blockers"]
 
 
@@ -273,6 +290,7 @@ def test_separate_writers_share_one_lock_without_creating_settings(tmp_path):
 
     lock = tmp_path / "private run"
     lock.mkdir(mode=0o700)
+    (tmp_path / "dpkg_lock.py").write_bytes((ROOT / "libexec/dpkg_lock.py").read_bytes())
     script = tmp_path / "locked.sh"
     script.write_text(
         (ROOT / "libexec/locked")
@@ -334,11 +352,19 @@ def test_confirmed_happ_upgrade_passes_the_observed_package_version(monkeypatch,
         {"apps": ["happ"]},
         {
             "status": "ready",
-            "actions": ["Update Happ to 5.0"],
+            "actions": [{"kind": "happ_start", "label": "Start the installed Happ service"}],
             "observed": {
                 "needs_system": True,
                 "needs_user": False,
-                "debs": {"happ": {"before": seen}},
+                "debs": {
+                    "happ": {
+                        "name": "happ.deb",
+                        "url": "https://github.com/verified/happ/releases/download/5.0/happ.deb",
+                        "checksum": "sha256:" + "a" * 64,
+                        "version": "5.0",
+                        "before": seen,
+                    }
+                },
             },
         },
         None,
@@ -352,14 +378,29 @@ def test_invalid_release_record_blocks_only_privileged_operations(tmp_path, monk
     path = tmp_path / "setup-system/release.json"
     path.parent.mkdir(mode=0o700)
     path.write_bytes(record)
-    runner = MakeRunner(ROOT)
+    runner = AsyncMakeRunner(ROOT)
     with pytest.raises(ValueError, match="installed Debian package"):
-        runner.run(Target.BASE_APPLY, {"schema": 1, "settings": {}, "expected": None})
-    answer = runner.run(
-        Target.PROJECT_CHECK,
-        {"schema": 1, "settings": {"project": str(tmp_path)}, "expected": None},
+        expected = {
+            "status": "ready",
+            "actions": [{"kind": "region", "field": "timezone", "value": "UTC", "label": "TZ"}],
+            "observed": {"needs_system": True, "needs_user": False},
+        }
+        asyncio.run(
+            runner.run(
+                Command.capture(
+                    Target.BASE_APPLY, {"schema": 1, "settings": {}, "expected": expected}
+                )
+            )
+        )
+    answer = asyncio.run(
+        runner.run(
+            Command.capture(
+                Target.PROJECT_CHECK,
+                {"schema": 1, "settings": {"project": str(tmp_path)}, "expected": None},
+            )
+        )
     )
-    assert answer["status"] == "ready" and path.read_bytes() == record
+    assert answer.status == "ready" and path.read_bytes() == record
 
 
 @pytest.mark.parametrize(
@@ -389,14 +430,18 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
 
     monkeypatch.setattr(system.files, "read", read_as_caller)
 
+    user_xdg = {
+        key: env["XDG_" + key.upper() + "_HOME"] for key in ("config", "data", "state", "cache")
+    }
+
     def desktop(xdg):
-        assert xdg == env
+        assert xdg == user_xdg
         return system, account, env
 
     request = {
         "section": "base",
         "settings": {"hyprland": True, "graphical_login": True},
-        "xdg": env,
+        "xdg": user_xdg,
     }
     native_main("system_contract", monkeypatch, "plan", request, desktop=desktop)
     plan = json.loads(capsys.readouterr().out)
@@ -422,7 +467,7 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
             "system_contract",
             monkeypatch,
             "login",
-            request | {"observed": plan["observed"]},
+            request | {"observed": plan["observed"], "actions": plan["actions"]},
             desktop=desktop,
             protected=guard,
             ROOT=installed,

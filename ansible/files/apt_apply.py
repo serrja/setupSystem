@@ -20,7 +20,7 @@ from setup_system.infrastructure.upstream_asset import github_deb
 ROOT = Path("/usr/lib/setup-system")
 
 
-def reviewed(stage):
+def reviewed(stage: Path) -> None:
     if stage.parent != Path("/run/setup-system") or not re.fullmatch(
         r"setup-system-apt-[A-Za-z0-9_-]+", stage.name
     ):
@@ -33,7 +33,7 @@ def reviewed(stage):
             raise ValueError("Invalid system package transaction receipt")
 
 
-def verify(stage):
+def verify(stage: Path) -> None:
     approved = json.loads((stage / "approved.json").read_bytes())
     expected = {}
     architecture = subprocess.check_output(
@@ -78,13 +78,13 @@ def verify(stage):
         raise ValueError("The actual native APT transaction differs from the confirmed plan")
 
 
-def keyring(path):
+def keyring(path: Path) -> None:
     if path.is_symlink() or not path.is_file() or not path.stat().st_size:
         raise ValueError("Required Debian archive keyring is missing or not regular")
     protected(path, directory=False)
 
 
-def verify_sources(root, vendor):
+def verify_sources(root: Path, vendor: bool) -> None:
     sources = [root / "config/base/debian.sources"]
     if vendor:
         sources.append(root / "config/base/optional_sources/chatgpt.sources")
@@ -96,7 +96,7 @@ def verify_sources(root, vendor):
             keyring(Path(anchor))
 
 
-def validate_deb(path, key, verified, arch):
+def validate_deb(path: Path, key: str, verified: dict[str, str], arch: str) -> str:
     with path.open("rb") as stream:
         if "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest() != verified["checksum"]:
             raise ValueError("Upstream package changed after confirmation")
@@ -115,7 +115,7 @@ def validate_deb(path, key, verified, arch):
     return version
 
 
-def run(stage):
+def run(stage: Path) -> None:
     reviewed(stage)
     args = json.loads((stage / "transaction.json").read_bytes())
     package_config = tomllib.loads((ROOT / "config/base/packages.toml").read_text())

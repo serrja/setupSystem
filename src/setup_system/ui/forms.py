@@ -59,6 +59,10 @@ class BaseForm(VerticalScroll):
             yield Label(label)
             yield CompletionInput(id=key, placeholder="Keep current", suggester=choices)
 
+        yield Label("Local account for administrative access")
+        yield Input(id="admin-account", placeholder="Existing local username")
+        yield Button("Review sudo access", id="admin-plan")
+
     def populate(self, options: BaseOptions) -> None:
         for key in ("hyprland", "graphical_login", "plymouth"):
             self.query_one("#" + key, Checkbox).value = getattr(options, key)

@@ -2,63 +2,27 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import os
 import pwd
-import stat
-import subprocess
 import sys
-import tempfile
-from enum import StrEnum
+from collections.abc import Callable
 from pathlib import Path
-from threading import Event
-from time import monotonic
+from typing import Self
 
-import pexpect  # type: ignore[import-untyped]
+import aiofiles
+import aiofiles.tempfile
+from pydantic import Field, ValidationError, ValidationInfo, field_validator
+
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
+from setup_system.infrastructure.operation_io import read_wire
+from setup_system.infrastructure.system_paths import verify_program_tree
+from setup_system.make_transport import FOREGROUND as FOREGROUND
+from setup_system.make_transport import SYSTEM, Phase, TransportError, execute_make
+from setup_system.make_transport import Target as Target
+from setup_system.models import RequestEnvelope, TaskResult
 
 INSTALLED = Path("/usr/lib/setup-system")
-
-
-class Target(StrEnum):
-    BASE_INSPECT = "base-inspect"
-    BASE_PLAN = "base-plan"
-    BASE_APPLY = "base-apply"
-    BASE_USER_APPLY = "base-user-apply"
-    WORKSPACE_INSPECT = "workspace-inspect"
-    WORKSPACE_PLAN = "workspace-plan"
-    WORKSPACE_APPLY = "workspace-apply"
-    WORKSPACE_USER_APPLY = "workspace-user-apply"
-    CLEANUP_PLAN = "cleanup-plan"
-    CLEANUP_APPLY = "cleanup-apply"
-    RESTORE_PLAN = "restore-plan"
-    RESTORE_APPLY = "restore-apply"
-    DISPLAY_PREVIEW = "display-preview"
-    PROJECT_CHECK = "project-check"
-    PROJECT_LIST = "project-list"
-    TEMPLATE_VERSIONS = "template-versions"
-    GIT_INSPECT = "git-inspect"
-    PROJECT_EDITOR = "project-editor"
-    PROJECT_CODEX = "project-codex"
-    PROJECT_PREPARE_PLAN = "project-prepare-plan"
-    PROJECT_PREPARE_APPLY = "project-prepare-apply"
-    TEMPLATE_CACHE_PLAN = "template-cache-plan"
-    TEMPLATE_CACHE_APPLY = "template-cache-apply"
-    TEMPLATE_CREATE_PLAN = "template-create-plan"
-    TEMPLATE_CREATE_APPLY = "template-create-apply"
-    TEMPLATE_UPDATE_PLAN = "template-update-plan"
-    TEMPLATE_UPDATE_APPLY = "template-update-apply"
-    GIT_CONFIGURE_PLAN = "git-configure-plan"
-    GIT_CONFIGURE_APPLY = "git-configure-apply"
-    GIT_USE_PLAN = "git-use-plan"
-    GIT_USE_APPLY = "git-use-apply"
-    SHELL_CONFIGURE_PLAN = "shell-configure-plan"
-    SHELL_CONFIGURE_APPLY = "shell-configure-apply"
-    RTK_INSTALL_PLAN = "rtk-install-plan"
-    RTK_INSTALL_APPLY = "rtk-install-apply"
-
-
-FOREGROUND = frozenset({Target.PROJECT_EDITOR, Target.PROJECT_CODEX})
-SYSTEM = frozenset({Target.BASE_APPLY, Target.WORKSPACE_APPLY, Target.CLEANUP_APPLY})
 
 
 class BecomePassword:
@@ -120,88 +84,132 @@ def _environment() -> dict[str, str]:
     return environment
 
 
-def _run_make(
-    root: Path,
-    target: Target,
-    env: dict[str, str],
-    password: BecomePassword | None,
-    cancel: Event | None,
-) -> int:
-    args = ["-rR", "-j1", "--no-print-directory", "-f", str(root / "Makefile"), target.value]
-    if target in FOREGROUND:
-        if not sys.stdin.isatty() or not sys.stdout.isatty():
-            raise ValueError("Opening the project requires an interactive terminal")
-        return subprocess.run(["/usr/bin/make", *args], cwd=root, env=env, check=False).returncode
-    child = pexpect.spawn(
-        "/usr/bin/make",
-        args,
-        cwd=str(root),
-        env=env,
-        echo=True,
-        timeout=None,
-    )
-    # Until the native getpass prompt no playbook task can have started.
-    awaiting = password is not None
-    deadline = monotonic() + 30
-    tail = b""
+class Command(ContractModel):
+    """A fixed native target and its independently validated, immutable request."""
+
+    target: Target
+    request_json: str = Field(max_length=MAX_MESSAGE_BYTES, repr=False)
+
+    @field_validator("request_json", mode="before")
+    @classmethod
+    def freeze_request(cls, value: object, info: ValidationInfo) -> str:
+        target = info.data.get("target")
+        if not isinstance(target, Target):
+            raise ValueError("Unknown operation target")
+        if isinstance(value, str):
+            if len(value.encode()) > MAX_MESSAGE_BYTES:
+                raise ValueError("Operation request is too large")
+            request = RequestEnvelope.model_validate_json(value)
+        else:
+            request = RequestEnvelope.model_validate(value)
+        wire = request.for_target(target.value).model_dump_json(by_alias=True, exclude_unset=True)
+        if len(wire.encode()) > MAX_MESSAGE_BYTES:
+            raise ValueError("Operation request is too large")
+        return wire
+
+    @classmethod
+    def capture(cls, target: Target | str, envelope: dict[str, object]) -> Self:
+        """Snapshot the wire values before scheduling the operation."""
+        return cls.model_validate({"target": target, "request_json": envelope})
+
+
+class RunEvent(ContractModel):
+    target: Target
+    phase: Phase
+
+    @property
+    def message(self) -> str:
+        return {
+            Phase.STARTED: "Starting the selected operation.",
+            Phase.AUTHENTICATING: "Waiting for the native authorization prompt.",
+            Phase.RUNNING: "The native operation is running.",
+            Phase.WAITING: "The operation is still active. Waiting for its next safe boundary.",
+            Phase.CANCELLING: "Cancellation requested. Waiting for the current safe boundary.",
+            Phase.INTERRUPTED: "The command channel was interrupted. Waiting for a safe boundary.",
+        }[self.phase]
+
+
+def _result(path: Path, code: int) -> TaskResult | None:
     try:
-        while True:
-            if cancel is not None and cancel.is_set():
-                if awaiting:
-                    child.close(force=True)
-                    return 130
-                if "SETUP_SYSTEM_CANCEL" in env:
-                    Path(env["SETUP_SYSTEM_CANCEL"]).touch(mode=0o600, exist_ok=True)
-            if awaiting and monotonic() > deadline:
-                child.close(force=True)
-                raise RuntimeError("The native Ansible password prompt was unavailable")
-            try:
-                chunk = child.read_nonblocking(4096, timeout=0.2)
-            except pexpect.TIMEOUT:
-                continue
-            except pexpect.EOF:
-                break
-            if awaiting:
-                tail = (tail + chunk)[-512:]
-                if tail.split(b"\n")[-1] in (b"BECOME password: ", b"SUDO password: "):
-                    if child.getecho():
-                        child.close(force=True)
-                        raise RuntimeError("Password prompt has terminal echo enabled")
-                    assert password is not None
-                    child.sendline(password.take())
-                    password = None
-                    awaiting = False
-                    tail = b""
-        child.close()
-        return int(child.exitstatus if child.exitstatus is not None else 1)
-    finally:
-        if password is not None:
-            password.discard()
+        data = read_wire(path)
+    except FileNotFoundError:
+        return None
+    try:
+        result = TaskResult.model_validate_json(data)
+    except ValidationError:
+        raise ValueError("The native operation returned an invalid result") from None
+    if code and result.status not in {"failed", "partial", "blocked", "cancelled"}:
+        raise TransportError(f"Native operation failed with exit status {code}")
+    return result
 
 
-class MakeRunner:
+class AsyncMakeRunner:
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root if root is not None else resource_root()
+        self.root = root
 
-    def run(
+    async def check_authorization(self) -> Path:
+        """Identify the packaged program before requesting or transmitting a password."""
+        root = self.root if self.root is not None else await asyncio.to_thread(resource_root)
+        if root != INSTALLED:
+            raise ValueError("System changes require the installed Debian package")
+        await asyncio.to_thread(verify_program_tree, root)
+        return root
+
+    async def run(
         self,
-        target: Target,
-        payload: dict[str, object],
+        command: Command,
         *,
         password: BecomePassword | None = None,
-        cancel: Event | None = None,
-    ) -> dict[str, object]:
-        """Discard terminal output and read only the operation's structured result."""
-        target = Target(target)
-        if os.geteuid() == 0:
-            raise ValueError("Open setup-system as your normal user")
-        if cancel is not None and cancel.is_set():
-            return {"status": "cancelled"}
-        if target in SYSTEM and self.root != INSTALLED:
-            raise ValueError("System changes require the installed Debian package")
-        if (target in SYSTEM) != (password is not None):
-            raise ValueError("The selected operation has a different authorization requirement")
-        env = _environment()
+        cancel: asyncio.Event | None = None,
+        on_event: Callable[[RunEvent], None] | None = None,
+    ) -> TaskResult:
+        """Own the operation and its request files until every safe boundary is observed."""
+        stop = cancel if cancel is not None else asyncio.Event()
+        try:
+            if os.geteuid() == 0 or os.geteuid() != os.getuid():
+                raise ValueError("Open setup-system as your normal user")
+            if stop.is_set():
+                return TaskResult(status="cancelled")
+            command = Command.model_validate(command)
+            if command.target in SYSTEM:
+                root = await self.check_authorization()
+            else:
+                root = (
+                    self.root if self.root is not None else await asyncio.to_thread(resource_root)
+                )
+            if (command.target in SYSTEM) != (password is not None):
+                raise ValueError("The selected operation has a different authorization requirement")
+            job = asyncio.create_task(self._execute(root, command, password, stop, on_event))
+            try:
+                return await asyncio.shield(job)
+            except asyncio.CancelledError:
+                stop.set()
+                while not job.done():
+                    try:
+                        await asyncio.shield(job)
+                    except asyncio.CancelledError:
+                        continue
+                job.result()
+                raise
+        finally:
+            if password is not None:
+                password.discard()
+
+    async def _execute(
+        self,
+        root: Path,
+        command: Command,
+        password: BecomePassword | None,
+        stop: asyncio.Event,
+        on_event: Callable[[RunEvent], None] | None,
+    ) -> TaskResult:
+        target = command.target
+
+        def report(phase: Phase) -> None:
+            if on_event is not None:
+                on_event(RunEvent(target=target, phase=phase))
+
+        env = await asyncio.to_thread(_environment)
         if target in FOREGROUND:
             for key in ("TERM", "COLORTERM"):
                 value = os.environ.get(key) or ("xterm-256color" if key == "TERM" else "")
@@ -211,38 +219,45 @@ class MakeRunner:
                     and all(c.isascii() and (c.isalnum() or c in "-_.+") for c in value)
                 ):
                     env[key] = value
-        if self.root != INSTALLED:
+        if root != INSTALLED:
             env["SETUP_SYSTEM_INTERPRETER"] = sys.executable
-        with tempfile.TemporaryDirectory(prefix="setup-system-") as temporary:
+        async with aiofiles.tempfile.TemporaryDirectory(prefix="setup-system-") as temporary:
             stage = Path(temporary)
             request = stage / "request.json"
             result = stage / "result.json"
-            with open(request, "x", opener=lambda p, f: os.open(p, f, 0o600)) as out:
-                json.dump(payload, out, allow_nan=False)
+            async with aiofiles.open(
+                request, "xb", opener=lambda p, f: os.open(p, f, 0o600)
+            ) as snapshot:
+                await snapshot.write(command.request_json.encode())
             env.update(
                 SETUP_SYSTEM_REQUEST=str(request),
                 SETUP_SYSTEM_RESULT=str(result),
                 SETUP_SYSTEM_CANCEL=str(stage / "cancel"),
             )
-            code = _run_make(self.root, target, env, password, cancel)
-            password = None
-            if code == 130:
-                return {"status": "cancelled"}
-            if not result.is_file():
-                raise RuntimeError(
-                    "Operation failed. Check authorization, prerequisites and the operation lock."
+            if stop.is_set():
+                return TaskResult(status="cancelled")
+            report(Phase.STARTED)
+            try:
+                code = await execute_make(
+                    root,
+                    target,
+                    env,
+                    stop,
+                    report,
+                    take_password=password.take if password is not None else None,
                 )
-            with os.fdopen(os.open(result, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
-                info = os.fstat(f.fileno())
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or info.st_uid != os.getuid()
-                    or info.st_size > 2**20
-                ):
-                    raise ValueError("Invalid operation result")
-                data = json.loads(f.read(2**20 + 1))
-            if not isinstance(data, dict) or not isinstance(data.get("status"), str):
-                raise ValueError("Invalid operation result")
-            if code and data.get("status") != "blocked":
-                raise RuntimeError(f"Native operation failed with exit status {code}")
-            return data
+            except TransportError as exc:
+                native_result = await asyncio.to_thread(_result, result, 0)
+                if native_result is None:
+                    raise
+                raise type(exc)(
+                    f"{exc}. Recorded native outcome: {native_result.describe()}"
+                ) from None
+            recorded = await asyncio.to_thread(_result, result, code)
+            if recorded is not None:
+                return recorded
+            if code == 130:
+                return TaskResult(status="cancelled")
+            raise TransportError(
+                f"Make exited with status {code} before returning an operation result."
+            )

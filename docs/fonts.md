@@ -1,6 +1,6 @@
 # Desktop fonts
 
-The Hyprland package selection installs Debian's JetBrains Mono, Noto, Noto Color Emoji and DejaVu packages together with Fontconfig. The user's managed Fontconfig preference file is `$XDG_CONFIG_HOME/fontconfig/conf.d/60-setup-system-fonts.conf`. The desktop templates use JetBrains Mono for text and Noto Color Emoji as an emoji fallback. [Package selections](../config/base/packages.toml) · [Fontconfig template](../assets/fonts/60-setup-system-fonts.conf)
+The Hyprland package selection installs Debian's JetBrains Mono, Noto, Noto Color Emoji and DejaVu packages together with Fontconfig. The user's managed Fontconfig preference file is `$XDG_CONFIG_HOME/fontconfig/conf.d/60-setup-system-fonts.conf`. The desktop templates use JetBrains Mono for text and Noto Color Emoji as an emoji fallback. The package ships the font list in `/usr/lib/setup-system/config/base/packages.toml` and the matching template in `/usr/lib/setup-system/assets/fonts/60-setup-system-fonts.conf`.
 
 Run these commands in the desktop user's session to see the chosen face and file.
 

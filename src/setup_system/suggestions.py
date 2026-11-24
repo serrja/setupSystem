@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tomllib
+from itertools import islice
 from pathlib import Path
 from typing import Any
 from zoneinfo import available_timezones
@@ -11,6 +13,8 @@ from zoneinfo import available_timezones
 from textual.suggester import Suggester
 
 from setup_system.domain.applications import applications
+from setup_system.domain.intentions import Section
+from setup_system.domain.observations import NativeObservations
 from setup_system.runner import resource_root
 
 
@@ -36,16 +40,20 @@ class ProjectChoices(Suggester):
     def __init__(self, source: Suggestions):
         super().__init__(use_cache=False, case_sensitive=True)
         self.source = source
+        self.generation = 0
 
     async def get_suggestion(self, value: str) -> str | None:
-        return next(
-            (
-                path
-                for path in self.source.project_values(value)
-                if value and path.startswith(value)
-            ),
-            None,
-        )
+        self.generation += 1
+        generation = self.generation
+        if not value:
+            return None
+        await asyncio.sleep(0.075)
+        if self.generation != generation:
+            return None
+        choices = await self.source.project_values(value)
+        if self.generation != generation:
+            return None
+        return next((path for path in choices if path.startswith(value)), None)
 
 
 def config_root() -> Path:
@@ -70,12 +78,6 @@ class Catalog:
         self.cleanup = tuple(_toml(config / "workspace/optional_cleanup.toml")["candidates"])
 
 
-def _strings(value: Any) -> tuple[str, ...]:
-    if not isinstance(value, (list, tuple)):
-        return ()
-    return tuple(sorted({item for item in value if isinstance(item, str) and item}))
-
-
 class Suggestions:
     def __init__(self, config: Path, home: Path) -> None:
         self.config, self.home = config, home
@@ -86,46 +88,56 @@ class Suggestions:
         self.modes: dict[str, tuple[str, ...]] = {}
         self.projects = Choices()
         self.backups = Choices()
+        self._scan_lock = asyncio.Lock()
         self.project_dirs: dict[Path, tuple[str, ...]] = {}
 
-    def refresh(self, section: str, observed: dict[str, Any]) -> None:
+    def _catalog_paths(self) -> tuple[str, ...]:
+        source = self.config / "workspace/projects.toml"
+        catalog = _toml(source)
+        root = Path(str(catalog["projectsRoot"]).replace("$HOME/", str(self.home) + "/", 1))
+        paths = (root / entry["id"] for entry in catalog.get("project", ()))
+        return tuple(
+            str(path)
+            for path in paths
+            if path.is_relative_to(self.home) and ".." not in path.parts and path.is_dir()
+        )
+
+    async def refresh(self, section: Section, observed: NativeObservations) -> None:
         if section == "base":
-            self.timezones.values = _strings(observed.get("timezones")) or tuple(
-                sorted(available_timezones())
+            self.timezones.values = observed.timezones or tuple(
+                sorted(await asyncio.to_thread(available_timezones))
             )
-            self.locales.values = _strings(observed.get("locales"))
-            self.keyboards.values = _strings(observed.get("keyboards"))
-        if section == "workspace":
-            self.project_dirs.clear()
-            source = self.config / "workspace/projects.toml"
-            paths: list[str] = []
-            if source.is_file():
-                catalog = _toml(source)
-                root = Path(
-                    str(catalog.get("projectsRoot", "$HOME/Projects")).replace(
-                        "$HOME/", str(self.home) + "/", 1
+            self.locales.values = observed.locales
+            self.keyboards.values = observed.keyboards
+        else:
+            async with self._scan_lock:
+                self.project_dirs.clear()
+                paths = await asyncio.to_thread(self._catalog_paths)
+            self.projects.values = tuple(sorted(set(paths)))
+            self.backups.values = observed.backups
+        self.modes = {output.output: output.modes for output in observed.outputs}
+        self.outputs.values = tuple(self.modes)
+
+    @staticmethod
+    def _scan(directory: Path) -> tuple[str, ...]:
+        try:
+            with os.scandir(directory) as entries:
+                return tuple(
+                    sorted(
+                        islice(
+                            (
+                                entry.path
+                                for entry in islice(entries, 2048)
+                                if not entry.name.startswith(".") and entry.is_dir()
+                            ),
+                            128,
+                        )
                     )
                 )
-                for row in catalog.get("project", []):
-                    if isinstance(row, dict) and isinstance(row.get("id"), str):
-                        path = root / row["id"]
-                        if (
-                            path.is_absolute()
-                            and path.is_relative_to(self.home)
-                            and ".." not in path.parts
-                            and path.is_dir()
-                        ):
-                            paths.append(str(path))
-            self.projects.values = _strings(paths + list(_strings(observed.get("projects"))))
-            self.backups.values = _strings(observed.get("backups"))
-        if isinstance(observed.get("outputs"), list):
-            self.modes.clear()
-            for item in observed["outputs"]:
-                if isinstance(item, dict) and isinstance(item.get("output"), str):
-                    self.modes[item["output"]] = _strings(item.get("modes"))
-            self.outputs.values = tuple(self.modes)
+        except OSError:
+            return ()
 
-    def project_values(self, value: str) -> tuple[str, ...]:
+    async def project_values(self, value: str) -> tuple[str, ...]:
         if not value:
             return self.projects.values
         expanded = value.replace("~/", str(self.home) + "/", 1) if value.startswith("~/") else value
@@ -133,18 +145,12 @@ class Suggestions:
         directory = path if expanded.endswith("/") else path.parent
         if not directory.is_absolute() or ".." in directory.parts:
             return self.projects.values
-        if directory not in self.project_dirs:
-            try:
-                self.project_dirs[directory] = tuple(
-                    sorted(
-                        str(entry)
-                        for entry in directory.iterdir()
-                        if entry.is_dir() and not entry.name.startswith(".")
-                    )
-                )
-            except OSError:
-                self.project_dirs[directory] = ()
-        candidates = self.project_dirs[directory]
+        async with self._scan_lock:
+            if directory not in self.project_dirs:
+                if len(self.project_dirs) >= 32:
+                    self.project_dirs.pop(next(iter(self.project_dirs)))
+                self.project_dirs[directory] = await asyncio.to_thread(self._scan, directory)
+            candidates = self.project_dirs[directory]
         if value.startswith("~/"):
             candidates = tuple("~/" + os.path.relpath(item, self.home) for item in candidates)
         return tuple(dict.fromkeys((*self.projects.values, *candidates)))

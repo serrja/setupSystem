@@ -412,13 +412,19 @@ def test_make_template_uses_absolute_destination_and_preserves_answers(
     monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
     destination = tmp_path / "user project"
     request = {
+        "schema": 1,
+        "expected": None,
         "settings": {
             "template": "python",
             "destination": str(destination),
             "project_name": "interactiveProject",
-        }
+        },
     }
-    response = execute(tmp_path, "template-versions", {"settings": {"template": "python"}})
+    response = execute(
+        tmp_path,
+        "template-versions",
+        {"schema": 1, "expected": None, "settings": {"template": "python"}},
+    )
     assert "0.2.0" in response.observed["versions"]
     with pytest.raises(ValueError):
         execute(tmp_path, "template-create-apply", request)
@@ -427,7 +433,9 @@ def test_make_template_uses_absolute_destination_and_preserves_answers(
     assert planned.observed["version"] == "0.2.0" and not destination.exists()
     assert (
         execute(
-            tmp_path, "template-create-apply", {**request, "expected": planned.model_dump()}
+            tmp_path,
+            "template-create-apply",
+            {**request, "expected": planned.model_dump(mode="json", exclude_unset=True)},
         ).status
         == "complete"
     )
@@ -440,12 +448,16 @@ def test_make_template_uses_absolute_destination_and_preserves_answers(
     commit(destination, "personal")
     before = git(destination, "rev-parse", "HEAD")
     update = {
-        "settings": {"template": "python", "version": "0.2.0", "destination": str(destination)}
+        "schema": 1,
+        "expected": None,
+        "settings": {"template": "python", "version": "0.2.0", "destination": str(destination)},
     }
     preview = execute(tmp_path, "template-update-plan", update)
     assert (
         execute(
-            tmp_path, "template-update-apply", {**update, "expected": preview.model_dump()}
+            tmp_path,
+            "template-update-apply",
+            {**update, "expected": preview.model_dump(mode="json", exclude_unset=True)},
         ).status
         == "complete"
     )

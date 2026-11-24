@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system"
-version = "0.5.0.dev0"
+version = "0.6.0.dev0"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"
@@ -20,6 +20,7 @@ dependencies = [
     "pyyaml>=6,<7",
     "jinja2>=3.1,<4",
     "ansible-core>=2.18,<2.21",
+    "aiofiles>=24,<26",
 ]
 
 [project.scripts]
@@ -38,6 +39,7 @@ dev = [
     "ansible-lint>=26.11.0",
     "copier==9.17.2",
     "typer>=0.27.2,<1",
+    "types-aiofiles>=25.1.0.20261107",
 ]
 
 [tool.hatch.build]
@@ -45,7 +47,7 @@ exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", 
 
 [tool.hatch.build.targets.sdist]
 # Ship only runtime inputs; local reports/caches must never enter a source release.
-include = ["/src/setup_system", "/assets", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/ansible", "/debian", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
+include = ["/docs", "/src/setup_system", "/assets", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/ansible", "/debian", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
 exclude = ["**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo"]
 
 [tool.hatch.build.targets.wheel]
@@ -54,6 +56,7 @@ packages = ["src/setup_system"]
 [tool.hatch.build.targets.wheel.force-include]
 "Makefile" = "setup_system/bundle/Makefile"
 "install.sh" = "setup_system/bundle/install.sh"
+"docs" = "setup_system/bundle/docs"
 "mk" = "setup_system/bundle/mk"
 "libexec" = "setup_system/bundle/libexec"
 "assets" = "setup_system/bundle/assets"
@@ -88,7 +91,9 @@ ban-relative-imports = "parents"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/setup_system", "assets/hyprland/panel.py", "assets/login/login_session.py"]
+mypy_path = ["typings", "src"]
+explicit_package_bases = true
+files = ["src/setup_system", "assets/hyprland/panel.py", "assets/login/login_session.py", "ansible", "libexec/dpkg_lock.py", "debian/build.py", "docker/coverage_report.py", "docker/verify_native.py", "docker/verify-installed.py", "docker/installed_smoke.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -97,11 +102,12 @@ markers = ["unit: isolated unit checks", "integration: isolated system integrati
 
 [tool.coverage.run]
 branch = true
-source = ["setup_system"]
+source = ["setup_system", "ansible", "assets/login", "assets/hyprland", "libexec", "debian", "docker"]
 patch = ["subprocess"]
+omit = ["*/docker/python_release.py", "*/docker/release.py"]
 
 [tool.coverage.report]
-fail_under = 0
+fail_under = 75
 precision = 2
 show_missing = true
 include_namespace_packages = true
