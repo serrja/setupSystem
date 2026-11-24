@@ -384,9 +384,8 @@ def test_reject_prerelease_and_malformed_tags_without_side_effects() -> None:
         assert result.returncode != 0 and "stable tag" in result.stderr
 
 
-def test_partial_debian_publication_resumes_without_overwrite(
-    package: Path, tmp_path: Path
-) -> None:
+@pytest.fixture
+def publication(package: Path, tmp_path: Path):
     # The service double stores real package bytes. Publication still checks dpkg
     # metadata, release identities, the complete inventory and each downloaded byte.
     artifacts = tmp_path / "artifacts"
@@ -421,7 +420,15 @@ names = sorted(path.name for path in root.glob("setup-system*"))
 def emit(value):
     print(json.dumps(value))
 def release():
-    assets = [{"name": name, "id": i+1, "state": "uploaded"} for i, name in enumerate(names)]
+    assets = [{"name": name, "id": i+1, "state": "uploaded",
+               "digest": "sha256:" + hashlib.sha256((root / name).read_bytes()).hexdigest(),
+               "size": (root / name).stat().st_size} for i, name in enumerate(names)]
+    fault = root / "fault"
+    if assets and fault.exists():
+        phase, field = fault.read_text().split()
+        if phase == "download" or (root / "trigger").exists():
+            asset = assets[0]
+            asset[field] = "sha256:" + "0"*64 if field == "digest" else asset[field] + 100
     if (root / "duplicate-asset").exists():
         assets.append(assets[0])
     return {"id": 17, "tag_name": native, "prerelease": False,
@@ -438,6 +445,9 @@ elif args[:2] == ["attestation", "download"]:
 elif args[0] == "api":
     endpoint = next(arg for arg in args if arg.startswith(("repos/", "https://uploads.github.com/")))
     item = endpoint.split("/")[-1]
+    if args[1:3] in (["-X", "POST"], ["-X", "PATCH"]):
+        with (root / "writes").open("a") as log:
+            print(args[2], endpoint, file=log)
     if "/matching-refs/" in endpoint:
         emit([] if item == native and not (root / "ref").exists() else
              [{"ref": "refs/tags/"+item, "object": {"type":"commit", "sha":sha}}])
@@ -466,6 +476,8 @@ elif args[0] == "api":
             assert "draft=false" in args and "make_latest=false" in args
             assert state.read_text() == "yes" and len(names) == 3
             state.write_text("no")
+            if (root / "fault").exists() and (root / "fault").read_text().startswith("after "):
+                (root / "trigger").touch()
         response = release()
         if args[1] != "-X" and len(names) == 3:
             assets_lag = root / "hide-upload-readback"
@@ -487,7 +499,11 @@ elif args[0] == "api":
         shutil.copyfile(src, root / src.name)
         emit({"name": src.name, "state": "uploaded"})
     elif "releases/assets/" in endpoint:
-        sys.stdout.buffer.write((root / names[int(item)-1]).read_bytes())
+        name = names[int(item)-1]
+        sys.stdout.buffer.write((root / name).read_bytes())
+        if name.endswith(".sigstore.json") and (root / "fault").exists():
+            if (root / "fault").read_text().startswith("before "):
+                (root / "trigger").touch()
     else:
         sys.exit("Unexpected endpoint: "+endpoint)
 else:
@@ -515,6 +531,12 @@ else:
             check=False,
         )
 
+    return service, artifacts, publish
+
+
+def test_partial_debian_publication_resumes_without_overwrite(package, tmp_path, publication):
+    service, artifacts, publish = publication
+    digest = hashlib.sha256(package.read_bytes()).hexdigest()
     interruption = service / "interrupt"
     interruption.touch()
     delayed = service / "hide-created-draft"
@@ -561,6 +583,30 @@ else:
     proof = service / (FILENAME + ".sigstore.json")
     proof.write_text("invalid existing proof")
     assert publish().returncode != 0 and proof.read_text() == "invalid existing proof"
+
+
+@pytest.mark.parametrize(
+    ("phase", "field"),
+    [
+        ("download", "digest"),
+        ("download", "size"),
+        ("before", "id"),
+        ("before", "digest"),
+        ("after", "id"),
+        ("after", "digest"),
+    ],
+)
+def test_publication_detects_replaced_verified_assets(publication, phase, field):
+    service, _, publish = publication
+    assert publish().returncode == 0
+    (service / "draft").write_text("yes")
+    (service / "writes").write_text("")
+    (service / "fault").write_text(f"{phase} {field}")
+    result = publish()
+    assert result.returncode != 0
+    writes = (service / "writes").read_text().splitlines()
+    assert writes == (["PATCH repos/serrja/setupSystem/releases/17"] if phase == "after" else [])
+    assert (service / "draft").read_text() == ("no" if phase == "after" else "yes")
 
 
 @pytest.mark.parametrize(

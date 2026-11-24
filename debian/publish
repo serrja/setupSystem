@@ -87,8 +87,17 @@ release() {
         and ([.assets[].name] - [$f, ($f + ".sha256"), ($f + ".sigstore.json")]) == []
         and ([.assets[].name] | length == (unique | length))
         and ([.assets[].id] | length == (unique | length))
-        and all(.assets[]; .state == "uploaded" and (.id | type == "number" and . > 0 and . == floor))' \
+        and all(.assets[]; .state == "uploaded"
+            and (.id | type == "number" and . > 0 and . == floor)
+            and (.size | type == "number" and . > 0 and . == floor)
+            and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")))' \
         "$temp/release.json" >/dev/null
+    jq '[.assets[] | {name, id, digest, size}] | sort_by(.name)' "$temp/release.json" > "$temp/assets.json"
+    if [[ -f "$temp/verified-assets.json" ]]; then
+        # A stale response may omit an entry. Any returned entry must retain its verified identity.
+        jq -e --slurpfile verified "$temp/verified-assets.json" '. - $verified[0] == []' \
+            "$temp/assets.json" >/dev/null || { echo 'Verified release asset identity changed.' >&2; return 1; }
+    fi
 }
 wait_for_release() {
     local published=$1 attempt
@@ -104,9 +113,15 @@ wait_for_release() {
     return 1
 }
 download_asset() {
-    local name=$1 asset_id
-    asset_id=$(jq -er --arg name "$name" '.assets[] | select(.name == $name) | .id' "$temp/release.json")
+    local name=$1 asset_id hash size
+    asset_id=$(jq -er --arg name "$name" '.[] | select(.name == $name) | .id' "$temp/assets.json")
     gh api -H 'Accept: application/octet-stream' "repos/$repository/releases/assets/$asset_id" > "$temp/$name"
+    hash=$(sha256sum < "$temp/$name")
+    size=$(stat -c %s -- "$temp/$name")
+    jq -e --argjson id "$asset_id" --argjson size "$size" --arg digest "sha256:${hash%% *}" \
+        'any(.[]; .id == $id and .size == $size and .digest == $digest)' "$temp/assets.json" >/dev/null || {
+        echo "Downloaded asset does not match the release metadata: $name" >&2; return 1
+    }
 }
 verify_existing() {
     local name=$1
@@ -153,6 +168,7 @@ if [[ "$(jq '.assets | length' "$temp/release.json")" != 3 ]]; then
     done
 fi
 wait_for_release false
+cp "$temp/assets.json" "$temp/verified-assets.json"
 for name in "${expected[@]}"; do download_asset "$name"; done
 # An earlier successful build may have used a different dpkg revision. Its own
 # signed bytes and exact source, version and checksum are authoritative.
@@ -163,6 +179,7 @@ for name in "${expected[@]}"; do download_asset "$name"; done
     verify_package "$file"
     verify_bundle "$temp/$file.sigstore.json" "$temp/$file"
 )
+wait_for_release false
 if jq -e '.draft' "$temp/release.json" >/dev/null; then
     gh api -X PATCH "repos/$repository/releases/$id" -F draft=false -f make_latest=false >/dev/null
 fi
