@@ -11,10 +11,12 @@ def test_request_is_an_immutable_plan_input() -> None:
 
     request = PlanSnapshot.capture(
         "base",
-        BaseOptions().model_dump(mode="json"),
+        BaseOptions(timezone="UTC").model_dump(mode="json"),
         {
             "status": "ready",
-            "actions": ["Set timezone"],
+            "actions": [
+                {"kind": "region", "field": "timezone", "value": "UTC", "label": "Set timezone"}
+            ],
             "observed": {"needs_system": True, "needs_user": False},
         },
         None,

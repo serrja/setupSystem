@@ -18,6 +18,15 @@ build-constraints = [
 ]
 
 [[package]]
+name = "aiofiles"
+version = "25.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/c3/534eac40372d8ee36ef40df62ec129bee4fdb5ad9706e58a29be53b2c970/aiofiles-25.1.0.tar.gz", hash = "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2", size = 46354, upload-time = "2025-10-09T20:51:04.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/8a/340a1555ae33d7354dbca4faa54948d76d89a27ceef032c8c3bc661d003e/aiofiles-25.1.0-py3-none-any.whl", hash = "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695", size = 14668, upload-time = "2025-10-09T20:51:03.174Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
@@ -1454,9 +1463,10 @@ wheels = [
 
 [[package]]
 name = "setup-system"
-version = "0.5.0.dev0"
+version = "0.6.0.dev0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiofiles" },
     { name = "ansible-core" },
     { name = "jinja2" },
     { name = "packaging" },
@@ -1480,11 +1490,13 @@ dev = [
     { name = "ruff" },
     { name = "shellcheck-py" },
     { name = "typer" },
+    { name = "types-aiofiles" },
     { name = "types-pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiofiles", specifier = ">=24,<26" },
     { name = "ansible-core", specifier = ">=2.18,<2.21" },
     { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "packaging", specifier = ">=24,<27" },
@@ -1508,6 +1520,7 @@ dev = [
     { name = "ruff", specifier = ">=0.16.4,<1" },
     { name = "shellcheck-py", specifier = ">=0.11.0.1" },
     { name = "typer", specifier = ">=0.27.2,<1" },
+    { name = "types-aiofiles", specifier = ">=25.1.0.20261107" },
     { name = "types-pyyaml", specifier = ">=6,<7" },
 ]
 
@@ -1590,6 +1603,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bf/21/37383ece7d0a4995fb8ea97729207c4292b3ff94085002f37b2387063cfb/typer-0.29.2.tar.gz", hash = "sha256:b1998dc5f2c3dedafa1517a9521fa944cc4dc1fadcea085d81a3b10ebcaeb075", size = 205728, upload-time = "2026-11-18T11:09:46.189Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/f3/864dcb0e165b52e9f75aa3c7e0aeeb9876f139c66eb14d87856bb173b0fa/typer-0.29.2-py3-none-any.whl", hash = "sha256:f30731f8ca758368b836b3714872e58e395cef8fcaff918c853b1969ed5274e7", size = 121041, upload-time = "2026-11-18T11:09:45.03Z" },
+]
+
+[[package]]
+name = "types-aiofiles"
+version = "25.1.0.20261107"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/9f/cdf871ea61e1ad03a0753ed5343a2a9f5992aadc30afa5f4ca3e76a879f5/types_aiofiles-25.1.0.20261107.tar.gz", hash = "sha256:c34fd0f3a73ea630e383f5b5a6d3cc309494cfedade22f7b0e83e02fc5f487f1", size = 15115, upload-time = "2026-11-07T07:55:25.412Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/e3/4d3b636b25b4e1f7fb2836e773abe8bc01890c519252eec082906cd5662b/types_aiofiles-25.1.0.20261107-py3-none-any.whl", hash = "sha256:1401114ecf3764eb1c0f6bb175e9ceb8d1741311394dee384d8642f5b3be9b46", size = 14403, upload-time = "2026-11-07T07:55:24.512Z" },
 ]
 
 [[package]]

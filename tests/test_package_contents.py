@@ -33,6 +33,7 @@ def test_real_sdist_excludes_untracked_local_material(tmp_path: Path) -> None:
         "mk",
         "ansible",
         "debian",
+        "docs",
         "coverage/old-artifacts",
         ".venv",
         "src/setup_system/__pycache__",
@@ -41,7 +42,7 @@ def test_real_sdist_excludes_untracked_local_material(tmp_path: Path) -> None:
     (source / "src/setup_system/__init__.py").write_text('"""Fixture."""\n')
     (source / "assets/fixture.txt").write_text("resource\n")
     (source / "config/fixture.toml").write_text('owner = "fixture"\n')
-    for folder in ("mk", "ansible", "libexec", "debian"):
+    for folder in ("mk", "ansible", "libexec", "debian", "docs"):
         (source / folder / "fixture").write_text("public payload\n")
     for name in (
         "coverage/old-artifacts/private.tar.gz",
@@ -75,7 +76,8 @@ def test_real_sdist_excludes_untracked_local_material(tmp_path: Path) -> None:
         assert "assets/fixture.txt" in names and "config/fixture.toml" in names
         assert {"Makefile", "ansible.cfg"} <= set(names)
         assert all(
-            folder + "/fixture" in names for folder in ("mk", "ansible", "libexec", "debian")
+            folder + "/fixture" in names
+            for folder in ("mk", "ansible", "libexec", "debian", "docs")
         )
         assert not any(
             word in name

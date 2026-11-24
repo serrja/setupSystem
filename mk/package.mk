@@ -1,7 +1,7 @@
 PACKAGE_DIR ?= dist
 .PHONY: package
 package:
-	@/usr/bin/python3 debian/build --output "$(PACKAGE_DIR)" $(if $(VERSION),--version "$(VERSION)")
+	@/usr/bin/python3 debian/build.py --output "$(PACKAGE_DIR)" $(if $(VERSION),--version "$(VERSION)")
 
 .PHONY: install update
 install:

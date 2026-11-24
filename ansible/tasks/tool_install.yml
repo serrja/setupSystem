@@ -88,5 +88,7 @@
   when: managed.value.manager == 'git' and managed.value.current != managed.value.version
 - name: Record the completed user tool update
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + ['Updated ' + managed.key] }}"
+    changed_stages: >-
+      {{ changed_stages + [{'kind': 'tool', 'name': managed.key, 'version': managed.value.version,
+         'label': 'Updated ' + managed.key}] }}
   when: managed.value.current != managed.value.version

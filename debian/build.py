@@ -2,6 +2,7 @@
 """Build a root-owned Debian archive from the checked-out runtime files."""
 
 import argparse
+import gzip
 import hashlib
 import os
 import re
@@ -51,6 +52,9 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         "ansible.cfg",
         "install.sh",
         "LICENSE",
+        "docs",
+        "README.md",
+        "debian/setup-system.1",
         "THIRD_PARTY_NOTICES.md",
         "debian/control",
         "debian/setup-system",
@@ -59,9 +63,9 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
     )
     entries = git("ls-tree", "-rz", "--full-tree", sha, "--", *inputs)
     for entry in entries.split(b"\0")[:-1]:
-        header, name = entry.split(b"\t", 1)
+        header, encoded_path = entry.split(b"\t", 1)
         mode, kind, object_id = header.decode("ascii").split()
-        path = Path(os.fsdecode(name))
+        path = Path(os.fsdecode(encoded_path))
         if path.is_absolute() or any(part.startswith(".") for part in path.parts):
             raise ValueError(f"Unexpected release path: {path}")
         if kind != "blob" or mode not in {"100644", "100755"}:
@@ -100,6 +104,14 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         source_root / "THIRD_PARTY_NOTICES.md",
         base / "usr/share/doc/setup-system/THIRD_PARTY_NOTICES.md",
     )
+    documentation = base / "usr/share/doc/setup-system"
+    copy(source_root / "README.md", documentation / "README.md")
+    for article in sorted((source_root / "docs").glob("*.md")):
+        copy(article, documentation / "docs" / article.name)
+    manual = base / "usr/share/man/man1/setup-system.1.gz"
+    manual.parent.mkdir(parents=True, exist_ok=True)
+    manual.write_bytes(gzip.compress((source_root / "debian/setup-system.1").read_bytes(), mtime=0))
+    manual.chmod(0o644)
     for script in ("preinst", "prerm"):
         copy(source_root / "debian/guard", control / script, 0o755)
     metadata = (source_root / "debian/control").read_text()

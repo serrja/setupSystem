@@ -173,7 +173,7 @@ def _apply(
     yes: bool,
     effective_repo: Path | None = None,
     reviewed: dict[Path, FileState | None] | None = None,
-) -> tuple[Path | None, list[str]]:
+) -> tuple[Path | None, dict[Path, tuple[str, ...]]]:
     """Render scoped edits with native Git and publish with the shared recovery adapter."""
     changed: dict[Path, dict[str, str]] = {}
     before: dict[Path, FileState | None] = {}
@@ -192,11 +192,11 @@ def _apply(
                 pending[key] = value
         if pending:
             changed[path] = pending
-    actions = [f"would update {path}: {', '.join(fields)}" for path, fields in changed.items()]
+    actions = {path: tuple(fields) for path, fields in changed.items()}
     if not changed or not yes:
         if not changed and effective_repo is not None:
             _verify_effective(effective_repo, edits)
-        return None, actions or ["unchanged"]
+        return None, actions
     desired = {}
     with tempfile.TemporaryDirectory(prefix="setup-system-git-") as directory:
         for index, (path, fields) in enumerate(changed.items()):
@@ -229,7 +229,7 @@ def _apply(
                 f"Local Git identity was written but effective verification failed. "
                 f"Inspect recovery operation {backup.name}."
             ) from error
-    return backup, [action.replace("would update", "updated", 1) for action in actions]
+    return backup, actions
 
 
 def configure_profile(
@@ -240,7 +240,7 @@ def configure_profile(
     yes: bool = False,
     reviewed: dict[Path, FileState | None] | None = None,
     expected_identity: str | None = None,
-) -> tuple[Path | None, list[str]]:
+) -> tuple[Path | None, dict[Path, tuple[str, ...]]]:
     """Capture one confirmed Git identity and add defaults for reviewed directories."""
     identity = _source_identity(source_repo)
     if (
@@ -275,7 +275,7 @@ def use_profile(
     *,
     yes: bool = False,
     reviewed: dict[Path, FileState | None] | None = None,
-) -> tuple[Path | None, list[str]]:
+) -> tuple[Path | None, dict[Path, tuple[str, ...]]]:
     """Set an explicit local author override, preserving unspecified signing settings."""
     repo = exact_repository(repo)
     profile = profile_path(name)

@@ -32,20 +32,30 @@ def test_real_terminal_open_and_keyboard_quit(tmp_path, monkeypatch) -> None:
     os.close(slave)
     output = bytearray()
     try:
+        quit_sent = False
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
-            if select.select([master], [], [], 0.1)[0]:
-                try:
-                    output.extend(os.read(master, 65536))
-                except OSError as exc:
-                    if exc.errno == errno.EIO:
-                        break
-                    raise
-            if b"setupSystem" in output:
+            if not select.select([master], [], [], 0.1)[0]:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+            if not chunk:
                 break
-        assert b"setupSystem" in output
-        os.write(master, b"\x11")
-        assert process.wait(timeout=15) == 0
+            output.extend(chunk)
+            if not quit_sent and b"setupSystem" in output:
+                os.write(master, b"\x11")
+                quit_sent = True
+                deadline = time.monotonic() + 15
+        else:
+            message = "Textual timed out while quitting" if quit_sent else "Textual did not open"
+            raise AssertionError(message)
+        assert quit_sent
+        assert process.wait(timeout=max(0, deadline - time.monotonic())) == 0
+        assert b"Traceback (most recent call last)" not in output
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)

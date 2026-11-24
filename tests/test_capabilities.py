@@ -60,13 +60,19 @@ def test_typed_policy_is_immutable_and_dictionary_views_are_detached():
         "needs_system": True,
         "needs_user": False,
         "architecture": target(release, "arm64", "arm64")[0],
-        "distribution": release,
+        "distribution": release["VERSION_CODENAME"],
     }
-    reply = {"status": "ready", "actions": ["Set regional options"], "observed": facts}
-    plan = PlanSnapshot.capture("base", {}, reply, None)
+    reply = {
+        "status": "ready",
+        "actions": [
+            {"kind": "region", "field": "timezone", "value": "UTC", "label": "Set regional options"}
+        ],
+        "observed": facts,
+    }
+    plan = PlanSnapshot.capture("base", {"timezone": "UTC"}, reply, None)
     release["VERSION_CODENAME"] = "bookworm"
     assert target(release, "arm64", "arm64")[1] is False
-    assert plan.payload()["expected"]["observed"]["distribution"]["VERSION_CODENAME"] == "trixie"
+    assert plan.payload()["expected"]["observed"]["distribution"] == "trixie"
     output = plan.payload()
     output["expected"]["observed"].clear()
     assert plan.payload()["expected"]["observed"]["architecture"] == "arm64"

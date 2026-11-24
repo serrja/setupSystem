@@ -75,13 +75,23 @@ def test_validated_updates_reject_undeclared_or_lossy_values(model, change):
 
 
 def test_live_source_identity_is_detached_from_mutable_editor_metadata():
-    source = {"editor": {"repo": "https://github.com/folke/lazy.nvim", "version": "a" * 40}}
+    source = {
+        "editor": {
+            "manager": "git",
+            "current": "",
+            "path": "/home/fixture/data/lazy.nvim",
+            "repo": "https://github.com/folke/lazy.nvim",
+            "version": "a" * 40,
+        }
+    }
     plan = PlanSnapshot.capture(
         "workspace",
         {"apps": ["neovim"]},
         {
             "status": "ready",
-            "actions": ["install"],
+            "actions": [
+                {"kind": "tool", "name": "editor", "version": "a" * 40, "label": "Install editor"}
+            ],
             "observed": {"tools": source, "needs_system": False, "needs_user": True},
         },
         None,
