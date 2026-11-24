@@ -35,7 +35,7 @@ def test_bootstrap_preflight_preserves_home(tmp_path, uid, release, arch, allowe
     helper.write_text(contents)
     probe = '. ./install.sh; id() { echo "$USER_ID"; }; dpkg() { echo "$ARCH"; }; check_platform'
     result = subprocess.run(
-        ["/bin/sh", "-c", probe, "install-local"],
+        ["/bin/sh", "-c", probe, "install-local.sh"],
         cwd=tmp_path,
         check=False,
         capture_output=True,

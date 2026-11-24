@@ -11,6 +11,9 @@ import yaml
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 
+from setup_system.domain.intentions import CleanupMode, WorkspaceOptions
+from setup_system.models import CleanupOptions
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -106,6 +109,10 @@ def simulate_args(mode):
     ],
 )
 def test_each_cleanup_mode_has_its_own_simulation(mode, expected):
+    workspace = WorkspaceOptions.model_validate({"cleanup_mode": mode})
+    plan = CleanupOptions.model_validate({"cleanup": ["reportbug"], "cleanup_mode": mode})
+    assert workspace.cleanup_mode is plan.cleanup_mode is CleanupMode(mode)
+    assert plan.model_dump(mode="json")["cleanup_mode"] == mode
     assert simulate_args(mode) == ["/usr/bin/apt-get", "--simulate", *expected]
 
 

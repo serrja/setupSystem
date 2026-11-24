@@ -17,7 +17,7 @@ def test_real_sdist_excludes_untracked_local_material(tmp_path: Path) -> None:
     for name in (
         "pyproject.toml",
         "README.md",
-        "LICENSE",
+        "LICENSE.md",
         "THIRD_PARTY_NOTICES.md",
         "uv.lock",
         "install.sh",

@@ -211,3 +211,18 @@ def test_account_description_comes_from_validated_facts():
         "Effective sudo access",
     ):
         assert item in details
+
+
+@pytest.mark.parametrize("wire", ["ready", "plan_ready", "partial", "needs_reboot"])
+def test_result_status_round_trips_native_protocol(wire):
+    from setup_system.models import Status
+
+    result = TaskResult.model_validate({"status": wire})
+    assert result.status is Status(wire)
+    assert result.model_dump(mode="json")["status"] == wire
+    assert result.status.allows_confirmation == (wire in {"ready", "plan_ready"})
+
+
+def test_unknown_native_status_is_rejected():
+    with pytest.raises(ValidationError):
+        TaskResult.model_validate({"status": "unrecognized"})

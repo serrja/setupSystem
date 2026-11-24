@@ -473,14 +473,14 @@ def test_make_wrapper_rejects_before_ansible_can_prompt(tmp_path, issue):
     called = tmp_path / "asked-for-password"
     fake_play.write_text(f"from pathlib import Path\nPath({str(called)!r}).touch()\n")
     wrapper = (
-        (ROOT / "libexec/play")
+        (ROOT / "libexec/play.sh")
         .read_text()
         .replace("/usr/lib/setup-system", str(root))
         .replace("interpreter=/usr/bin/python3", "interpreter=" + shlex.quote(sys.executable))
         .replace("playbook=/usr/bin/ansible-playbook", "playbook=" + shlex.quote(str(fake_play)))
     )
     (root / "libexec").mkdir()
-    (root / "libexec/locked").write_text('exec "$@"\n')
+    (root / "libexec/locked.sh").write_text('exec "$@"\n')
     stage = tmp_path / "private"
     stage.mkdir(mode=0o700)
     path = stage / "request.json"

@@ -10,6 +10,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Label, Select, SelectionList, Static
 
+from setup_system.domain.intentions import CleanupMode
 from setup_system.models import BaseOptions, Monitor, Theme, WorkspaceOptions
 from setup_system.suggestions import Catalog, Choices, ProjectChoices, Suggestions
 
@@ -132,9 +133,9 @@ class WorkspaceForm(VerticalScroll):
         yield Label("Optional removal candidates")
         yield SelectionList(*((name, name) for name in self.catalog.cleanup), id="cleanup")
         yield Select(
-            [(name, name) for name in ("remove", "purge", "autoremove")],
+            [(mode.value, mode) for mode in CleanupMode],
             allow_blank=False,
-            value="remove",
+            value=CleanupMode.REMOVE,
             id="cleanup-mode",
         )
         yield Button("Plan cleanup", id="cleanup-plan")

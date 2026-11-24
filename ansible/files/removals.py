@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 from typing import TypedDict
 
+from setup_system.domain.intentions import CleanupMode
 from setup_system.infrastructure.native_target import current_target
 
 
@@ -37,10 +38,11 @@ def check(request: RemovalSelection) -> None:
     architecture, supported = current_target()
     if os.geteuid() == 0 and not supported:
         raise ValueError("Native removal requires a supported Debian target")
-    mode = request["mode"]
-    if mode not in {"remove", "purge", "autoremove"}:
-        raise ValueError("Unknown removal mode")
-    action = "Purg" if mode == "purge" else "Remv"
+    try:
+        mode = CleanupMode(request["mode"])
+    except ValueError as exc:
+        raise ValueError("Unknown removal mode") from exc
+    action = "Purg" if mode is CleanupMode.PURGE else "Remv"
     package = re.compile(rf"{action} ([a-z0-9][a-z0-9+.-]*)(?::([a-z0-9-]+))?(?: \[[^]]+\])?")
     closure = set()
     for line in request["closure"]:
@@ -71,7 +73,7 @@ def check(request: RemovalSelection) -> None:
         name, _, arch = name.partition(":")
         if name not in requested:
             continue
-        if state == "installed" or (state == "config-files" and request["mode"] == "purge"):
+        if state == "installed" or (state == "config-files" and mode is CleanupMode.PURGE):
             if arch and arch != architecture:
                 raise ValueError("Unexpected architecture in the installed removal selection")
             if name in installed or want == "hold" or "yes" in (essential, protected):

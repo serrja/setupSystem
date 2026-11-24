@@ -1,6 +1,8 @@
 # Naming policy
 
-Owned Python follows PEP 8: modules, functions, methods, parameters, variables, and internal fields use `snake_case`; classes use `CapWords`; constants use `UPPER_SNAKE_CASE`. New Python code uses Ruff's formatter and targeted naming checks. Public docstrings explain contracts consistently with PEP 257. Existing code is migrated with its callers and tests, not by changing a published protocol in isolation.
+Use PEP 8 for project-owned Python. Write modules, functions, methods, parameters, variables and internal fields in `snake_case`, classes in `CapWords` and constants in `UPPER_SNAKE_CASE`. New Python code uses Ruff's formatter and targeted naming checks. Public docstrings explain contracts consistently with PEP 257. Existing code is migrated with its callers and tests, not by changing a published protocol in isolation.
+
+## 🔗 Published names and tool conventions
 
 Repository names such as `pythonTemplate`, current distribution names, stable CLI commands, Copier answers, environment variables, serialized fields, HTTP paths, OpenAPI operation IDs, and required tool filenames remain external contracts. Keep their spelling unless a deliberate compatibility migration is reviewed. Other languages follow their own project conventions.
 

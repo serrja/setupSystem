@@ -130,7 +130,7 @@ def test_two_writers_surface_the_native_lock_reason(tmp_path):
     import fcntl
 
     root = Path(__file__).resolve().parents[1]
-    lock_task = (root / "libexec/locked").read_text().replace("lock=/run/setup-system", "lock=.")
+    lock_task = (root / "libexec/locked.sh").read_text().replace("lock=/run/setup-system", "lock=.")
     (tmp_path / "lock-task").write_text(lock_task)
     shutil.copy2(root / "libexec/dpkg_lock.py", tmp_path / "dpkg_lock.py")
     (tmp_path / "Makefile").write_text("workspace-plan:\n\t@/bin/sh ./lock-task /usr/bin/false\n")

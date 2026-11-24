@@ -1,5 +1,6 @@
 """Declared selections for the two native workstation stages."""
 
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
@@ -40,6 +41,12 @@ class Theme(ContractModel):
     rounding: StrictInt = Field(default=12, ge=0, le=24)
 
 
+class CleanupMode(StrEnum):
+    REMOVE = "remove"
+    PURGE = "purge"
+    AUTOREMOVE = "autoremove"
+
+
 class WorkspaceOptions(ContractModel):
     desktop_theme: StrictBool = False
     theme: Theme = Theme()
@@ -47,7 +54,7 @@ class WorkspaceOptions(ContractModel):
     apps: tuple[Identifier, ...] = Field(default=(), max_length=128)
     languages: tuple[Identifier, ...] = Field(default=(), max_length=128)
     cleanup: tuple[Identifier, ...] = Field(default=(), max_length=128)
-    cleanup_mode: Literal["remove", "purge", "autoremove"] = "remove"
+    cleanup_mode: CleanupMode = CleanupMode.REMOVE
     project: str | None = Field(None, max_length=4000, min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")
 
     @field_validator("project")

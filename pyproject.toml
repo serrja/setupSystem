@@ -8,7 +8,7 @@ version = "0.6.0.dev0"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+license-files = ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10,<3",
@@ -47,7 +47,7 @@ exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", 
 
 [tool.hatch.build.targets.sdist]
 # Ship only runtime inputs; local reports/caches must never enter a source release.
-include = ["/docs", "/src/setup_system", "/assets", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/ansible", "/debian", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
+include = ["/docs", "/src/setup_system", "/assets", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/ansible", "/debian", "/README.md", "/LICENSE.md", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
 exclude = ["**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo"]
 
 [tool.hatch.build.targets.wheel]

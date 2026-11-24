@@ -37,10 +37,13 @@ def render(source, settings=None, info=None, **overrides):
         **{k: v for k, v in step.items() if k.endswith("_string")},
     )
     env.filters["quote"] = shlex.quote
+    env.filters["editor_globs_lua"] = FILTERS["editor_globs_lua"]
+    env.filters["to_json"] = json.dumps
     palette = tomllib.loads((ROOT / "config/shared/palette.toml").read_text())
     ctx = FILTERS["context"](palette, settings or {}, info or facts())
-    plugins = tomllib.loads((ROOT / "config/workspace/editor.toml").read_text())["plugins"]
-    ctx["plugin_lua"] = "{" + ",".join(map(json.dumps, plugins)) + "}"
+    editor = tomllib.loads((ROOT / "config/workspace/editor.toml").read_text())
+    ctx["editor_catalog"] = editor
+    ctx["plugin_lua"] = "{" + ",".join(map(json.dumps, editor["plugins"])) + "}"
     ctx.update(overrides)
     return env.from_string(source).render(**ctx)
 

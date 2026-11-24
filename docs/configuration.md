@@ -1,8 +1,13 @@
 # Configuration
 
-Save each section separately under `$XDG_CONFIG_HOME/setup-system`. The default directory is `~/.config/setup-system`. The two files are `base.toml` and `workspace.toml`. The package owns its catalogs under `/usr/lib/setup-system/config`.
+Each section saves its own preferences in `$XDG_CONFIG_HOME/setup-system`, which defaults to `~/.config/setup-system`.
 
-The package ships a sample for each section under `/usr/lib/setup-system/config`. Open `base/example.toml` for regional settings and `workspace/example.toml` for the workspace.
+| Section | User file | Packaged example under `/usr/lib/setup-system/config` |
+| --- | --- | --- |
+| Base system | `base.toml` | `base/example.toml` |
+| Working environment | `workspace.toml` | `workspace/example.toml` |
+
+## 💾 Save and reload
 
 Save validates the selected fields, preserves TOML comments and checks the revision read by the form. Reload after an external edit. The migration reads known earlier section settings and retains the old file when saving the new format. Backups of replaced settings remain beside the new file.
 

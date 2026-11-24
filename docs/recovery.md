@@ -1,8 +1,8 @@
 # Recovery
 
-Cancel requests stop between safe stages. They do not kill dpkg or promise an APT rollback.
-A failed operation reports completed stages and a nonzero exit. Fix the underlying
-problem, inspect the receipts and retry the same selection.
+Cancel waits until the next safe boundary. A running dpkg transaction can finish
+and leave packages installed. If an operation fails, inspect its completed stages,
+exit status and receipts before correcting the cause and retrying.
 
 ## Receipts and backups
 
@@ -26,7 +26,9 @@ file open can still write to that inode. After a conflict or interruption, compa
 the live file, `original` and the content-addressed backup before recovering the
 intended bytes and permissions. A new file at the live path is preserved.
 
-In Working environment, choose a backup and preview Restore. The preview lists
+## ♻️ Restore user files
+
+In **Working environment**, choose a backup and preview Restore. The preview lists
 which files will be restored or removed. Apply checks the current hash, owner and
 mode against the recorded state. A later edit requires review. A successful
 restore removes empty directories created by that operation and leaves additional
@@ -47,11 +49,15 @@ Original journals are retained. Unknown schemas and ambiguous legacy ownership
 require manual review. Private application databases use their application's
 native recovery procedure.
 
+## 📦 Recover a package transaction
+
 System recovery depends on the stage that completed. Keep original release
 artifacts. Use `dpkg --audit` to inspect an interrupted package operation and
 review APT's proposed resolution before authorizing repair.
 
 Existing package journals from older releases remain on disk for an administrator to inspect. New package transactions use native package status and logs.
+
+## 🖥️ Recover graphical login
 
 The graphical login plan records the current systemd default target, the readable
 GRUB inputs and the intended login files before confirmation. Apply checks them
@@ -69,6 +75,8 @@ Retain them together with the recorded backups. Compare current ownership, mode 
 hash against the journal before restoring a displaced file. A conflict can leave
 both versions available for review. The managed destinations include the generated
 GRUB menu and the management receipt itself.
+
+## 🔑 Recover a boot image
 
 For Plymouth, inspect `/var/lib/setup-system/boot/unlock-*/operation.json`.
 New entries record the verified mode in `after_mode` alongside the after-hash.
