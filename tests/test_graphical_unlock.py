@@ -29,7 +29,7 @@ def boot_tree(tmp_path, monkeypatch):
         "setup_system.infrastructure.boot_recovery.protected", lambda *args, **kwargs: None
     )
     monkeypatch.setattr(unlock, "_kernel", lambda: "6.1")
-    monkeypatch.setattr(unlock, "_identity", lambda: "fixture")
+    monkeypatch.setattr(unlock, "_identity", lambda: "f" * 64)
     monkeypatch.setattr(unlock, "protected", lambda *args, **kwargs: None)
     real_euid = os.geteuid()
     monkeypatch.setattr(unlock.os, "geteuid", lambda: 0)
@@ -39,6 +39,11 @@ def boot_tree(tmp_path, monkeypatch):
         system_files,
         "validate_system_path",
         lambda path: (path.relative_to(tmp_path), path.parent.stat().st_uid == real_euid),
+    )
+    from setup_system.infrastructure.palette import palette
+
+    monkeypatch.setattr(
+        unlock, "palette", lambda root: palette(Path(__file__).resolve().parents[1])
     )
     return tmp_path
 
@@ -66,7 +71,8 @@ def boot_commands(arguments):
 
 def test_rebuild_retains_backup_verifies_recovery_and_is_idempotent(boot_tree, monkeypatch):
     monkeypatch.setattr(unlock, "_command", boot_commands)
-    unlock.apply_unlock("fixture")
+    assert not unlock.is_current(None)
+    assert unlock.apply_unlock("f" * 64)
     assert (unlock.BOOT / "initrd.img-6.1").read_bytes() == b"rebuilt image"
     assert "ShowDelay=2" in (unlock.ETC / "plymouth/plymouthd.conf").read_text()
     (record,) = unlock.STATE.glob("*/operation.json")
@@ -74,7 +80,8 @@ def test_rebuild_retains_backup_verifies_recovery_and_is_idempotent(boot_tree, m
     assert receipt["status"] == "needs_reboot"
     image = str(unlock.BOOT / "initrd.img-6.1")
     assert Path(receipt["files"][image]["backup"]).read_bytes() == b"previous image"
-    unlock.apply_unlock("fixture")
+    assert unlock.is_current(None)
+    assert not unlock.apply_unlock("f" * 64)
     assert list(unlock.STATE.glob("*/operation.json")) == [record]
 
 
@@ -86,7 +93,7 @@ def test_failed_build_restores_theme_and_keeps_boot(boot_tree, monkeypatch):
 
     monkeypatch.setattr(unlock, "_command", fail_build)
     with pytest.raises(RuntimeError, match="Synthetic"):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     assert (unlock.BOOT / "initrd.img-6.1").read_bytes() == b"previous image"
     assert (unlock.BOOT / "grub/grub.cfg").read_text() == "original grub.cfg"
     assert "Theme=spinner" in (unlock.ETC / "plymouth/plymouthd.conf").read_text()
@@ -98,7 +105,7 @@ def test_failed_build_restores_theme_and_keeps_boot(boot_tree, monkeypatch):
 def test_noninteractive_crypttab_or_changed_target_stops_before_backup(boot_tree):
     (unlock.ETC / "crypttab").write_text("root UUID=test /secret/key luks\n")
     with pytest.raises(ValueError, match="interactive"):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     with pytest.raises(ValueError, match="changed"):
         unlock.apply_unlock("different")
     assert not list(unlock.STATE.iterdir())
@@ -128,7 +135,7 @@ def test_prerequisite_install_starts_only_after_all_images_are_backed_up(boot_tr
         extra.write_bytes(b"simulated Debian trigger")
         needed.clear()
 
-    unlock.apply_unlock("fixture", packages=tuple(needed), install=install)
+    unlock.apply_unlock("f" * 64, packages=tuple(needed), install=install)
     (receipt,) = unlock.STATE.glob("*/operation.json")
     record = json.loads(receipt.read_text())
     assert record["status"] == "needs_reboot"
@@ -144,7 +151,7 @@ def test_recovery_preserves_external_admin_edit(boot_tree, monkeypatch):
 
     monkeypatch.setattr(unlock, "_command", external_edit)
     with pytest.raises(RuntimeError, match="preserved later edits"):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     assert "custom-admin" in (unlock.ETC / "plymouth/plymouthd.conf").read_text()
     (receipt,) = unlock.STATE.glob("*/operation.json")
     assert json.loads(receipt.read_text())["status"] == "partial"
@@ -163,7 +170,7 @@ def test_rollback_preserves_a_later_admin_chmod(boot_tree, monkeypatch):
 
     monkeypatch.setattr(unlock, "_command", run)
     with pytest.raises(RuntimeError, match="preserved later edits"):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     assert path.stat().st_mode & 0o777 == 0o600
 
 
@@ -211,7 +218,7 @@ def test_boot_rollback_retains_same_content_replacement_during_claim(
         monkeypatch.setattr(boot_recovery, "move_new", replace_during_claim)
     monkeypatch.setattr(unlock, "_command", fail)
     with pytest.raises(RuntimeError, match="preserved later edits"):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     assert changed and path.stat().st_ino == changed[0]
 
 
@@ -249,7 +256,7 @@ def test_boot_apply_preserves_concurrent_file_during_publication(boot_tree, monk
     monkeypatch.setattr(boot_recovery.shutil, "copyfile", during_copy)
     monkeypatch.setattr(unlock, "_command", boot_commands)
     with pytest.raises((OSError, RuntimeError, ValueError)):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     assert created and selected.read_bytes() == replacement
     assert selected.stat().st_ino == created[0]
     assert (unlock.BOOT / "grub/grub.cfg").read_text() == "original grub.cfg"
@@ -270,7 +277,7 @@ def test_interrupted_boot_publication_returns_actual_displaced_inode(boot_tree, 
     monkeypatch.setattr(boot_recovery, "move_new", fail_after_displacement)
     monkeypatch.setattr(unlock, "_command", boot_commands)
     with pytest.raises(OSError, match="interruption"):
-        unlock.apply_unlock("fixture")
+        unlock.apply_unlock("f" * 64)
     assert os.path.samestat(path.stat(), original)
     assert path.read_bytes() == b"previous image"
     (journal,) = unlock.STATE.glob("*/operation.json")

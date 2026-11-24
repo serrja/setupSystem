@@ -1,0 +1,5 @@
+# Verified engineering instructions consumed by the native Codex profile.
+repository = "serrja/baseRules"
+commit = "8434509933feaa71ba312f8d02caad7362766d5a"
+document = "docs/engineering.md"
+sha256 = "f90f5476d874f68c976203fb201e13fe7399185c78ee9df87b483c1d4491f441"

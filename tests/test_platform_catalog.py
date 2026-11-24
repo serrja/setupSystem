@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from setup_system.infrastructure.project_layout import load_layout
+from setup_system.infrastructure.project_layout import active_projects, load_layout
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,6 +22,7 @@ def test_platform_catalog_load_has_no_filesystem_side_effect(tmp_path: Path) -> 
     for name, project in actual.items():
         assert project.target == home / "Projects/pokerlost" / name
         assert project.origin == "git@github.com:pokerlost/" + name + ".git"
-        assert project.state == "existing"
+        assert "state" not in project.model_dump()
+    assert active_projects(layout) == {}
     assert list(home.iterdir()) == before
     assert layout.owner_groups == ("serrja", "pokerlost")

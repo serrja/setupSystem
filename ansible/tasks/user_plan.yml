@@ -1,0 +1,163 @@
+---
+- name: Load native user profiles and manager command names
+  ansible.builtin.set_fact:
+    selected: "{{ (intent.apps | default([])) + (intent.languages | default([])) }}"
+    commands: "{{ lookup('ansible.builtin.file', release_root + '/config/workspace/commands.toml') | native_toml }}"
+    editor_catalog: "{{ lookup('ansible.builtin.file', release_root + '/config/workspace/editor.toml') | native_toml }}"
+    render_ctx: "{{ (lookup('ansible.builtin.file', release_root + '/config/shared/palette.toml') | native_toml) | workspace_context(intent, facts) }}"
+    tool_prefix: "{{ facts.xdg.data }}/setup-system/tools"
+    npm_tools: []
+    python_tools: []
+    git_tools: {}
+- name: Validate selected personal manager roots before native access
+  ansible.builtin.assert:
+    that: facts.xdg.data | manager_paths(selected)
+- name: Resolve selected manager specifications
+  ansible.builtin.set_fact:
+    npm_tools: "{{ npm_tools + app_catalog[item].npm | default([]) }}"
+    python_tools: "{{ python_tools + app_catalog[item].pypi | default([]) }}"
+  loop: "{{ selected }}"
+- name: Inspect the official registry version and local user environment
+  ansible.builtin.include_tasks: tool_metadata.yml
+  loop: "{{ (npm_tools | product(['npm']) | list) + (python_tools | product(['pypi']) | list) }}"
+  loop_control:
+    loop_var: tool
+- name: Select common parsers and the requested languages
+  ansible.builtin.set_fact:
+    selected_parsers: "{{ editor_catalog.parsers.base + (intent.languages | default([]) | map('extract', editor_catalog.parsers) | flatten | unique) }}"
+  when: "'neovim' in selected"
+- name: Inspect the selected native editor parser installations
+  ansible.builtin.set_fact:
+    parser_changes: >-
+      {{ facts.xdg.data | missing_parsers(selected_parsers) }}
+  when: "'neovim' in selected"
+- name: Include missing parser installations in the reviewed plan
+  ansible.builtin.set_fact:
+    user_changes: "{{ user_changes + ['Install Tree-sitter parsers ' + (parser_changes | join(', '))] }}"
+  when: parser_changes | default([]) | length > 0
+- name: Read reviewed editor plugin references
+  ansible.builtin.include_tasks: git_metadata.yml
+  vars:
+    git_parent: "{{ facts.xdg.data }}/setup-system/editor"
+  loop: "{{ editor_catalog.plugins | dict2items }}"
+  loop_control:
+    loop_var: plugin
+  when: "'neovim' in selected"
+- name: Inspect the current stable Flutter checkout
+  ansible.builtin.include_tasks: git_metadata.yml
+  vars:
+    git_parent: "{{ tool_prefix }}"
+    plugin:
+      key: flutter
+      value:
+        repo: https://github.com/flutter/flutter.git
+        ref: refs/heads/stable
+  when: "'dart_flutter' in selected"
+- name: Assemble selected user templates within HOME
+  ansible.builtin.set_fact:
+    templates: "{{ release_root | workspace_templates(facts, selected, intent, commands) }}"
+- name: Create private per-run file preview directories
+  ansible.builtin.file:
+    path: "{{ run_dir }}/files/{{ item.path | dirname }}"
+    state: directory
+    mode: "0700"
+  loop: "{{ templates }}"
+  loop_control:
+    label: "{{ item.path }}"
+- name: Render selected native configuration into the run preview
+  ansible.builtin.template:
+    src: "{{ item.source }}"
+    dest: "{{ run_dir }}/files/{{ item.path }}"
+    mode: "{{ item.mode }}"
+    variable_start_string: "@{"
+    variable_end_string: "}@"
+    block_start_string: "[%"
+    block_end_string: "%]"
+    comment_start_string: "[#"
+    comment_end_string: "#]"
+  vars:
+    executable: "{{ item.binary }}"
+    base: "{{ render_ctx.base }}"
+    mantle: "{{ render_ctx.mantle }}"
+    crust: "{{ render_ctx.crust }}"
+    surface0: "{{ render_ctx.surface0 }}"
+    surface1: "{{ render_ctx.surface1 }}"
+    surface2: "{{ render_ctx.surface2 }}"
+    text: "{{ render_ctx.text }}"
+    subtext0: "{{ render_ctx.subtext0 }}"
+    subtext1: "{{ render_ctx.subtext1 }}"
+    green: "{{ render_ctx.green }}"
+    teal: "{{ render_ctx.teal }}"
+    red: "{{ render_ctx.red }}"
+    yellow: "{{ render_ctx.yellow }}"
+    mauve: "{{ render_ctx.mauve }}"
+    rosewater: "{{ render_ctx.rosewater }}"
+    base_hex: "{{ render_ctx.base_hex }}"
+    mantle_hex: "{{ render_ctx.mantle_hex }}"
+    crust_hex: "{{ render_ctx.crust_hex }}"
+    surface0_hex: "{{ render_ctx.surface0_hex }}"
+    surface1_hex: "{{ render_ctx.surface1_hex }}"
+    surface2_hex: "{{ render_ctx.surface2_hex }}"
+    text_hex: "{{ render_ctx.text_hex }}"
+    subtext0_hex: "{{ render_ctx.subtext0_hex }}"
+    subtext1_hex: "{{ render_ctx.subtext1_hex }}"
+    green_hex: "{{ render_ctx.green_hex }}"
+    teal_hex: "{{ render_ctx.teal_hex }}"
+    red_hex: "{{ render_ctx.red_hex }}"
+    yellow_hex: "{{ render_ctx.yellow_hex }}"
+    mauve_hex: "{{ render_ctx.mauve_hex }}"
+    rosewater_hex: "{{ render_ctx.rosewater_hex }}"
+    base_rgb: "{{ render_ctx.base_rgb }}"
+    mantle_rgb: "{{ render_ctx.mantle_rgb }}"
+    crust_rgb: "{{ render_ctx.crust_rgb }}"
+    surface0_rgb: "{{ render_ctx.surface0_rgb }}"
+    surface1_rgb: "{{ render_ctx.surface1_rgb }}"
+    surface2_rgb: "{{ render_ctx.surface2_rgb }}"
+    text_rgb: "{{ render_ctx.text_rgb }}"
+    subtext0_rgb: "{{ render_ctx.subtext0_rgb }}"
+    subtext1_rgb: "{{ render_ctx.subtext1_rgb }}"
+    green_rgb: "{{ render_ctx.green_rgb }}"
+    teal_rgb: "{{ render_ctx.teal_rgb }}"
+    red_rgb: "{{ render_ctx.red_rgb }}"
+    yellow_rgb: "{{ render_ctx.yellow_rgb }}"
+    mauve_rgb: "{{ render_ctx.mauve_rgb }}"
+    rosewater_rgb: "{{ render_ctx.rosewater_rgb }}"
+    rounding: "{{ render_ctx.rounding }}"
+    opacity: "{{ render_ctx.opacity }}"
+    effects: "{{ render_ctx.effects }}"
+    panel_height: "{{ render_ctx.panel_height }}"
+    monitors: "{{ render_ctx.monitors }}"
+    keyboard: "{{ render_ctx.keyboard }}"
+    xdg: "{{ render_ctx.xdg }}"
+    fonts: "{{ render_ctx.fonts }}"
+    plugin_lua: "{{ '{' + (editor_catalog.plugins.keys() | map('to_json') | join(',')) + '}' }}"
+    selected_lua: "{{ render_ctx.selected_lua }}"
+  loop: "{{ templates }}"
+  loop_control:
+    label: "{{ item.path }}"
+- name: Inspect ownership and content of selected user destinations
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "-I", "-B", "-m", "setup_system.file_tasks", "preview"]
+  register: preview
+  changed_when: false
+  when: templates | length > 0 or 'codex' in selected
+- name: Capture exact user file preconditions
+  ansible.builtin.set_fact:
+    files_preview: "{{ preview.stdout | from_json }}"
+    user_changes: "{{ user_changes + (preview.stdout | from_json).changes }}"
+  when: preview.stdout is defined
+- name: Assemble the selected editor verification inputs
+  ansible.builtin.set_fact:
+    editor_proof: "{{ facts | editor_proof(intent.languages | default([]), selected_parsers, latest_tools, files_preview) }}"
+  when: "'neovim' in selected"
+- name: Check for a completed headless smoke of this profile and parser set
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/editor_proof.py", "check"]
+    stdin: "{{ editor_proof | to_json }}"
+  changed_when: false
+  register: editor_verified
+  when: "'neovim' in selected"
+- name: Include a new or unsuccessful editor verification in the plan
+  ansible.builtin.set_fact:
+    user_changes: "{{ user_changes + ['Verify selected Neovim plugins, parsers and language services'] }}"
+  when: editor_verified.stdout is defined and not (editor_verified.stdout | from_json)

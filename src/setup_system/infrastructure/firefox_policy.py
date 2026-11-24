@@ -31,7 +31,7 @@ class FirefoxPolicy:
     private: tuple[PrivateDirectory, ...]
 
 
-def inspect(path: Path = Path("/etc/firefox/policies/policies.json")) -> FirefoxPolicy:
+def desired_bytes() -> bytes:
     extension_id = "uBlock0@raymondhill.net"
     install_url = f"https://addons.mozilla.org/firefox/downloads/latest/{extension_id}/latest.xpi"
     desired = {
@@ -54,9 +54,14 @@ def inspect(path: Path = Path("/etc/firefox/policies/policies.json")) -> Firefox
             },
         }
     }
+    return (json.dumps(desired, indent=2) + "\n").encode()
+
+
+def inspect(path: Path = Path("/etc/firefox/policies/policies.json")) -> FirefoxPolicy:
+    extension_id = "uBlock0@raymondhill.net"
     before = observe_file(path)
     raw = before.data if before else None
-    content = (json.dumps(desired, indent=2) + "\n").encode()
+    content = desired_bytes()
     legacy = content.replace(
         b"/" + extension_id.encode() + b"/latest.xpi", b"/ublock-origin/latest.xpi"
     )

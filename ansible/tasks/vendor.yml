@@ -1,0 +1,28 @@
+---
+- name: Read the official stable GitHub release
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ app_catalog[vendor_id].github }}/releases/latest"
+    headers:
+      Accept: application/vnd.github+json
+    return_content: true
+    validate_certs: true
+    follow_redirects: none
+    timeout: 35
+  register: vendor_release
+- name: Check publisher, architecture, immutable asset name and digest
+  ansible.builtin.set_fact:
+    latest_debs: "{{ latest_debs | combine({vendor_id: vendor_release.json | native_github_deb(app_catalog[vendor_id], facts.architecture)}) }}"
+
+- name: Observe the installed Happ package and vendor service
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/system_contract.py", "happ-inspect"]
+    stdin: "{{ {'settings': intent, 'version': latest_debs.happ.version} | to_json }}"
+  register: happ
+  when: vendor_id == 'happ'
+  changed_when: false
+- name: Include a required Happ service start in the reviewed plan
+  ansible.builtin.set_fact:
+    latest_debs: "{{ latest_debs | combine({'happ': latest_debs.happ | combine({'before': happ.stdout | from_json})}) }}"
+    system_actions: >-
+      {{ system_actions + (['Start the installed Happ service'] if (happ.stdout | from_json).unit.ActiveState != 'active' else []) }}
+  when: vendor_id == 'happ'

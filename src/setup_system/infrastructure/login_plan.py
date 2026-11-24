@@ -20,7 +20,6 @@ from setup_system.infrastructure.inspection import inspect_system
 from setup_system.infrastructure.login_boot import grub_fingerprints, manager_enabled
 from setup_system.infrastructure.login_files import LoginFiles
 from setup_system.infrastructure.palette import palette
-from setup_system.resource_locator import ResourceLocator
 
 XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
 
@@ -111,7 +110,7 @@ def plan_login(
         ).encode()
         + b"\n"
     )
-    bridge_source = ResourceLocator.for_root(root).asset("login/login_session.py").read_bytes()
+    bridge_source = (root / "assets/login/login_session.py").read_bytes()
     session_command = shlex.join((str(paths.bridge), str(paths.registry)))
     greeter_command = shlex.join(
         (

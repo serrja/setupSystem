@@ -1,0 +1,140 @@
+---
+- name: Read release catalogs and the private user snapshot
+  ansible.builtin.set_fact:
+    release_root: "{{ playbook_dir | dirname }}"
+    request: "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'SETUP_SYSTEM_REQUEST')) | from_json }}"
+    app_catalog: "{{ lookup('ansible.builtin.file', playbook_dir + '/../config/workspace/applications.toml') | native_toml }}"
+    cleanup_catalog: "{{ (lookup('ansible.builtin.file', playbook_dir + '/../config/workspace/optional_cleanup.toml') | native_toml).candidates }}"
+    base_catalog: "{{ lookup('ansible.builtin.file', playbook_dir + '/../config/base/packages.toml') | native_toml }}"
+    run_dir: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_RESULT') | dirname }}"
+    changed_stages: []
+    mutation_started: false
+    cancel_requested: false
+    notices: []
+    blockers: []
+    apt_changes: []
+    latest_debs: {}
+    latest_tools: {}
+    local_debs: []
+    user_changes: []
+    boot_facts: {}
+    system_actions: []
+
+- name: Execute the selected local operation
+  block:
+    - name: Validate the operation and envelope
+      ansible.builtin.assert:
+        that:
+          - setup_action in ['inspect', 'plan', 'apply', 'user-apply', 'cleanup-plan', 'cleanup-apply']
+          - section == 'workspace' or setup_action not in ['cleanup-plan', 'cleanup-apply']
+          - request | native_request(section, app_catalog, cleanup_catalog) is mapping
+    - name: Record validated selections
+      ansible.builtin.set_fact:
+        intent: "{{ request | native_request(section, app_catalog, cleanup_catalog) }}"
+        system_run: "{{ setup_action in ['apply', 'cleanup-apply'] }}"
+        execute_run: "{{ setup_action not in ['inspect', 'plan', 'cleanup-plan'] }}"
+    - name: Inspect local platform and user capabilities
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/facts.py"]
+        stdin: "{{ {'section': section, 'intent': intent, 'inspect': setup_action == 'inspect'} | to_json }}"
+      register: probe
+      changed_when: false
+    - name: Read stable observations and capability reasons
+      ansible.builtin.set_fact:
+        facts: "{{ probe.stdout | from_json }}"
+        blockers: "{{ (probe.stdout | from_json).blockers }}"
+        packages: "{{ intent | native_packages(base_catalog, app_catalog) }}"
+        cleanup: "{{ intent.cleanup | default([]) }}"
+    - name: Inspect selected operations on a supported host
+      ansible.builtin.include_tasks: plan.yml
+      when: setup_action != 'inspect' and not blockers
+    - name: Inspect the calling user's recovery journals
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "-m", "setup_system.file_tasks", "backups"]
+      register: backups
+      changed_when: false
+      when: section == 'workspace' and setup_action == 'inspect'
+    - name: Read the last explicit ChatGPT Apply source check
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "-m", "setup_system.file_tasks", "last-source-check"]
+      register: prior_source_check
+      changed_when: false
+      when: section == 'workspace' and setup_action == 'inspect'
+    - name: Include discovered backup choices in the workspace
+      ansible.builtin.set_fact:
+        facts: "{{ facts | combine({'backups': backups.stdout | from_json, 'last_chatgpt_source_check': prior_source_check.stdout}) }}"
+      when: backups.stdout is defined
+    - name: Distinguish an empty selection from a verified matching state
+      ansible.builtin.set_fact:
+        has_selection: >-
+          {{ (intent.hyprland or intent.plymouth or intent.graphical_login or intent.locale is not none
+             or intent.timezone is not none or intent.keyboard is not none) if section == 'base' else
+             (intent.desktop_theme or intent.apps | length > 0 or intent.languages | length > 0
+              or intent.monitors | length > 0 or intent.cleanup | length > 0) }}
+    - name: Build an immutable result from observed native state
+      ansible.builtin.set_fact:
+        plan:
+          status: >-
+            {{ 'blocked' if blockers else ('ready' if setup_action == 'inspect' or
+               apt_changes or system_actions or user_changes else ('no_changes' if has_selection else 'nothing_selected')) }}
+          actions: "{{ apt_changes + system_actions + user_changes }}"
+          blockers: "{{ blockers }}"
+          observed: >-
+            {{ facts | combine({'section':section, 'selection':intent, 'debs':latest_debs,
+                'tools':latest_tools, 'boot':boot_facts, 'files':files_preview | default({}),
+                'needs_system':(apt_changes | length > 0 or system_actions | length > 0),
+                'needs_user':user_changes | length > 0}) }}
+    - name: Verify consent before any selected change
+      ansible.builtin.assert:
+        that:
+          - request.expected == plan
+          - not blockers
+          - setup_action != 'user-apply' or not plan.observed.needs_system
+          - setup_action != 'cleanup-apply' or cleanup | length > 0
+        fail_msg: "The selected state or source changed after confirmation. Review a new plan."
+      when: execute_run
+    - name: Apply confirmed native tasks
+      ansible.builtin.include_tasks: apply.yml
+      when: execute_run and plan.status == 'ready'
+    - name: Set the result for the front end
+      ansible.builtin.set_fact:
+        outcome: >-
+          {{ plan | combine({'status': ('needs_reboot' if 'plymouth' in changed_stages else
+             ('requires_user_login' if notices else ('complete' if changed_stages else 'no_changes'))),
+             'actions': changed_stages + notices}) if execute_run and plan.status == 'ready' else plan }}
+  rescue:
+    - name: Preserve the failed stage and completed actions
+      ansible.builtin.set_fact:
+        outcome:
+          status: >-
+            {{ 'cancelled' if cancel_requested else ('partial' if mutation_started or changed_stages
+               else ('failed' if (execute_run | default(false)) and plan is defined and request.expected == plan else 'blocked')) }}
+          actions: "{{ changed_stages }}"
+          blockers:
+            - >-
+              {{ ansible_failed_task.name }} — {{ (ansible_failed_result.stderr |
+              default(ansible_failed_result.msg | default('Operation failed'), true) | string | native_error)[:500] }}
+          observed: "{{ (facts | default({})) | combine({'needs_system': false, 'needs_user': false}) }}"
+  always:
+    - name: Remove only this run's APT staging directory
+      ansible.builtin.file:
+        path: "{{ apt_work.path }}"
+        state: absent
+      become: "{{ system_run | default(false) }}"
+      when: apt_work.path is defined
+    - name: Remember the outcome of the signed source check for an explicit ChatGPT Apply
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "-m", "setup_system.file_tasks", "record-source-check"]
+        stdin: "{{ {'ok': signed_indexes.rc == 0, 'diagnostic': signed_indexes.stderr | default('')} | to_json }}"
+      become: false
+      changed_when: true
+      when:
+        - execute_run | default(false)
+        - "'chatgpt' in (intent.apps | default([]))"
+        - signed_indexes.rc is defined
+    - name: Publish the result as the calling user
+      ansible.builtin.copy:
+        content: "{{ outcome | to_json }}\n"
+        dest: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_RESULT') }}"
+        mode: "0600"
+      become: false

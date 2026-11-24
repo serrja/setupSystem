@@ -1,11 +1,10 @@
-"""Pinned runtime downloads report HTTP failures without exposing URL secrets."""
+"""Official tool downloads redact failures before returning to the desktop form."""
 
 from urllib.error import HTTPError, URLError
 
 import pytest
 
-from setup_system.bootstrap import user_runtime as runtime
-from setup_system.infrastructure import downloads
+from setup_system.infrastructure import downloads, rtk
 
 
 def mock_open(monkeypatch, respond):
@@ -17,7 +16,7 @@ def mock_open(monkeypatch, respond):
 
 
 @pytest.mark.parametrize("status", [403, 404, 429])
-def test_uv_http_failure_reports_status_and_host_without_url_secrets(
+def test_rtk_http_failure_reports_status_and_host_without_url_secrets(
     monkeypatch, status: int
 ) -> None:
     url = "https://github.com/private-subscription-token?access_token=secret"
@@ -33,7 +32,7 @@ def test_uv_http_failure_reports_status_and_host_without_url_secrets(
 
     mock_open(monkeypatch, fail)
     with pytest.raises(RuntimeError) as caught:
-        runtime._read_limited(url, 1024)
+        rtk._read(url, 1024)
     message = str(caught.value)
     assert str(status) in message and "github.com" in message
     assert all(
@@ -42,26 +41,21 @@ def test_uv_http_failure_reports_status_and_host_without_url_secrets(
     )
 
 
-def test_uv_network_failure_does_not_disclose_proxy_credentials(monkeypatch) -> None:
+def test_rtk_network_failure_does_not_disclose_proxy_credentials(monkeypatch) -> None:
     def fail(*args, **kwargs):
         raise URLError("proxy password=private-value")
 
     mock_open(monkeypatch, fail)
     with pytest.raises(RuntimeError) as caught:
-        runtime._read_limited("https://releases.astral.sh/pinned-asset", 1024)
-    assert "releases.astral.sh" in str(caught.value)
+        rtk._read("https://github.com/rtk-ai/rtk/releases/download/v1.2.3/checksums.txt", 1024)
+    assert "github.com" in str(caught.value)
     assert "private-value" not in str(caught.value)
 
 
-def test_uv_download_identifies_installer_without_changing_pinned_url(monkeypatch) -> None:
-    from pathlib import Path
+def test_rtk_download_identifies_installer_without_changing_pinned_url(monkeypatch) -> None:
     from urllib.request import Request
 
-    from setup_system.bootstrap.user_policy import runtime_pins
-
-    pins = runtime_pins(Path(__file__).resolve().parents[1])
-    target, _ = pins.artifact("amd64")
-    url = f"{pins.uv_base}/{pins.uv}/uv-{target}.tar.gz"
+    url = "https://github.com/rtk-ai/rtk/releases/download/v1.2.3/checksums.txt"
 
     class Response:
         status = 200
@@ -92,4 +86,4 @@ def test_uv_download_identifies_installer_without_changing_pinned_url(monkeypatc
         return Response()
 
     mock_open(monkeypatch, download)
-    assert runtime._read_limited(url, 1024) == b"verified later by the pinned archive digest"
+    assert rtk._read(url, 1024) == b"verified later by the pinned archive digest"

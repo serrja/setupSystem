@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from setup_system.domain.displays import MonitorLayout
 from setup_system.infrastructure import displays
-from setup_system.infrastructure.theme import render
 
 
 def test_monitor_selection_and_failed_preview_restore(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -34,15 +33,15 @@ def test_monitor_selection_and_failed_preview_restore(monkeypatch: pytest.Monkey
     monkeypatch.setattr(displays, "_hyprctl", query)
     (observed,) = displays.discover_outputs()
     assert observed.current.mode == "1920x1080@60.00"
-    preview = observed.current.model_copy(update={"mode": "1280x720@60.00", "scale": 1.25})
+    preview = observed.current.validated(mode="1280x720@60.00", scale=1.25)
     with pytest.raises(RuntimeError, match="refused"):
         displays._preview((preview,))
     assert ("eval", preview.rule()) in commands and ("reload",) in commands
     with pytest.raises(ValueError, match="no longer available"):
-        displays.validate_layouts((preview.model_copy(update={"output": "DP-3"}),))
+        displays.validate_layouts((preview.validated(output="DP-3"),))
     with pytest.raises(ValueError, match="once"):
         displays.validate_layouts((preview, preview))
-    lua = render("[% for item in monitors %]@{ item.rule() }@[% endfor %]", monitors=(preview,))
+    lua = preview.rule()
     assert '"DP-2"' in lua and '"1280x720@60.00"' in lua and "scale = 1.25" in lua
 
 

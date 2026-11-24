@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 from email.message import Message
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
+from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 from urllib.response import addinfourl
 
 import pytest
@@ -44,7 +43,7 @@ def scripted_https(
 
 
 def policy(**kwargs):
-    return downloads.DownloadPolicy(downloads.UV_RELEASE_HOSTS, 100, 30, **kwargs)
+    return downloads.DownloadPolicy(downloads.GITHUB_RELEASE_HOSTS, 100, 30, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -58,7 +57,7 @@ def policy(**kwargs):
 def test_redirect_is_rejected_before_an_untrusted_intermediate_can_be_requested(
     monkeypatch, destination: str
 ) -> None:
-    start = "https://releases.astral.sh/pinned-asset"
+    start = "https://github.com/rtk-ai/rtk/releases/download/v1.2.3/asset"
     visited = scripted_https(
         monkeypatch, [destination, "https://release-assets.githubusercontent.com/final"]
     )
@@ -70,28 +69,22 @@ def test_redirect_is_rejected_before_an_untrusted_intermediate_can_be_requested(
 
 
 def test_allowed_https_redirects_preserve_payload_and_user_agent(monkeypatch) -> None:
-    start = "https://releases.astral.sh/pinned-asset"
+    start = "https://github.com/rtk-ai/rtk/releases/download/v1.2.3/asset"
     redirects = ["https://github.com/pinned", "https://release-assets.githubusercontent.com/final"]
     visited = scripted_https(monkeypatch, redirects)
-    output = io.BytesIO()
-    result = downloads.copy_https(start, output, policy())
+    assert downloads.read_https(start, policy()) == b"fixture"
     assert visited == [start, *redirects]
-    assert output.getvalue() == b"fixture"
-    assert result.size == 7 and result.sha256 == hashlib.sha256(b"fixture").hexdigest()
 
 
 @pytest.mark.parametrize("size", [99, 100, 101])
-def test_stream_is_bounded_and_only_a_complete_payload_returns_a_digest(monkeypatch, size):
+def test_stream_is_bounded_and_only_a_complete_payload_is_returned(monkeypatch, size):
     scripted_https(monkeypatch, [], b"x" * size)
-    output = io.BytesIO()
     if size > 100:
         with pytest.raises(downloads.DownloadError) as caught:
-            downloads.copy_https("https://github.com/asset", output, policy())
+            downloads.read_https("https://github.com/asset", policy())
         assert caught.value.kind == downloads.DownloadFailure.SIZE
-        assert len(output.getvalue()) <= 100
     else:
-        result = downloads.copy_https("https://github.com/asset", output, policy())
-        assert result.size == size and output.getvalue() == b"x" * size
+        assert downloads.read_https("https://github.com/asset", policy()) == b"x" * size
 
 
 @pytest.mark.parametrize("problem", [403, 429, "network", "os", "value"])
@@ -118,26 +111,12 @@ def test_transport_error_keeps_only_typed_safe_diagnostics(monkeypatch, problem)
     assert caught.value.status == (problem if isinstance(problem, int) else None)
 
 
-def test_private_subscription_error_never_exposes_provider_origin(monkeypatch):
-    class Opener:
-        def open(self, *args, **kwargs):
-            raise HTTPError("https://private.example/token", 403, "private", {}, None)
-
-    monkeypatch.setattr(downloads, "build_opener", lambda *handlers: Opener())
-    with pytest.raises(downloads.DownloadError) as caught:
-        downloads.read_https(
-            "https://private.example/token",
-            downloads.DownloadPolicy(None, 100, 30, expose_host=False),
-        )
-    assert caught.value.status == 403 and caught.value.host is None
-    assert "private" not in str(caught.value)
-
-
 @pytest.mark.parametrize(
     "url",
     [
         "http://github.com/asset",
         "https://github.com:0/asset",
+        "https://github.com:444/asset",
         "https://user:password@github.com/asset",
         "https://github.com/private secret",
         "https://github.com/\nprivate",
@@ -150,43 +129,10 @@ def test_invalid_initial_origin_stops_before_opener_creation(monkeypatch, url):
         downloads.read_https(url, policy())
 
 
-@pytest.mark.parametrize(
-    "environment,expected",
-    [
-        ({}, None),
-        (
-            {"HTTP_PROXY": "http://127.0.0.1:8910", "HTTPS_PROXY": "http://127.0.0.1:8910"},
-            "http://127.0.0.1:8910",
-        ),
-        (
-            {"HTTP_PROXY": "http://[::1]:8910", "HTTPS_PROXY": "http://[::1]:8910"},
-            "http://[::1]:8910",
-        ),
-        (
-            {
-                "HTTP_PROXY": "http://remote.example:8910",
-                "HTTPS_PROXY": "http://remote.example:8910",
-            },
-            None,
-        ),
-        (
-            {
-                "HTTP_PROXY": "http://name:private@127.0.0.1:8910",
-                "HTTPS_PROXY": "http://name:private@127.0.0.1:8910",
-            },
-            None,
-        ),
-        ({"HTTP_PROXY": "http://127.0.0.1:8910"}, None),
-        ({"HTTP_PROXY": "http://127.0.0.1:8910", "HTTPS_PROXY": "http://127.0.0.1:8911"}, None),
-    ],
-)
-def test_proxy_policy_accepts_only_the_explicit_matching_loopback_pair(environment, expected):
-    assert downloads.ProxyPolicy.from_loopback_environment(environment).url == expected
-
-
-def test_direct_policy_ignores_all_ambient_proxies(monkeypatch):
-    monkeypatch.setenv("HTTP_PROXY", "http://remote.example:1234")
-    monkeypatch.setenv("HTTPS_PROXY", "http://remote.example:1234")
+@pytest.mark.parametrize("proxy", ["http://remote.example:1234", "http://127.0.0.1:8910"])
+def test_direct_policy_ignores_all_ambient_proxies(monkeypatch, proxy):
+    monkeypatch.setenv("HTTP_PROXY", proxy)
+    monkeypatch.setenv("HTTPS_PROXY", proxy)
     monkeypatch.setenv("ALL_PROXY", "socks://remote.example:1234")
     seen = []
 
@@ -198,26 +144,6 @@ def test_direct_policy_ignores_all_ambient_proxies(monkeypatch):
     with pytest.raises(downloads.DownloadError):
         downloads.read_https("https://github.com/asset", policy())
     assert len(seen) == 1 and seen[0].proxies == {}
-
-
-def test_explicit_loopback_proxy_does_not_inherit_no_proxy_bypass(monkeypatch):
-    monkeypatch.setenv("NO_PROXY", "*")
-    request = Request("https://github.com/asset")
-    seen = []
-
-    def opener(*handlers):
-        handler = next(h for h in handlers if isinstance(h, ProxyHandler))
-        seen.append(handler.proxies)
-        handler.proxy_open(request, handler.proxies["https"], "https")
-        raise URLError("fixture stop before any socket")
-
-    monkeypatch.setattr(downloads, "build_opener", opener)
-    with pytest.raises(downloads.DownloadError):
-        downloads.read_https(
-            "https://github.com/asset", policy(proxy=downloads.ProxyPolicy("http://127.0.0.1:8910"))
-        )
-    assert seen == [{"http": "http://127.0.0.1:8910", "https": "http://127.0.0.1:8910"}]
-    assert request.host == "127.0.0.1:8910" and request._tunnel_host == "github.com"
 
 
 def test_elapsed_download_budget_fails_without_returning_partial_success(monkeypatch):
@@ -237,7 +163,7 @@ def test_artifact_total_budget_is_separate_from_per_socket_timeout(monkeypatch):
     assert policy().timeout == 30 and policy().total_timeout == 600
 
 
-@pytest.mark.parametrize("total", [0, -1, float("inf"), float("nan")])
+@pytest.mark.parametrize("total", [True, 0, -1, float("inf"), float("nan")])
 def test_total_download_budget_must_be_finite_and_positive(total):
     with pytest.raises(ValueError):
         policy(total_timeout=total)
@@ -252,10 +178,8 @@ def test_policy_requires_finite_positive_bounds(maximum, timeout):
 @pytest.mark.parametrize("status", [204, 206])
 def test_noncomplete_success_response_is_rejected_before_output(monkeypatch, status):
     scripted_https(monkeypatch, [], b"partial fixture", status=status)
-    output = io.BytesIO()
     with pytest.raises(downloads.DownloadError) as caught:
-        downloads.copy_https("https://github.com/private?token=fixture", output, policy())
+        downloads.read_https("https://github.com/private?token=fixture", policy())
     assert caught.value.kind == downloads.DownloadFailure.HTTP
     assert caught.value.status == status and caught.value.host == "github.com"
-    assert output.getvalue() == b""
     assert "token=" not in str(caught.value) and "fixture" not in str(caught.value)

@@ -1,0 +1,36 @@
+---
+- name: Check explicit cleanup scope
+  ansible.builtin.assert:
+    that:
+      - (setup_action in ['cleanup-plan','cleanup-apply']) == (cleanup | length > 0)
+      - not cleanup or not ((intent.apps | default([])) or (intent.languages | default([])) or (intent.desktop_theme | default(false)))
+    fail_msg: "Review optional removals separately from software installation."
+
+- name: Prepare staged files and user tool versions
+  ansible.builtin.include_tasks: user_plan.yml
+  when: (section == 'workspace' and not cleanup) or (section == 'base' and intent.hyprland)
+
+- name: Inspect login, unlock and other selected system changes
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/system_contract.py", "plan"]
+    stdin: "{{ {'section': section, 'settings': intent, 'xdg': facts.xdg} | to_json }}"
+  register: approved_system
+  changed_when: false
+  when: section == 'base' or 'firefox' in (intent.apps | default([]))
+- name: Capture system preconditions for root revalidation
+  ansible.builtin.set_fact:
+    boot_facts: "{{ (approved_system.stdout | from_json).observed }}"
+    system_actions: "{{ (approved_system.stdout | from_json).actions }}"
+    blockers: "{{ (approved_system.stdout | from_json).blockers }}"
+    packages: "{{ (packages + ((approved_system.stdout | from_json).observed.unlock.packages | default([]))) | unique | sort }}"
+  when: approved_system.stdout is defined
+
+- name: Resolve latest stable reviewed upstream archives
+  ansible.builtin.include_tasks: vendor.yml
+  loop: "{{ intent.apps | default([]) | select('in', ['happ', 'obsidian']) | list }}"
+  loop_control:
+    loop_var: vendor_id
+
+- name: Resolve current signed APT candidates and complete closure
+  ansible.builtin.include_tasks: apt_plan.yml
+  when: not blockers and (packages | length > 0 or latest_debs | length > 0 or cleanup | length > 0)

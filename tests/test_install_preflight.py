@@ -1,40 +1,65 @@
-"""Unsupported root execution and resource origins stop before mutation."""
+"""Reject unsupported sources, privileged execution paths and arbitrary native task input."""
+
+import runpy
+import subprocess
+import tomllib
+from pathlib import Path
 
 import pytest
+from ansible.errors import AnsibleFilterError
 
-from setup_system.bootstrap.source import validate_url
-from setup_system.infrastructure.privileged import PrivilegedExecutor
+from setup_system.infrastructure.upstream_asset import github_deb
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize(
     "url",
     [
         "http://github.com/a",
-        "https://evil.invalid/a",
+        "https://evil.invalid/path",
         "https://user:secret@github.com/a",
         "https://github.com:8443/a",
     ],
 )
-def test_privileged_sources_require_allowlisted_direct_https(url: str) -> None:
-    with pytest.raises(ValueError):
-        validate_url(url)
+def test_privileged_sources_require_exact_release_url(url):
+    entry = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())["happ"]
+    asset = entry["asset"]["amd64"]
+    upstream = {
+        "draft": False,
+        "prerelease": False,
+        "published_at": "2026-01-01",
+        "tag_name": "1.2",
+        "assets": [{"name": asset, "browser_download_url": url, "digest": "sha256:" + "f" * 64}],
+    }
+    with pytest.raises(ValueError, match="SHA-256"):
+        github_deb(upstream, entry, "amd64")
 
 
-def test_ui_does_not_invoke_sudo_when_it_is_already_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("os.geteuid", lambda: 0)
-    monkeypatch.setattr(
-        "subprocess.run", lambda *args, **kwargs: pytest.fail("Root UI reached sudo")
+def test_unrecognized_role_is_rejected_before_dispatch(tmp_path):
+    run = subprocess.run(
+        ["/bin/sh", str(ROOT / "libexec/play"), "base", "shell"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
-    with pytest.raises(ValueError, match="unprivileged"):
-        PrivilegedExecutor("v1.2.3", "a" * 40).run({"action": "base", "settings": {}})
+    assert run.returncode and "Unknown packaged operation" in run.stderr
+    assert not list(tmp_path.iterdir())
 
 
-def test_dangerous_action_is_not_a_system_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("os.geteuid", lambda: 1000)
-    monkeypatch.setattr(
-        "subprocess.run", lambda *args, **kwargs: pytest.fail("Invalid command reached sudo")
-    )
-    with pytest.raises(ValueError, match="union_tag_invalid"):
-        PrivilegedExecutor("v1.2.3", "a" * 40).run(
-            {"action": "shell", "settings": {"command": "id"}}
-        )
+def test_caller_cannot_inject_package_options_or_a_command(tmp_path):
+    filters = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))[
+        "FilterModule"
+    ]().filters()
+    apps = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
+    for settings in (
+        {"apps": ["--help"]},
+        {"apps": ["../pkg"]},
+        {"apps": ["systemd"]},
+        {"command": "id"},
+    ):
+        with pytest.raises((ValueError, AnsibleFilterError)):
+            filters["native_request"](
+                {"schema": 1, "settings": settings, "expected": None}, "workspace", apps, {}
+            )
+    assert not list(tmp_path.iterdir())

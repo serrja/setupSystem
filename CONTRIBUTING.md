@@ -8,7 +8,7 @@ contracts. Read [AGENTS](AGENTS.md) and the pinned baseRules contract before edi
 ## 🧪 Prepare and check
 
 Use the exact Git root, Git, Make and uv 0.12.15. The native development toolchain uses
-Python 3.14.7; the CLI also checks its declared Python 3.12 minimum in CI.
+Python 3.14.7; CI also checks its declared Python 3.12 minimum in CI.
 
 ```bash
 uv python install 3.14.7
@@ -17,11 +17,10 @@ make native-check
 make native-ci
 ```
 
-`native-check` runs locked formatting/lint, types, compilation, lock validation,
+`native-check` runs locked formatting/lint, types, lock validation,
 read-only entrypoint checks and fixture tests. `native-ci` adds wheel/sdist builds and
 installation into a disposable environment outside the checkout. No gate installs
-workstation packages or changes the developer HOME. Docker `make ci-local` is an
-alternative full gate with source/artifact receipts; see [development](docs/development.md).
+workstation packages or changes the developer HOME. The Debian archive is built with dpkg-deb from a clean Git export. See [development](docs/development.md).
 Record actual failed, unsupported and unavailable checks in the PR.
 
 ## 🤝 Review and delivery

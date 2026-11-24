@@ -1,27 +1,11 @@
 # Configuration
 
-User settings schema 2 stores selected catalog IDs, theme, display layout and cleanup choices. Reading version 1 maps its application switches into the new selection in memory. Save intentions to persist the migration with a recoverable copy of the original. System settings retain schema 1. Unknown versions or fields require review.
+Save each section separately under `$XDG_CONFIG_HOME/setup-system`. The default directory is `~/.config/setup-system`. The two files are `base.toml` and `workspace.toml`. The package owns its catalogs under `/usr/lib/setup-system/config`.
 
-Explicit TOML fields take precedence. A missing field can use a matching
-`SETUP_SYSTEM_` environment variable, such as `SETUP_SYSTEM_KEYBOARD=us`.
-Built-in defaults apply when both are absent.
+Two editable examples illustrate independent regional and workspace choices. The package ships them under `/usr/lib/setup-system/config`. [Base example](../config/base/example.toml) · [Workspace example](../config/workspace/example.toml)
 
-| Location | Ownership / purpose |
-| --- | --- |
-| `/etc/setup-system/system.toml` | Root-owned applied system desired state |
-| `$XDG_CONFIG_HOME/setup-system/settings.toml` | User desired applications and theme |
-| `$XDG_CONFIG_HOME/setup-system/system-intentions.toml` | Unprivileged draft, not applied system state |
-| `/var/lib/setup-system/` | System receipts, verified source and recovery backups |
-| `$XDG_STATE_HOME/setup-system/` | User receipts, backups and release identity |
-| `$XDG_CACHE_HOME/setup-system/` | Verified user downloads and runtime cache |
+Save validates the selected fields, preserves TOML comments and checks the revision read by the form. Reload after an external edit. The migration reads known earlier section settings and retains the old file when saving the new format. Backups of replaced settings remain beside the new file.
 
-XDG defaults follow platformdirs. Paths must stay within the verified user HOME where
-applicable. Symlinks, foreign ownership, special files and writable-by-others settings
-are rejected. Saves are atomic with a content fingerprint and backup. Reload after a
-conflict; do not overwrite an unreviewed file. System changes use the fixed executor,
-never a writable TOML command or playbook path.
+**Base system** accepts timezone, locale, keyboard and selected desktop or boot changes. **Working environment** groups application and language choices, theme, outputs, project paths, cleanup and recovery. Inspect refreshes suggestions. Output and mode selections are checked against a connected display. Entering a value, switching sections and saving preferences require no elevation.
 
-Passwords, authentication tokens, private application databases and subscription URLs
-are not settings. Let sudo and each application's native account UI manage them.
-
-A previous installation can have a private `/etc/setup-system` directory. If Base system reports that it cannot read `system.toml`, an administrator should inspect the directory, its ownership and access controls on the target. The app needs traversal of that directory and read access to the system intentions file. Where the files are reviewed as shareable, grant traversal on **that directory only** and read access on **that file only** to the intended user, for example with a per-user POSIX ACL. Preserve private sibling files and avoid recursive permission changes. Workspace operations remain available while Base settings need review. The Firefox action can migrate an exact earlier managed policy in otherwise empty, private policy directories. It preserves unknown files for administrator review.
+Preview obtains the actions and their preconditions. Review the complete proposed change before Apply. The request also carries the original preview so that a changed package resolution, file or output can stop the run.

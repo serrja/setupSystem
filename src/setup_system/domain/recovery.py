@@ -34,6 +34,9 @@ class RecoveryFiles(Protocol):
     def directories(
         self, op: Operation, paths: Collection[Path]
     ) -> list[tuple[Path, CreatedDirectory]]: ...
+    def removable_directories(
+        self, entries: list[tuple[Path, CreatedDirectory]], removed_files: set[Path]
+    ) -> list[tuple[Path, CreatedDirectory]]: ...
     def conflict(self, target: RecoveryTarget) -> str: ...
     def restore_target(
         self, target: RecoveryTarget, operation: Operation, folder: Path

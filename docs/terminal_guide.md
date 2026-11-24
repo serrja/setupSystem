@@ -1,12 +1,9 @@
 # Terminal and shell
 
-Hyprland starts Foot with the shared desktop palette and font policy. Workspace
-Tools configures an installed Zsh for the current account. It checks startup in
-an isolated home, preserves text outside its managed blocks and uses the existing
-history file when available. Selecting the profile retains the current login shell.
+Super+Enter opens Foot in the managed Hyprland session. It follows the desktop palette and font settings. [Desktop theme](theme.md) · [Fonts](fonts.md)
 
-The `cproj` helper opens the Textual workspace tools. Project selection resolves
-an exact Git root. [Workspace](workspace_guide.md) · [Neovim](neovim_guide.md)
+In **Working environment**, choose **Preview shell setup** to review changes to an existing Zsh installation. Apply checks startup in an isolated home and writes only the reviewed user files. It preserves existing text outside the managed blocks and keeps the account's login shell. An existing `HISTFILE` takes precedence, followed by an existing `~/.zsh_history`. A new profile otherwise uses `$XDG_STATE_HOME/zsh/history`.
 
-If startup fails, use `zsh -f` or the previous shell. Select the operation in
-Recovery, preview its affected files and confirm the restore. [Recovery](recovery.md)
+The `cproj` helper opens the Textual app. Use **Catalog projects** to select an exact local checkout and launch Neovim or Codex from that directory. The independent **Preview RTK install** action has its own confirmation. [Workspace projects](workspace_guide.md) · [RTK](rtk.md)
+
+If startup fails, use `zsh -f` or the previous shell to inspect the files. Open **Working environment**, choose the relevant backup and select **Plan restore**. Review the listed paths and conflicts before applying recovery. [Recovery](recovery.md)

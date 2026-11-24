@@ -241,3 +241,16 @@ jobs:
       wheel-tags: '["py3-none-any"]'
       allocation: ${{ needs.release-allocation.outputs.allocation }}
       artifact-id: ${{ needs.release-allocation.outputs.artifact-id || needs.release-builder.outputs.artifact-id }}
+  release-debian:
+    needs: [release-allocation, release-publication]
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.release-publication.result == 'success'
+    permissions:
+      contents: write
+      actions: read
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/debian.yml
+    with:
+      version: ${{ fromJSON(needs.release-allocation.outputs.allocation).version }}

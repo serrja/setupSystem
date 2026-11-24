@@ -9,10 +9,10 @@ import stat
 import tempfile
 from pathlib import Path
 
-from setup_system.bootstrap.source import protected
 from setup_system.domain.system_receipts import BootFile, BootReceipt, BootStatus
 from setup_system.infrastructure import system_files
 from setup_system.infrastructure.atomic_rename import move_new
+from setup_system.infrastructure.system_paths import protected
 
 
 def digest(path: Path) -> str | None:

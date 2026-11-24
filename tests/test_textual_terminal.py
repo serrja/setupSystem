@@ -10,11 +10,9 @@ import sys
 import time
 
 CHILD = """import fcntl,termios,sys
-from pathlib import Path
-from setup_system.composition import build_app
+from setup_system.app import main
 fcntl.ioctl(0,termios.TIOCSCTTY,0)
-app=build_app(Path.cwd())
-app.run()
+raise SystemExit(main())
 """
 
 

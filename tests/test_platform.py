@@ -1,18 +1,21 @@
 """Safety gates for the installer's explicit platform boundary."""
 
-import tomllib
+import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from setup_system.domain.platforms import CapabilityPolicy
-from setup_system.infrastructure.platform_facts import detect_platform
+from setup_system.infrastructure import native_target
+
+ROOT = Path(__file__).resolve().parents[1]
+DEBIAN = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
 
 
 @pytest.mark.parametrize(
     ("distribution", "version", "architecture", "implemented"),
     [
-        ("debian", "12", "x86_64", True),
+        ("debian", "12", "x86_64", False),
         ("debian", "13", "aarch64", True),
         ("ubuntu", "24.04", "x86_64", False),
         ("ubuntu", "26.04", "x86_64", False),
@@ -21,57 +24,63 @@ from setup_system.infrastructure.platform_facts import detect_platform
         ("debian", "11", "x86_64", False),
     ],
 )
-def test_explicit_linux_platform(
-    tmp_path: Path, distribution: str, version: str, architecture: str, implemented: bool
-) -> None:
-    release = tmp_path / "os-release"
-    release.write_text(f"ID={distribution}\nVERSION_ID={version}\nID_LIKE=debian\n")
-    platform_adapter = detect_platform(release, architecture=architecture, system_name="Linux")
-    assert platform_adapter.implemented is implemented
+def test_explicit_linux_platform(tmp_path, distribution, version, architecture, implemented):
+    release = dict(DEBIAN, ID=distribution, VERSION_ID=version, ID_LIKE="debian")
+    arch, supported = native_target.target(
+        release, architecture, native_target.architecture(architecture)
+    )
+    assert supported is implemented
     if architecture == "aarch64":
-        assert platform_adapter.architecture == "arm64"
+        assert arch == "arm64"
+    assert not list(tmp_path.iterdir())
 
 
-def test_macos_is_unsupported() -> None:
-    assert not detect_platform(system_name="Darwin", architecture="arm64").implemented
+def test_macos_is_unsupported(monkeypatch):
+    def missing_linux_release():
+        raise OSError("No freedesktop os-release on Darwin")
+
+    monkeypatch.setattr(native_target.platform, "freedesktop_os_release", missing_linux_release)
+    monkeypatch.setattr(native_target.platform, "machine", lambda: "arm64")
+    assert native_target.current_target() == ("arm64", False)
 
 
 @pytest.mark.parametrize("architecture", ["x86_64", "amd64", "arm64", "aarch64"])
-@pytest.mark.parametrize("version", ["12", "13"])
-def test_all_manifest_targets(tmp_path: Path, architecture: str, version: str) -> None:
-    release = tmp_path / "os-release"
-    release.write_text(f"ID=debian\nVERSION_ID={version}\n")
-    assert detect_platform(release, architecture=architecture, system_name="Linux").implemented
-
-
-def test_unknown_architecture_and_release_are_rejected(tmp_path: Path) -> None:
-    release = tmp_path / "os-release"
-    release.write_text("ID=debian\nVERSION_ID=13\n")
-    assert not detect_platform(release, architecture="riscv64", system_name="Linux").implemented
-    release.write_text("ID=debian\nVERSION_ID=99\n")
-    assert not detect_platform(release, architecture="x86_64", system_name="Linux").implemented
-
-
-def test_platform_support_is_loaded_from_manifest(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from setup_system.infrastructure import platform_facts
-
-    manifest = tomllib.loads(
-        (Path(__file__).resolve().parents[1] / "manifests/platforms.toml").read_text()
+@pytest.mark.parametrize(
+    ("version", "codename", "supported"),
+    [("13", "trixie", True), ("12", "bookworm", False), ("13", "bookworm", False)],
+)
+def test_all_manifest_targets(architecture, version, codename, supported):
+    release = dict(DEBIAN, VERSION_ID=version, VERSION_CODENAME=codename)
+    assert (
+        native_target.target(release, architecture, native_target.architecture(architecture))[1]
+        is supported
     )
-    manifest["debian"]["versions"] = ["88"]
-    manifest["debian"]["codenames"]["88"] = "fixture"
-    manifest["hyprland"].update(version="88", codename="fixture", backports="fixture-backports")
-    policy = CapabilityPolicy.model_validate(manifest)
-    monkeypatch.setattr(platform_facts, "load_policy", lambda root=None: policy)
-    release = tmp_path / "os-release"
-    release.write_text("ID=debian\nVERSION_ID=88\n")
-    assert platform_facts.detect_platform(
-        release, architecture="amd64", system_name="Linux"
-    ).implemented
-    release.write_text("ID=debian\nVERSION_ID=13\n")
-    assert not platform_facts.detect_platform(
-        release, architecture="amd64", system_name="Linux"
-    ).implemented
-    assert list(tmp_path.iterdir()) == [release]
+
+
+def test_unknown_architecture_and_release_are_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(native_target.platform, "freedesktop_os_release", lambda: DEBIAN)
+    monkeypatch.setattr(native_target.platform, "machine", lambda: "riscv64")
+    assert native_target.current_target() == ("riscv64", False)
+    monkeypatch.setattr(native_target.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        native_target.platform, "freedesktop_os_release", lambda: dict(DEBIAN, VERSION_ID="99")
+    )
+    assert native_target.current_target() == ("amd64", False)
+    assert not list(tmp_path.iterdir())
+
+
+def test_planner_and_elevated_adapters_share_one_platform_policy():
+    facts = runpy.run_path(str(ROOT / "ansible/files/facts.py"))
+    assert facts["current_target"] is native_target.current_target
+    for name in ("apt_apply", "removals", "system_contract"):
+        scope = runpy.run_path(str(ROOT / f"ansible/files/{name}.py"))
+        assert scope["current_target"] is native_target.current_target
+    assert native_target.current_target.__globals__["target"] is native_target.target
+
+
+def test_elevated_removal_requires_supported_target_before_inspecting_packages(monkeypatch):
+    check = runpy.run_path(str(ROOT / "ansible/files/removals.py"))["check"]
+    monkeypatch.setitem(check.__globals__, "os", SimpleNamespace(geteuid=lambda: 0))
+    monkeypatch.setitem(check.__globals__, "current_target", lambda: ("arm64", False))
+    with pytest.raises(ValueError, match="supported Debian target"):
+        check({})

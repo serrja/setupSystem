@@ -1,4 +1,4 @@
--- setupSystem profile for Hyprland 0.55.2; additions belong after the require.
+-- setupSystem profile for Hyprland; additions belong after the require.
 local cfg = (os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config"))
   .. "/hypr/setup-system"
 local function quote(value)
@@ -14,8 +14,12 @@ hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })
-[% for monitor in monitors %]@{ monitor.rule() }@
-[% endfor %]hl.config({
+for _, extra in ipairs({"monitors.lua", "keyboard.lua"}) do
+  local path = cfg .. "/" .. extra
+  local file = io.open(path, "r")
+  if file then file:close(); dofile(path) end
+end
+hl.config({
   general = {
     gaps_in = 6,
     gaps_out = 12,
@@ -30,9 +34,7 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" 
   },
   animations = { enabled = @{ effects }@ },
   input = {
-[% if keyboard %]    kb_layout = "@{ keyboard }@",
-[% endif %][% if keyboard == "us,ru" %]    kb_options = "grp:win_space_toggle",
-[% endif %]    follow_mouse = 1,
+    follow_mouse = 1,
   },
   misc = { disable_hyprland_logo = true, force_default_wallpaper = 0 },
 })

@@ -18,8 +18,19 @@ def recover(
             path, status = files.inspect(row)
             targets.append(RecoveryTarget(row, path, status, journal.backup_bytes(folder, row)))
         directories = files.directories(operation, [target.path for target in targets])
+        requested = set(operation.requested_directories)
+        removable = files.removable_directories(
+            directories, {target.path for target in targets if target.status == "would-remove"}
+        )
         if not apply:
-            return [(str(target.path), target.status) for target in targets]
+            return [
+                *((str(target.path), target.status) for target in targets),
+                *(
+                    (str(path), "would-remove-directory")
+                    for path, row in removable
+                    if row.relative in requested
+                ),
+            ]
         for target in targets:
             if target.status == "conflict":
                 raise ValueError(files.conflict(target))
@@ -37,7 +48,14 @@ def recover(
             if index.publishing.get(name) == operation.run_id:
                 del index.publishing[name]
             results.append((name, status))
-        files.remove_directories(directories)
+        eligible = {path for path, _ in removable}
+        files.remove_directories(
+            [
+                (path, entry)
+                for path, entry in directories
+                if entry.relative not in requested or path in eligible
+            ]
+        )
         journal.save_ownership(index)
         operation.status = "restored"
         journal.save_operation(folder, operation)
