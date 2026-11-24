@@ -1,0 +1,34 @@
+# Lazy.nvim resolves explicit plugin selections only during the approved editor action.
+# The Tree-sitter master branch supports Debian trixie's native Neovim 0.10 runtime.
+[plugins.lazy]
+repo = "https://github.com/folke/lazy.nvim.git"
+ref = "refs/tags/stable"
+[plugins.nvim-treesitter]
+repo = "https://github.com/nvim-treesitter/nvim-treesitter.git"
+ref = "refs/heads/master"
+[plugins."oil.nvim"]
+repo = "https://github.com/stevearc/oil.nvim.git"
+ref = "refs/heads/master"
+[plugins.fzf-lua]
+repo = "https://github.com/ibhagwan/fzf-lua.git"
+ref = "refs/heads/main"
+[plugins."blink.cmp"]
+repo = "https://github.com/saghen/blink.cmp.git"
+major = 1
+[plugins."conform.nvim"]
+repo = "https://github.com/stevearc/conform.nvim.git"
+major = 9
+[plugins."gitsigns.nvim"]
+repo = "https://github.com/lewis6991/gitsigns.nvim.git"
+major = 1
+[parsers]
+base = ["lua", "vim", "vimdoc"]
+python = ["python"]
+typescript_vue = ["typescript", "tsx", "javascript", "vue"]
+cpp = ["cpp"]
+dart_flutter = ["dart"]
+
+# The Vue hybrid plugin uses the JS tsserver. Debian trixie's Node 20 runs the v5 LSP.
+[npm_compatible_series]
+typescript = 6
+typescript-language-server = 5

@@ -10,8 +10,9 @@ import tempfile
 from pathlib import Path
 
 from setup_system.diagnostics import PartialApplyError
-from setup_system.domain.receipts import digest
+from setup_system.domain.receipts import FileState, digest
 from setup_system.domain.workspace_facts import GitIdentity
+from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files
 from setup_system.infrastructure.user_storage import inside_home
 
@@ -50,7 +51,7 @@ def exact_repository(repo: Path) -> Path:
 def profile_path(name: str) -> Path:
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
         raise ValueError("Profile names use lowercase letters, digits, underscores or hyphens")
-    config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     return inside_home(config / "git/identities" / f"{name}.gitconfig")
 
 
@@ -155,11 +156,8 @@ def _source_identity(repo: Path) -> GitIdentity:
     )
 
 
-def _hash(path: Path) -> str | None:
-    path = inside_home(path)
-    if path.exists() and not path.is_file():
-        raise ValueError(f"Configuration target is not a regular file: {path}")
-    return digest(path.read_bytes()) if path.exists() else None
+def identity_digest(repo: Path) -> str:
+    return digest(_source_identity(repo).model_dump_json().encode())
 
 
 def _verify_effective(repo: Path, edits: dict[Path, dict[str, str]]) -> None:
@@ -170,13 +168,19 @@ def _verify_effective(repo: Path, edits: dict[Path, dict[str, str]]) -> None:
 
 
 def _apply(
-    edits: dict[Path, dict[str, str]], *, yes: bool, effective_repo: Path | None = None
+    edits: dict[Path, dict[str, str]],
+    *,
+    yes: bool,
+    effective_repo: Path | None = None,
+    reviewed: dict[Path, FileState | None] | None = None,
 ) -> tuple[Path | None, list[str]]:
     """Render scoped edits with native Git and publish with the shared recovery adapter."""
     changed: dict[Path, dict[str, str]] = {}
-    before: dict[Path, str | None] = {}
+    before: dict[Path, FileState | None] = {}
     for path, fields in edits.items():
-        before[path] = _hash(path)
+        before[path] = observe(inside_home(path))
+        if reviewed is not None and (path not in reviewed or before[path] != reviewed[path]):
+            raise ValueError("Git configuration changed after confirmation")
         pending = {}
         for key, value in fields.items():
             current = (
@@ -198,7 +202,10 @@ def _apply(
         for index, (path, fields) in enumerate(changed.items()):
             staged = Path(directory) / str(index)
             original = path.read_bytes() if path.exists() else None
-            if (digest(original) if original is not None else None) != before[path]:
+            state = before[path]
+            if (digest(original) if original is not None else None) != (
+                state.sha256 if state else None
+            ):
                 raise ValueError(f"Configuration changed since planning: {path}")
             staged.write_bytes(original or b"")
             for key, value in fields.items():
@@ -226,10 +233,21 @@ def _apply(
 
 
 def configure_profile(
-    name: str, source_repo: Path, directories: list[Path], *, yes: bool = False
+    name: str,
+    source_repo: Path,
+    directories: list[Path],
+    *,
+    yes: bool = False,
+    reviewed: dict[Path, FileState | None] | None = None,
+    expected_identity: str | None = None,
 ) -> tuple[Path | None, list[str]]:
     """Capture one confirmed Git identity and add defaults for reviewed directories."""
     identity = _source_identity(source_repo)
+    if (
+        expected_identity is not None
+        and digest(identity.model_dump_json().encode()) != expected_identity
+    ):
+        raise ValueError("Source Git identity changed after confirmation")
     target = profile_path(name)
     if target.exists() and read_profile(name) != identity:
         raise ValueError("Existing profile differs; preserve it and choose another explicit name")
@@ -248,16 +266,30 @@ def configure_profile(
         if current and current != str(target):
             raise ValueError(f"Existing directory identity include requires review: {directory}")
         fields[key] = str(target)
-    return _apply({target: identity.fields(), config: fields}, yes=yes)
+    return _apply({target: identity.fields(), config: fields}, yes=yes, reviewed=reviewed)
 
 
-def use_profile(name: str, repo: Path, *, yes: bool = False) -> tuple[Path | None, list[str]]:
+def use_profile(
+    name: str,
+    repo: Path,
+    *,
+    yes: bool = False,
+    reviewed: dict[Path, FileState | None] | None = None,
+) -> tuple[Path | None, list[str]]:
     """Set an explicit local author override, preserving unspecified signing settings."""
     repo = exact_repository(repo)
+    profile = profile_path(name)
+    before = observe(profile)
     identity = read_profile(name)
+    if observe(profile) != before or (
+        reviewed is not None and (profile not in reviewed or before != reviewed[profile])
+    ):
+        raise ValueError("Selected Git profile changed after confirmation")
     if (
         _git("config", "--bool", "--get", "extensions.worktreeConfig", repo=repo, missing=True)
         == "true"
     ):
         raise ValueError("Per-worktree configuration requires a separate reviewed operation")
-    return _apply({repo / ".git/config": identity.fields()}, yes=yes, effective_repo=repo)
+    return _apply(
+        {repo / ".git/config": identity.fields()}, yes=yes, effective_repo=repo, reviewed=reviewed
+    )

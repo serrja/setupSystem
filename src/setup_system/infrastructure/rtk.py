@@ -1,8 +1,11 @@
-"""Detect and maintain the pinned Rust Token Killer binary without PATH duplication."""
+"""Install the selected official RTK binary for the current account."""
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
+import json
 import os
 import platform
 import re
@@ -11,36 +14,118 @@ import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
+from typing import Annotated, Literal
 
-from setup_system.domain.tool_releases import RtkRelease
+from pydantic import Field
+
+from setup_system.domain.contracts import ContractModel
+from setup_system.domain.receipts import FileState
 from setup_system.domain.workspace_facts import RtkStatus
-from setup_system.infrastructure.catalog_repository import load_policy, read_contract
-from setup_system.infrastructure.downloads import (
-    GITHUB_RELEASE_HOSTS,
-    DownloadError,
-    DownloadFailure,
-    DownloadPolicy,
-    ProxyPolicy,
-    copy_https,
-)
+from setup_system.infrastructure.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files
-from setup_system.resource_locator import ResourceLocator
+from setup_system.infrastructure.native_target import architecture
+from setup_system.infrastructure.receipt_repository import ownership
 
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 1024 * 1024
+REPOSITORY = "rtk-ai/rtk"
+Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
-def inspect_rtk(path: Path | None = None) -> RtkStatus:
-    """Identify rtk-ai/rtk using both version and its distinctive gain command."""
-    command = path or (Path(found) if (found := shutil.which("rtk")) else None)
-    if command is None or not command.is_file() or not os.access(command, os.X_OK):
-        return RtkStatus(path=None, version=None, product_matches=False)
+class Release(ContractModel):
+    version: Annotated[str, Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")]
+    archive: Literal["rtk-x86_64-unknown-linux-musl.tar.gz", "rtk-aarch64-unknown-linux-gnu.tar.gz"]
+    sha256: Digest
+    checksum_sha256: Digest
+
+
+def _read(url: str, limit: int) -> bytes:
+    hosts = (
+        frozenset({"api.github.com"})
+        if url.startswith("https://api.github.com/")
+        else GITHUB_RELEASE_HOSTS
+    )
+    return read_https(url, DownloadPolicy(hosts, limit, 30, total_timeout=120))
+
+
+def release(version: str | None = None) -> Release:
+    if version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Invalid RTK release version")
+    platform_asset = {
+        "amd64": "rtk-x86_64-unknown-linux-musl.tar.gz",
+        "arm64": "rtk-aarch64-unknown-linux-gnu.tar.gz",
+    }.get(architecture(platform.machine()))
+    if platform.system() != "Linux" or not platform_asset:
+        raise ValueError("Official RTK requires Linux amd64 or arm64")
+    selector = f"tags/v{version}" if version else "latest"
+    metadata = json.loads(
+        _read(f"https://api.github.com/repos/{REPOSITORY}/releases/{selector}", 2 * 1024 * 1024)
+    )
+    if not isinstance(metadata, dict):
+        raise ValueError("Invalid official RTK release metadata")
+    tag = metadata.get("tag_name")
+    if (
+        not isinstance(tag, str)
+        or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag)
+        or metadata.get("draft") is not False
+        or metadata.get("prerelease") is not False
+        or not metadata.get("published_at")
+        or metadata.get("html_url") != f"https://github.com/{REPOSITORY}/releases/tag/{tag}"
+        or (version and tag != "v" + version)
+    ):
+        raise ValueError("Expected the public stable RTK release")
+    assets = metadata.get("assets")
+    digests: dict[str, str] = {}
+    if not isinstance(assets, list):
+        raise ValueError("Invalid official RTK asset inventory")
+    for asset in assets:
+        if not isinstance(asset, dict) or asset.get("name") not in (
+            platform_asset,
+            "checksums.txt",
+        ):
+            continue
+        name = asset["name"]
+        origin = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
+        digest = asset.get("digest")
+        if (
+            name in digests
+            or asset.get("browser_download_url") != origin
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
+        ):
+            raise ValueError("Invalid official RTK asset identity")
+        digests[name] = digest[7:]
+    if len(digests) != 2:
+        raise ValueError("Official RTK release is missing the target archive or checksums")
+    return Release.model_validate(
+        {
+            "version": tag[1:],
+            "archive": platform_asset,
+            "sha256": digests[platform_asset],
+            "checksum_sha256": digests["checksums.txt"],
+        }
+    )
+
+
+def _verify_executable(command: Path) -> RtkStatus:
+    """Smoke only the binary extracted from verified official release bytes."""
+    env = {"HOME": str(command.parent), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
     version = subprocess.run(
-        [str(command), "--version"], capture_output=True, text=True, timeout=10, check=False
+        [str(command), "--version"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
     )
     gain = subprocess.run(
-        [str(command), "gain", "--help"], capture_output=True, text=True, timeout=10, check=False
+        [str(command), "gain", "--help"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
     )
     match = re.fullmatch(r"rtk (\d+\.\d+\.\d+)", version.stdout.strip())
     valid = version.returncode == 0 and gain.returncode == 0 and "savings" in gain.stdout.lower()
@@ -51,99 +136,98 @@ def inspect_rtk(path: Path | None = None) -> RtkStatus:
     )
 
 
-def plan_rtk(root: Path) -> tuple[RtkStatus, str]:
-    """Report the pinned provider action without network or filesystem writes."""
-    manifest = read_contract(ResourceLocator.for_root(root).manifest("rtk.toml"), RtkRelease)
-    status = inspect_rtk()
-    return status, status.describe(manifest.version)
+def _released_binary(selected: Release) -> bytes:
+    base = f"https://github.com/{REPOSITORY}/releases/download/v{selected.version}"
+    checksums = _read(base + "/checksums.txt", MAX_CHECKSUM_BYTES)
+    if hashlib.sha256(checksums).hexdigest() != selected.checksum_sha256:
+        raise ValueError("Official RTK checksums digest mismatch")
+    matches = [
+        fields[0]
+        for line in checksums.decode().splitlines()
+        if len(fields := line.split()) == 2 and fields[1].lstrip("*") == selected.archive
+    ]
+    if matches != [selected.sha256]:
+        raise ValueError("Official RTK checksum for the target archive does not match")
+    archive = _read(base + "/" + selected.archive, MAX_ARCHIVE_BYTES)
+    if hashlib.sha256(archive).hexdigest() != selected.sha256:
+        raise ValueError("RTK archive checksum mismatch")
+    with gzip.GzipFile(fileobj=io.BytesIO(archive)) as compressed:
+        payload = compressed.read(MAX_ARCHIVE_BYTES + 1)
+    if len(payload) > MAX_ARCHIVE_BYTES:
+        raise ValueError("RTK archive exceeds its unpacked size limit")
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as tar:
+        members = [row for row in tar if Path(row.name).name == "rtk"]
+        if (
+            len(members) != 1
+            or not members[0].isreg()
+            or Path(members[0].name).is_absolute()
+            or ".." in Path(members[0].name).parts
+            or not 0 < members[0].size <= MAX_ARCHIVE_BYTES
+        ):
+            raise ValueError("Expected one bounded regular RTK binary")
+        member = tar.extractfile(members[0])
+        if member is None:
+            raise ValueError("RTK binary is absent")
+        return member.read(MAX_ARCHIVE_BYTES + 1)
 
 
-def _target_name(manifest: RtkRelease, *, root: Path | None = None) -> str:
-    if platform.system() != "Linux":
-        raise ValueError("RTK provider supports Linux only")
-    architecture = platform.machine()
-    canonical = load_policy(root).normalize_architecture(architecture)
-    if canonical == "x86_64":
-        return manifest.linux_x86_64
-    if canonical == "arm64":
-        return manifest.linux_arm64
-    raise ValueError(f"RTK has no pinned target for {architecture}")
-
-
-def _download(url: str, destination: Path, *, max_bytes: int = MAX_ARCHIVE_BYTES) -> None:
-    policy = DownloadPolicy(
-        GITHUB_RELEASE_HOSTS,
-        max_bytes,
-        30,
-        proxy=ProxyPolicy.from_loopback_environment(os.environ),
+def _installed(selected: Release, binary: bytes | None = None) -> RtkStatus:
+    local = Path.home() / ".local/bin/rtk"
+    other = shutil.which("rtk")
+    target = local if local.exists() or local.is_symlink() else Path(other) if other else None
+    if target is None:
+        return RtkStatus(path=None, version=None, product_matches=False)
+    if target.is_symlink() or not target.is_file() or target.stat().st_size > MAX_ARCHIVE_BYTES:
+        return RtkStatus(path=target, version=None, product_matches=False)
+    actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    matches = (
+        hashlib.sha256(binary if binary is not None else _released_binary(selected)).hexdigest()
+        == actual
     )
-    try:
-        with destination.open("wb") as output:
-            copy_https(url, output, policy)
-    except DownloadError as exc:
-        if exc.kind == DownloadFailure.HTTP:
-            raise RuntimeError(f"RTK download returned HTTP {exc.status}") from None
-        raise RuntimeError("RTK download failed: " + str(exc)) from None
+    owned = target == local and ownership().files.get(str(target)) == actual
+    return RtkStatus(
+        path=target,
+        version=selected.version if matches and os.access(target, os.X_OK) else None,
+        product_matches=matches or owned,
+    )
 
 
-def install_rtk(root: Path, *, update: bool = False) -> tuple[str, Path | None]:
-    """Keep a suitable install, or replace one verified target atomically."""
-    manifest = read_contract(ResourceLocator.for_root(root).manifest("rtk.toml"), RtkRelease)
-    status = inspect_rtk()
-    plan = status.describe(manifest.version)
+def plan_rtk(selected: Release) -> tuple[RtkStatus, str]:
+    status = _installed(selected)
+    return status, status.describe(selected.version)
+
+
+def install_rtk(
+    selected: Release, *, update: bool = False, reviewed: dict[Path, FileState | None] | None = None
+) -> tuple[str, Path | None]:
+    data = _released_binary(selected)
+    status = _installed(selected, data)
+    plan = status.describe(selected.version)
     if status.path is not None and not status.product_matches:
         raise ValueError(plan)
-    if status.version == manifest.version:
+    target = status.path or Path.home() / ".local/bin/rtk"
+    user_target = target.is_relative_to(Path.home()) and not target.is_symlink()
+    before = observe(target) if user_target else None
+    if (
+        reviewed is not None
+        and user_target
+        and (target not in reviewed or reviewed[target] != before)
+    ):
+        raise ValueError("RTK target changed after confirmation")
+    if status.version == selected.version:
         return plan, None
     if status.path is not None and not update:
-        raise ValueError("Confirm the update before replacing a different RTK version")
-    target = status.path or Path.home() / ".local/bin/rtk"
-    home = Path.home().resolve()
-    if not target.is_relative_to(home) or target.is_symlink():
+        raise ValueError("Confirm the RTK update first")
+    if not user_target:
         raise ValueError("RTK target must be a regular file inside the current home")
-    if target.exists() and (not target.is_file() or target.stat().st_uid != os.getuid()):
-        raise ValueError("RTK target is not an owned regular file")
-    before = observe(target)
     if before and status.path != target:
         raise ValueError("An unmanaged RTK target requires review")
-    archive_name = _target_name(manifest, root=root)
-    release = manifest.release
-    with tempfile.TemporaryDirectory(prefix="setup-rtk-") as temporary:
-        temporary_dir = Path(temporary)
-        archive = temporary_dir / archive_name
-        checksums = temporary_dir / "checksums.txt"
-        _download(f"{release}/{archive_name}", archive)
-        _download(f"{release}/{manifest.checksums}", checksums, max_bytes=MAX_CHECKSUM_BYTES)
-        expected = {
-            columns[1].lstrip("*"): columns[0]
-            for line in checksums.read_text().splitlines()
-            if len(columns := line.split()) == 2
-        }.get(archive_name)
-        if expected is None or not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
-            raise ValueError("Official RTK checksum for the target archive is absent")
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != expected.lower():
-            raise ValueError("RTK archive checksum mismatch")
-        with tarfile.open(archive, "r:gz") as bundle:
-            members = [
-                member
-                for member in bundle.getmembers()
-                if member.name.split("/")[-1] == "rtk" and member.isfile()
-            ]
-            if len(members) != 1:
-                raise ValueError("RTK archive must contain exactly one regular binary")
-            stream = bundle.extractfile(members[0])
-            if stream is None:
-                raise ValueError("RTK binary could not be read")
-            binary = temporary_dir / "rtk"
-            with binary.open("wb") as output:
-                shutil.copyfileobj(stream, output)
+    with tempfile.TemporaryDirectory(prefix="setup-rtk-") as tmp:
+        binary = Path(tmp) / "rtk"
+        binary.write_bytes(data)
         binary.chmod(0o700)
-        verified = inspect_rtk(binary)
-        if not verified.product_matches or verified.version != manifest.version:
-            raise ValueError("Downloaded RTK executable failed product/version verification")
-        backup = apply_files(
-            {target: binary.read_bytes()},
-            modes={target: 0o755},
-            expected={target: before.sha256 if before else None},
-        )
-        return "changed: verified official RTK archive installed", backup
+        verified = _verify_executable(binary)
+        if not verified.product_matches or verified.version != selected.version:
+            raise ValueError("Downloaded RTK failed product or version verification")
+    backup = apply_files({target: data}, modes={target: 0o755}, expected={target: before})
+    return "Installed verified official RTK", backup

@@ -15,10 +15,10 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from setup_system.bootstrap.source import protected
 from setup_system.domain.system_receipts import UnlockPlan
 from setup_system.infrastructure.boot_recovery import BootRecovery, digest
 from setup_system.infrastructure.palette import palette
+from setup_system.infrastructure.system_paths import protected
 
 BOOT = Path("/boot")
 SYS = Path("/sys")
@@ -146,7 +146,17 @@ def _identity() -> str:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
             raise ValueError(f"Expected an installed boot file at {path}")
-        stamps.append((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns))
+        stamps.append(
+            (
+                info.st_dev,
+                info.st_ino,
+                info.st_mode,
+                info.st_uid,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
+            )
+        )
     identity = json.dumps([root, boot, esp, loader, kernel, stamps], sort_keys=True)
     return hashlib.sha256(identity.encode()).hexdigest()
 
@@ -264,13 +274,60 @@ def _check_password_unlock() -> None:
         raise ValueError("Only existing interactive crypttab password entries are supported")
 
 
+def _desired(root: Path | None) -> dict[Path, bytes]:
+    config = ETC / "plymouth/plymouthd.conf"
+    theme = THEMES / THEME / (THEME + ".plymouth")
+    splash = ETC / "default/grub.d/98-setup-system-splash.cfg"
+    keymap = ETC / "initramfs-tools/conf.d/setup-system-keymap"
+    return {
+        theme: _theme(root),
+        splash: (
+            b'case " $GRUB_CMDLINE_LINUX_DEFAULT " in *" splash "*) ;;\n'
+            b'*) GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} splash" ;; esac\n'
+            b'GRUB_TIMEOUT_STYLE=menu\ncase "$GRUB_TIMEOUT" in ""|0) GRUB_TIMEOUT=5 ;; esac\n'
+        ),
+        keymap: b"KEYMAP=y\n",
+        config: _theme_config(config.read_bytes() if config.exists() else b""),
+    }
+
+
+def _verification_path() -> Path:
+    return ETC / "plymouth/setup-system-unlock.verified"
+
+
+def _verification_stamp() -> bytes:
+    return ("setup-system-unlock-v1 " + _identity() + "\n").encode()
+
+
+def is_current(root: Path | None) -> bool:
+    if prerequisites():
+        return False
+    kernel = _kernel()
+    try:
+        if any(
+            not path.is_file() or path.read_bytes() != data for path, data in _desired(root).items()
+        ):
+            return False
+        if os.geteuid() != 0 and not all(
+            os.access(p, os.R_OK) for p in (BOOT / ("initrd.img-" + kernel), BOOT / "grub/grub.cfg")
+        ):
+            stamp = _verification_path()
+            protected(stamp, directory=False)
+            return stamp.read_bytes() == _verification_stamp()
+        _verify_listing(BOOT / ("initrd.img-" + kernel), themed=True)
+        _verify_grub(BOOT / "grub/grub.cfg", kernel)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def apply_unlock(
     expected: object,
     *,
     root: Path | None = None,
     packages: object = (),
     install: Callable[[tuple[str, ...]], None] | None = None,
-) -> None:
+) -> bool:
     if os.geteuid() != 0 or _identity() != expected:
         raise ValueError("Boot state changed or privileged revalidation failed")
     needed = prerequisites()
@@ -285,25 +342,18 @@ def apply_unlock(
     image = BOOT / ("initrd.img-" + kernel)
     grub = BOOT / "grub/grub.cfg"
     config = ETC / "plymouth/plymouthd.conf"
-    theme = THEMES / THEME / (THEME + ".plymouth")
-    splash = ETC / "default/grub.d/98-setup-system-splash.cfg"
-    keymap = ETC / "initramfs-tools/conf.d/setup-system-keymap"
+    desired = _desired(root)
     images = tuple(sorted(BOOT.glob("initrd.img-*"))) if needed else (image,)
-    destinations = (*images, grub, config, theme, splash, keymap)
+    stamp = _verification_path()
+    if stamp.exists() and not re.fullmatch(
+        rb"setup-system-unlock-v1 [a-f0-9]{64}\n", stamp.read_bytes()
+    ):
+        raise ValueError("Unknown boot verification record")
+    destinations = (*images, grub, *desired, stamp)
     for path in destinations:
         protected(path, directory=False)
         if path.exists() and (not path.is_file() or path.stat().st_nlink != 1):
             raise ValueError("Unsupported boot file type or link count")
-    desired = {
-        theme: _theme(root),
-        splash: (
-            b'case " $GRUB_CMDLINE_LINUX_DEFAULT " in *" splash "*) ;;\n'
-            b'*) GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} splash" ;; esac\n'
-            b'GRUB_TIMEOUT_STYLE=menu\ncase "$GRUB_TIMEOUT" in ""|0) GRUB_TIMEOUT=5 ;; esac\n'
-        ),
-        keymap: b"KEYMAP=y\n",
-        config: _theme_config(config.read_bytes() if config.exists() else b""),
-    }
     for path, data in desired.items():
         if path != config and path.exists() and path.read_bytes() != data:
             raise ValueError(f"Managed boot destination conflicts with existing {path}")
@@ -317,16 +367,8 @@ def apply_unlock(
         BOOT
     ).free < rebuild_bytes + (backup_bytes if same_device else 0):
         raise ValueError("Insufficient space for both verified backups and rebuilt boot images")
-    if not needed and all(
-        path.is_file() and path.read_bytes() == data for path, data in desired.items()
-    ):
-        try:
-            _verify_listing(image, themed=True)
-            _verify_grub(grub, kernel)
-            return
-        except (ValueError, subprocess.CalledProcessError):
-            # A previous attempt may have persisted the selection before rebuilding the image.
-            pass
+    if is_current(root):
+        return False
     backup_dir = Path(tempfile.mkdtemp(prefix="unlock-", dir=STATE))
     recovery = BootRecovery(backup_dir, kernel, destinations)
     try:
@@ -376,7 +418,11 @@ def apply_unlock(
                 if prior is None:
                     raise ValueError("Required boot file disappeared during rebuild")
                 recovery.publish(path, prepared, prior[1])
+        if not is_current(root):
+            raise ValueError("Installed boot configuration did not pass readback")
+        recovery.publish(stamp, _verification_stamp(), 0o644)
         recovery.checkpoint("needs_reboot")
+        return True
     except BaseException:
         recovery.restore(packages_attempted=bool(needed))
         raise

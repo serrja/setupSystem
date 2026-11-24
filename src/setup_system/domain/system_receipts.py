@@ -7,8 +7,9 @@ from pydantic import Field, StrictBool, StrictInt, model_validator
 
 from setup_system.domain.contracts import ContractModel
 from setup_system.domain.manifest_types import Digest, FrozenMap
-from setup_system.domain.system_commands import RegionalKind
 from setup_system.domain.system_facts import FileMode
+
+RegionalKind = Literal["timezone", "locale", "keyboard"]
 
 BootStatus = Literal[
     "prepared",

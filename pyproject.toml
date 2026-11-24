@@ -4,25 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system"
-version = "0.4.0.dev0"
+version = "0.5.0.dev0"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic>=2.12,<3",
-    "copier==9.17.2",
-    "pyyaml>=6,<7",
-    "plumbum>=2,<3",
-    "packaging>=25,<27",
-    "textual>=6,<7",
-    "pydantic-settings>=2.12,<3",
-    "tomlkit>=0.15,<1",
+    "pydantic>=2.10,<3",
+    "textual>=2.1,<7",
+    "tomlkit>=0.13,<1",
     "platformdirs>=4,<5",
-    "ansible-core>=2.20,<2.21",
-    "ansible-runner>=2.4,<3",
-    "jinja2>=3.1.6,<4",
+    "pexpect>=4.9,<5",
+    "packaging>=24,<27",
+    "pyyaml>=6,<7",
+    "jinja2>=3.1,<4",
+    "ansible-core>=2.18,<2.21",
 ]
 
 [project.scripts]
@@ -30,7 +27,7 @@ setup-system = "setup_system.entrypoint:main"
 
 [dependency-groups]
 dev = [
-    "typer>=0.27.2,<1",
+    "packaging>=25,<27",
     "hatchling>=1.27,<2",
     "mypy>=2.3,<3",
     "pytest>=9,<10",
@@ -39,6 +36,8 @@ dev = [
     "types-pyyaml>=6,<7",
     "shellcheck-py>=0.11.0.1",
     "ansible-lint>=26.11.0",
+    "copier==9.17.2",
+    "typer>=0.27.2,<1",
 ]
 
 [tool.hatch.build]
@@ -46,15 +45,21 @@ exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", 
 
 [tool.hatch.build.targets.sdist]
 # Ship only runtime inputs; local reports/caches must never enter a source release.
-include = ["/src/setup_system", "/assets", "/manifests", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
+include = ["/src/setup_system", "/assets", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/ansible", "/debian", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
 exclude = ["**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_system"]
 
 [tool.hatch.build.targets.wheel.force-include]
-assets = "setup_system/assets"
-manifests = "setup_system/manifests"
+"Makefile" = "setup_system/bundle/Makefile"
+"install.sh" = "setup_system/bundle/install.sh"
+"mk" = "setup_system/bundle/mk"
+"libexec" = "setup_system/bundle/libexec"
+"assets" = "setup_system/bundle/assets"
+"config" = "setup_system/bundle/config"
+"ansible" = "setup_system/bundle/ansible"
+"ansible.cfg" = "setup_system/bundle/ansible.cfg"
 
 [tool.uv]
 # Pin the isolated build backend and its full dependency closure to uv.lock versions.
@@ -83,9 +88,10 @@ ban-relative-imports = "parents"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/setup_system", "docker/check_entrypoint.py", "docker/verify_native.py", "docker/verify_privileged.py", "docker/verify-installed.py", "assets/hyprland/panel.py", "assets/login/login_session.py"]
+files = ["src/setup_system", "assets/hyprland/panel.py", "assets/login/login_session.py"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 markers = ["unit: isolated unit checks", "integration: isolated system integration", "e2e: desktop checks"]
 

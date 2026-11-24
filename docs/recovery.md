@@ -6,24 +6,27 @@ problem, inspect the receipts and retry the same selection.
 
 ## Receipts and backups
 
-The privileged executor serializes system changes with a root-owned process lock.
-Cleanup re-resolves APT, then uses dpkg remove on exactly the approved names; it cannot
-expand to newly introduced dependencies. See `cleanup.json` for partial/failed attempts.
+A native flock serializes package changes, Apply and Restore. Preview optional removals separately. Cleanup rechecks the native solver result and invokes dpkg on the exact approved names.
 
-- `/var/lib/setup-system/install.json`: signed APT acquisition, closure and actual package stages.
-- `/var/lib/setup-system/desktop.json` and `desktop-backups/`: managed login/boot evidence.
-- `/var/lib/setup-system/settings-backups/` holds previous system intentions and managed Firefox policy bytes by content hash.
-- `$XDG_STATE_HOME/setup-system/workstation.json` holds the user ownership index.
-- `$XDG_STATE_HOME/setup-system/backups/` holds private file operation journals and original bytes.
+| Managed object | Recovery evidence |
+| --- | --- |
+| Existing user configuration | Before bytes, owner and mode, displaced inode and verified after state |
+| Newly created user file | Recorded absence before Apply and the expected published file |
+| Later manual edit, mode or ownership change | Restore reports a conflict and preserves the competing version |
+| Previously restored file | Repeating Restore uses the recorded operation and checks the live state again |
+| Login or boot files | Stage-specific backups under `/var/lib/setup-system` |
+| Debian packages | Native APT and dpkg status and logs |
 
-When the system service replaces an existing system intentions file or managed Firefox
+User ownership is recorded in `$XDG_STATE_HOME/setup-system/workstation.json`. File journals and original bytes are under `$XDG_STATE_HOME/setup-system/backups/`.
+
+When the system task replaces the managed Firefox
 policy, it retains the original inode in a private sibling directory named
 `.setup-system-<filename>-<suffix>/original`. An administrator who had the old
 file open can still write to that inode. After a conflict or interruption, compare
 the live file, `original` and the content-addressed backup before recovering the
 intended bytes and permissions. A new file at the live path is preserved.
 
-Open Workspace Tools, select Recovery and preview an operation. The preview lists
+In Working environment, choose a backup and preview Restore. The preview lists
 which files will be restored or removed. Apply checks the current hash, owner and
 mode against the recorded state. A later edit requires review. A successful
 restore removes empty directories created by that operation and leaves additional
@@ -48,14 +51,11 @@ System recovery depends on the stage that completed. Keep original release
 artifacts. Use `dpkg --audit` to inspect an interrupted package operation and
 review APT's proposed resolution before authorizing repair.
 
-Before starting a new package transaction, the installer preserves a recognized schema 1
-receipt at `/var/lib/setup-system/migration/install-v1-<sha256>.json`. Schema 2
-records the current package stages. An unknown schema or a conflicting backup stops
-the transaction so an administrator can inspect the original.
+Existing package journals from older releases remain on disk for an administrator to inspect. New package transactions use native package status and logs.
 
 The graphical login plan records the current systemd default target, the readable
 GRUB inputs and the intended login files before confirmation. Apply checks them
-again using the verified privileged runtime. The plan names any inputs that only
+again using the installed system task. The plan names any inputs that only
 root can read. A missing greetd unit is checked after its planned package installation.
 Debian package triggers can regenerate the output menu from the same GRUB inputs.
 

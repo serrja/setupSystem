@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import tempfile
+import uuid
 from collections.abc import Collection
 from pathlib import Path
 
@@ -225,6 +226,17 @@ class LocalRecoveryFiles:
                 directories.append((path, entry))
         return directories
 
+    def removable_directories(
+        self, entries: list[tuple[Path, CreatedDirectory]], removed_files: set[Path]
+    ) -> list[tuple[Path, CreatedDirectory]]:
+        disappearing = set(removed_files)
+        selected = []
+        for path, entry in sorted(entries, key=lambda pair: len(pair[0].parts), reverse=True):
+            if all(child in disappearing for child in path.iterdir()):
+                disappearing.add(path)
+                selected.append((path, entry))
+        return selected
+
     def conflict(self, target: RecoveryTarget) -> str:
         area = apply_stage(target.change, target.path)
         retained = (
@@ -252,9 +264,23 @@ class LocalRecoveryFiles:
     def remove_directories(self, entries: list[tuple[Path, CreatedDirectory]]) -> None:
         for path, entry in sorted(entries, key=lambda item: len(item[0].parts), reverse=True):
             try:
-                info = path.lstat()
-                if (info.st_dev, info.st_ino) == (entry.device, entry.inode):
-                    path.rmdir()
+                if any(path.iterdir()):
+                    continue
+                # Claim the name before verifying the inode, so a replacement directory survives.
+                claimed = path.with_name(".setup-system-directory-" + uuid.uuid4().hex)
+                file_publication.move_new(path, claimed)
+                try:
+                    info = claimed.lstat()
+                    if (info.st_dev, info.st_ino) == (entry.device, entry.inode):
+                        claimed.rmdir()
+                finally:
+                    if os.path.lexists(claimed):
+                        try:
+                            file_publication.move_new(claimed, path)
+                        except FileExistsError as error:
+                            raise ValueError(
+                                f"Directory changed during Restore; review {claimed}"
+                            ) from error
             except OSError as exc:
                 if exc.errno not in {errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST}:
                     raise

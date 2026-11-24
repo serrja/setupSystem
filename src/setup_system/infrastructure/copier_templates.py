@@ -2,24 +2,35 @@
 
 from __future__ import annotations
 
-import contextlib
 import fcntl
 import hashlib
+import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 
-import copier
 import yaml
-from plumbum import local
+from packaging.version import Version
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 
-from setup_system.domain.templates import TemplatePlan, TemplateResult, TemplateSource
-from setup_system.domain.tool_requests import answer_values
+from setup_system.diagnostics import PartialApplyError
+from setup_system.domain.projects import (
+    TemplateMetadata,
+    TemplateVersion,
+    python_version_for_git_tag,
+)
+from setup_system.domain.templates import (
+    TemplatePlan,
+    TemplateResult,
+    TemplateSource,
+    answer_values,
+)
+from setup_system.infrastructure.user_storage import safe_file
 
 
 class _AnswersSource(BaseModel):
@@ -28,13 +39,40 @@ class _AnswersSource(BaseModel):
     commit: str
 
 
+def _git_environment() -> dict[str, str]:
+    # Public sources never need the caller's credentials, proxy or Git settings.
+    return {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/dev/null",
+        "LANG": "C.UTF-8",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/bin/false",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_ALLOW_PROTOCOL": "file:https",
+    }
+
+
 def _git(repository: Path, *args: str) -> str:
     result = subprocess.run(
-        ["git", "-c", "core.hooksPath=/dev/null", "-C", str(repository), *args],
+        [
+            "git",
+            "-c",
+            "http.followRedirects=false",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-C",
+            str(repository),
+            *args,
+        ],
         text=True,
         capture_output=True,
         timeout=120,
         check=False,
+        env=_git_environment(),
     )
     if result.returncode:
         # Git stderr may include credentials from a user's credential helper or proxy.
@@ -71,8 +109,47 @@ def _validate_cache(repository: Path, source: TemplateSource) -> None:
         except (KeyError, TypeError, tomllib.TOMLDecodeError) as error:
             raise ValueError("Template version metadata is missing or invalid") from error
         if actual_version != version.version:
-            raise ValueError(f"Template package/tag version mismatch for {version.version}")
+            # Shared releases allocate the native version after the source commit.
+            # Its immutable annotated tag binds that allocation to this exact tree.
+            annotation = _git(repository, "cat-file", "-p", ref).partition("\n\n")[2]
+            try:
+                record = json.loads(annotation)
+            except ValueError:
+                record = {}
+            if not isinstance(record, dict) or any(
+                record.get(k) != v
+                for k, v in {
+                    "repository": source.project,
+                    "sha": version.commit,
+                    "version": version.tag[1:],
+                    "pythonVersion": version.version,
+                    "contractSchema": "h02-python/v1",
+                }.items()
+            ):
+                raise ValueError(f"Template package/tag version mismatch for {version.version}")
     _git(repository, "fsck", "--full", "--no-reflogs")
+
+
+MAX_CACHE_IDENTITY = 2 * 1024 * 1024
+
+
+def _cache_identity(path: Path) -> bytes:
+    safe_file(path, os.getuid())
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or info.st_mode & 0o022
+            or info.st_size > MAX_CACHE_IDENTITY
+        ):
+            raise ValueError("Unsafe or oversized template cache metadata")
+        raw = stream.read(MAX_CACHE_IDENTITY + 1)
+    if len(raw) > MAX_CACHE_IDENTITY:
+        raise ValueError("Oversized template cache metadata")
+    return raw
 
 
 def _cached_repository(destination: Path, source: TemplateSource, identity: bytes) -> Path | None:
@@ -82,10 +159,122 @@ def _cached_repository(destination: Path, source: TemplateSource, identity: byte
     _no_symlinks(manifest)
     if not repository.is_dir():
         return None
-    if not manifest.is_file() or manifest.read_bytes() != identity:
+    if not manifest.is_file() or _cache_identity(manifest) != identity:
         raise ValueError("Template cache identity is corrupt")
     _validate_cache(repository, source)
     return repository
+
+
+def _cached_sources(root: Path, source: TemplateSource) -> Iterator[tuple[TemplateSource, Path]]:
+    parent = root / source.metadata.alias
+    _no_symlinks(parent)
+    for path in sorted(parent.glob("*/catalog.json")):
+        _no_symlinks(path)
+        raw = _cache_identity(path)
+        if hashlib.sha256(raw).hexdigest() != path.parent.name:
+            raise ValueError("Template cache identity is corrupt")
+        cached = TemplateSource.model_validate_json(raw)
+        if (cached.project, cached.url, cached.metadata.alias) != (
+            source.project,
+            source.url,
+            source.metadata.alias,
+        ):
+            raise ValueError("Template cache source substitution")
+        repo = _cached_repository(path.parent, cached, raw)
+        if repo is not None:
+            yield cached, repo
+
+
+def available_versions(
+    source: TemplateSource, cache: Path, *, offline: bool
+) -> tuple[TemplateVersion, ...]:
+    if source.metadata.versions:
+        return tuple(
+            sorted(source.metadata.versions, key=lambda v: Version(v.version), reverse=True)
+        )
+    found: dict[str, TemplateVersion] = {}
+    if offline:
+        rows = [v for cached, _ in _cached_sources(cache, source) for v in cached.metadata.versions]
+    else:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                "/",
+                "-c",
+                "http.followRedirects=false",
+                "ls-remote",
+                "--tags",
+                source.url,
+                "refs/tags/v*",
+            ],
+            capture_output=True,
+            text=True,
+            env=_git_environment(),
+            timeout=60,
+            check=False,
+        )
+        if result.returncode:
+            raise ValueError("Cannot read annotated releases from the catalog GitHub project")
+        rows = []
+        for line in result.stdout.splitlines():
+            sha, ref = line.split("\t", 1)
+            if not ref.endswith("^{}"):
+                continue
+            tag = ref.removeprefix("refs/tags/").removesuffix("^{}")
+            try:
+                native = python_version_for_git_tag(tag)
+            except ValueError:
+                continue
+            rows.append(TemplateVersion(version=native, tag=tag, commit=sha))
+    for version in rows:
+        if version.version in found and version != found[version.version]:
+            raise ValueError("Conflicting immutable tags for one template version")
+        found[version.version] = version
+    return tuple(sorted(found.values(), key=lambda v: Version(v.version), reverse=True))
+
+
+def selected_source(
+    source: TemplateSource,
+    cache: Path,
+    version: str | None,
+    destination: Path,
+    *,
+    update: bool,
+    offline: bool,
+) -> TemplateSource:
+    rows = available_versions(source, cache, offline=offline)
+    stable = next((row for row in rows if not Version(row.version).is_prerelease), None)
+    target = (
+        next((r for r in rows if version in (r.version, r.tag)), None)
+        if version
+        else stable or next(iter(rows), None)
+    )
+    if target is None:
+        raise ValueError(
+            "Requested annotated template version is unavailable; inspect releases or cache online"
+        )
+    selected = [target]
+    if update:
+        answers = _read_answers(destination)
+        original = next((r for r in rows if answers.get("_commit") in (r.tag, r.commit)), None)
+        if original is None or answers.get("_src_path") != source.url:
+            raise ValueError("Project answers do not match a known version of this template")
+        if original != target:
+            selected.append(original)
+    return TemplateSource(
+        project=source.project,
+        url=source.url,
+        metadata=TemplateMetadata(
+            alias=source.metadata.alias, recommendedVersion=target.version, versions=tuple(selected)
+        ),
+    )
+
+
+def cached(plan: TemplatePlan) -> bool:
+    raw = plan.source.model_dump_json().encode()
+    location = plan.cache_root / plan.source.metadata.alias / hashlib.sha256(raw).hexdigest()
+    return _cached_repository(location, plan.source, raw) is not None
 
 
 def prepare_cache(plan: TemplatePlan) -> Path:
@@ -96,12 +285,28 @@ def prepare_cache(plan: TemplatePlan) -> Path:
     repository = _cached_repository(destination, plan.source, identity)
     if repository is not None:
         return repository
+    cached_versions: dict[TemplateVersion, Path] = {}
     if plan.offline:
-        raise ValueError("Offline template source cache is missing; run templates cache online")
+        for saved, repo in _cached_sources(plan.cache_root, plan.source):
+            cached_versions.update((row, repo) for row in saved.metadata.versions)
+        if any(row not in cached_versions for row in plan.source.metadata.versions):
+            raise ValueError(
+                "Offline template source cache is missing; prepare the template cache online"
+            )
     destination.parent.mkdir(parents=True, exist_ok=True)
     lock_path = destination.parent / ".prepare.lock"
     _no_symlinks(lock_path)
-    with lock_path.open("a") as lock:
+    safe_file(lock_path, os.getuid())
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(descriptor, "r+b") as lock:
+        info = os.fstat(lock.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or info.st_mode & 0o022
+        ):
+            raise ValueError("Unsafe template cache lock")
         fcntl.flock(lock, fcntl.LOCK_EX)
         repository = _cached_repository(destination, plan.source, identity)
         if repository is not None:
@@ -109,11 +314,22 @@ def prepare_cache(plan: TemplatePlan) -> Path:
         temporary = Path(tempfile.mkdtemp(prefix=".prepare-", dir=destination.parent))
         try:
             staging = temporary / "source.git"
-            _git(temporary, "init", "--bare", str(staging))
+            _git(temporary, "init", "--bare", "--template=", str(staging))
             for version in plan.source.metadata.versions:
-                _fetch_ref(staging, plan.source.url, version.tag)
+                if version in cached_versions:
+                    _git(
+                        staging,
+                        "fetch",
+                        "--no-tags",
+                        str(cached_versions[version]),
+                        f"refs/tags/{version.tag}:refs/tags/{version.tag}",
+                    )
+                else:
+                    _fetch_ref(staging, plan.source.url, version.tag)
             _validate_cache(staging, plan.source)
-            (temporary / "catalog.json").write_bytes(identity)
+            manifest = temporary / "catalog.json"
+            manifest.write_bytes(identity)
+            manifest.chmod(0o600)
             temporary.rename(destination)
         finally:
             if temporary.exists():
@@ -121,27 +337,71 @@ def prepare_cache(plan: TemplatePlan) -> Path:
     return destination / "source.git"
 
 
-@contextlib.contextmanager
-def _cached_source(source: str, repository: Path) -> Iterator[None]:
-    """Limit Copier's Git access to this cache without changing any Git config file."""
-    values = {
-        "url." + repository.as_uri() + ".insteadOf": source,
-        "core.hooksPath": "/dev/null",
-    }
-    old = dict(os.environ)
-    try:
-        count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
-        for index, (key, value) in enumerate(values.items(), count):
-            os.environ[f"GIT_CONFIG_KEY_{index}"] = key
-            os.environ[f"GIT_CONFIG_VALUE_{index}"] = value
-        os.environ["GIT_CONFIG_COUNT"] = str(count + len(values))
-        os.environ["GIT_ALLOW_PROTOCOL"] = "file"
-        os.environ["GIT_TERMINAL_PROMPT"] = "0"
-        with local.env(**dict(os.environ)):
-            yield
-    finally:
-        os.environ.clear()
-        os.environ.update(old)
+def copier_executable() -> Path:
+    local = Path.home() / ".local/bin/copier"
+    if local.is_file() and os.access(local, os.X_OK):
+        return local
+    found = shutil.which("copier")
+    if found is None:
+        raise ValueError("Install the official Copier executable for your user first")
+    return Path(found)
+
+
+def _run_copier(plan: TemplatePlan, repository: Path, destination: Path) -> None:
+    # Copier uses real Git locally. Override its one reviewed HTTPS origin to
+    # the checked cache and disable all network transports, tasks and user trust.
+    with tempfile.TemporaryDirectory(prefix="setup-copier-") as temporary:
+        folder = Path(temporary)
+        data = folder / "answers.json"
+        data.write_text(json.dumps(answer_values(plan.data), allow_nan=False))
+        settings = folder / "settings.yml"
+        settings.write_text("defaults: {}\ntrust: []\n")
+        env = _git_environment()
+        env.update(
+            HOME=str(folder),
+            GIT_CONFIG_COUNT="2",
+            GIT_CONFIG_KEY_0="url." + repository.as_uri() + ".insteadOf",
+            GIT_CONFIG_VALUE_0=plan.source.url,
+            GIT_CONFIG_KEY_1="core.hooksPath",
+            GIT_CONFIG_VALUE_1="/dev/null",
+            GIT_ALLOW_PROTOCOL="file",
+            COPIER_SETTINGS_PATH=str(settings),
+        )
+        argv = [
+            str(copier_executable()),
+            "copy" if plan.operation == "create" else "update",
+            "--defaults",
+            "--skip-tasks",
+            "--vcs-ref",
+            plan.version.commit,
+            "--data-file",
+            str(data),
+        ]
+        if plan.operation == "create":
+            argv.append(plan.source.url)
+        else:
+            argv += ["--skip-answered"]
+        result = subprocess.run(
+            [*argv, str(destination)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode:
+            changed = destination.is_dir() and (
+                any(destination.iterdir())
+                if plan.operation == "create"
+                else bool(_git(destination, "status", "--porcelain"))
+            )
+            if changed:
+                raise PartialApplyError(
+                    "Copier stopped with project changes; inspect the working tree"
+                )
+            raise ValueError(
+                f"Copier {plan.operation} failed (exit {result.returncode}); inspect the project"
+            )
 
 
 def _read_answers(destination: Path) -> dict[str, JsonValue]:
@@ -157,7 +417,7 @@ def _read_answers(destination: Path) -> dict[str, JsonValue]:
         raise ValueError("Valid Copier answers are required") from None
 
 
-def _validate_destination(plan: TemplatePlan) -> None:
+def validate_destination(plan: TemplatePlan) -> None:
     destination = plan.destination
     _no_symlinks(destination)
     if plan.operation == "create":
@@ -186,35 +446,11 @@ def _validate_destination(plan: TemplatePlan) -> None:
 
 def execute_template(plan: TemplatePlan) -> TemplateResult:
     """Call official Copier, with tasks and unsafe extensions disabled, without commits."""
-    _validate_destination(plan)
+    validate_destination(plan)
     repository = prepare_cache(plan)
-    _validate_destination(plan)
+    validate_destination(plan)
     destination = plan.destination.resolve()
-    with _cached_source(plan.source.url, repository):
-        settings = copier.Settings(defaults={}, trust=[])
-        if plan.operation == "create":
-            copier.run_copy(
-                plan.source.url,
-                destination,
-                data=answer_values(plan.data),
-                vcs_ref=plan.version.commit,
-                defaults=plan.defaults,
-                settings=settings,
-                skip_tasks=True,
-                unsafe=False,
-            )
-        else:
-            copier.run_update(
-                destination,
-                data=answer_values(plan.data),
-                vcs_ref=plan.version.commit,
-                defaults=plan.defaults,
-                settings=settings,
-                skip_tasks=True,
-                unsafe=False,
-                overwrite=True,
-                skip_answered=True,
-            )
+    _run_copier(plan, repository, destination)
     conflicts = bool(
         plan.operation == "update" and _git(destination, "diff", "--name-only", "--diff-filter=U")
     )

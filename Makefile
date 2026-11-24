@@ -1,104 +1,58 @@
-UV ?= uv
-ifeq ($(CONTAINERIZED),1)
-RUFF ?= ruff
-else
-RUFF ?= uvx --from ruff==0.17.1 ruff
-endif
-# Fast native checks never prepare a product/build image. The Docker CI child
-# keeps its wrapper so test/coverage receipts describe the container execution.
-ifneq ($(SKIP_QUALITY_BUILD),1)
-ifneq ($(filter lint format format-check check,$(MAKECMDGOALS)),)
-override CONTAINERIZED := 1
-endif
-endif
-ifneq ($(CONTAINERIZED),1)
-QUALITY_IMAGE := setupsystem:quality
-RUNTIME_IMAGE := setupsystem:candidate
-QUALITY_EXTRA_TARGETS := compile lock-check entrypoint-check
-BUILD_DOCKERFILE := Dockerfile.quality
-COVERAGE_REPORT := coverage/python/coverage.json
-INSTALLED_TEST_IMAGE := setupsystem:installed
-ifeq ($(OFFLINE),1)
-QUALITY_RUN_ARGS += --pull=never --env UV_OFFLINE=true
-BUILD_COMMAND = $(RELEASE_CHECK_COMMAND)
-else
-BUILD_COMMAND = $(DOCKER) buildx build --file Dockerfile.quality $(DOCKER_BUILD_ARGS) $(LOCAL_BUILD_NETWORK) --target artifacts --output type=local,dest=coverage/artifacts .
-endif
-BUILD_RECEIPT_COMMAND = $(QUALITY_RUN) python docker/release.py capture-build --artifact-dir coverage/artifacts
-RELEASE_CHECK_COMMAND = $(QUALITY_RUN) python docker/release.py release-check --artifact-dir coverage/artifacts
-OFFLINE_PREFLIGHT_COMMAND = $(MAKE) setup-offline-preflight
-VERIFY_COMMAND = $(MAKE) verify-cli-installed
-IMAGE_COMMAND = $(DOCKER) buildx build --file Dockerfile.quality $(DOCKER_BUILD_ARGS) $(LOCAL_BUILD_NETWORK) --target runtime --load --tag $(RUNTIME_IMAGE) .
-CI_LOCAL_TARGETS ?= check coverage build verify release-check
-include docker/quality-python.mk
-
-.PHONY: setup-offline-preflight verify-cli-installed
-setup-offline-preflight: source-identity
-	@test -s "$(REPORT_DIR)/installed/test-image-id.txt" -a -s "$(REPORT_DIR)/installed/source.json" || { echo "BLOCKED: prepare installed CLI acceptance online first." >&2; exit 2; }
-	@test "$$(cat $(REPORT_DIR)/installed/test-image-id.txt)" = "$$($(DOCKER) image inspect $(INSTALLED_TEST_IMAGE) --format '{{.Id}}')" || { echo "BLOCKED: prepared installed CLI image missing or replaced." >&2; exit 2; }
-	@test "$$(sed -n 's/.*"contentSha256":"\([a-f0-9]*\)".*/\1/p' $(REPORT_DIR)/source.json)" = "$$(sed -n 's/.*"contentSha256":"\([a-f0-9]*\)".*/\1/p' $(REPORT_DIR)/installed/source.json)" || { echo "BLOCKED: installed CLI source changed." >&2; exit 2; }
-	$(RELEASE_CHECK_COMMAND)
-verify-cli-installed: source-identity
-	@mkdir -p "$(REPORT_DIR)/installed"
-ifneq ($(OFFLINE),1)
-	$(DOCKER) buildx build --file Dockerfile.quality $(DOCKER_BUILD_ARGS) $(LOCAL_BUILD_NETWORK) --target installed-test --load --tag $(INSTALLED_TEST_IMAGE) .
-else
-	$(MAKE) setup-offline-preflight
-endif
-	$(DOCKER) run --pull=never --rm --init --read-only --network none --tmpfs /tmp:rw,mode=1777,size=64m $(INSTALLED_TEST_IMAGE)
-	@cp "$(REPORT_DIR)/source.json" "$(REPORT_DIR)/installed/source.json"
-	@$(DOCKER) image inspect $(INSTALLED_TEST_IMAGE) --format '{{.Id}}' > "$(REPORT_DIR)/installed/test-image-id.txt"
-else
+# Runtime recipes use only packaged includes. The caller selects one fixed target.
 .DEFAULT_GOAL := help
-UV ?= uv
-.PHONY: help install lint typecheck test check build verify
-help:
-	@echo 'lint typecheck test check build verify'
-install:
-	$(UV) sync --locked
-lint:
-	$(UV) run --locked shellcheck install.sh assets/hyprland/*.sh assets/hyprland/start-hyprland
-	ANSIBLE_HOME="$(CURDIR)/coverage/ansible" $(UV) run --locked ansible-lint --offline src/setup_system/resources/user_files.yml
-	ANSIBLE_HOME="$(CURDIR)/coverage/ansible" $(UV) run --locked ansible-playbook --syntax-check -i localhost, src/setup_system/resources/user_files.yml
-	$(RUFF) check .
-	$(RUFF) format --check .
-	$(RUFF) format --check --line-length 88 docker/release.py docker/python_release.py
-typecheck:
-	$(UV) run --locked mypy
-	$(UV) run --locked mypy --python-version 3.12 --no-incremental docker/python_release.py
-test:
-	env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR $(UV) run --locked pytest --cov --cov-report=term-missing --cov-report=json --cov-report=xml --junitxml=coverage/python/junit.xml
-compile:
-	$(UV) run --locked python -m compileall -q src assets/hyprland/panel.py assets/login/login_session.py
-lock-check:
-	$(UV) lock --check
-entrypoint-check:
-	$(UV) run --locked python docker/bootstrap_platform.py
-	$(UV) run --locked setup-system --help
-	$(UV) run --locked python docker/check_entrypoint.py
-check: lint typecheck compile lock-check entrypoint-check test ## Native fast gate; no system apply.
-
-acceptance: check
-build:
-	$(UV) build --no-build-isolation --wheel --sdist --out-dir coverage/artifacts
-
+.NOTPARALLEL:
+override SHELL := /bin/sh
+# Preserve literal environment values across the Make-to-recipe boundary.
+ifneq ($(origin HOME),undefined)
+override export HOME := $(value HOME)
 endif
-
-.PHONY: native-check native-build native-verify native-ci test-integration
-NATIVE_ARTIFACT_DIR ?= coverage/native-artifacts
-native-check:
-	$(MAKE) CONTAINERIZED=1 RUFF="$(UV) run --locked ruff" check
-native-build:
-	$(UV) build --no-build-isolation --wheel --sdist --out-dir "$(NATIVE_ARTIFACT_DIR)"
-native-verify:
-	$(UV) run --locked python docker/verify_native.py "$(NATIVE_ARTIFACT_DIR)"
-native-ci: native-check native-build native-verify
-
-test-integration:
-	$(UV) run --locked pytest -q tests/test_python_release.py tests/test_templates.py
-
-.PHONY: native-help
-help: native-help
-native-help:
-	@printf '%s\n' 'Native: make native-check; make native-ci (locked Python/uv; no Docker).' \
-	  'Flow: lowerCamelCase working branch -> test -> dev -> main; exact-SHA CI releases.'
+ifneq ($(origin XDG_CONFIG_HOME),undefined)
+override export XDG_CONFIG_HOME := $(value XDG_CONFIG_HOME)
+endif
+ifneq ($(origin XDG_DATA_HOME),undefined)
+override export XDG_DATA_HOME := $(value XDG_DATA_HOME)
+endif
+ifneq ($(origin XDG_STATE_HOME),undefined)
+override export XDG_STATE_HOME := $(value XDG_STATE_HOME)
+endif
+ifneq ($(origin XDG_CACHE_HOME),undefined)
+override export XDG_CACHE_HOME := $(value XDG_CACHE_HOME)
+endif
+ifneq ($(origin XDG_RUNTIME_DIR),undefined)
+override export XDG_RUNTIME_DIR := $(value XDG_RUNTIME_DIR)
+endif
+ifneq ($(origin WAYLAND_DISPLAY),undefined)
+override export WAYLAND_DISPLAY := $(value WAYLAND_DISPLAY)
+endif
+ifneq ($(origin HYPRLAND_INSTANCE_SIGNATURE),undefined)
+override export HYPRLAND_INSTANCE_SIGNATURE := $(value HYPRLAND_INSTANCE_SIGNATURE)
+endif
+ifneq ($(origin CODEX_HOME),undefined)
+override export CODEX_HOME := $(value CODEX_HOME)
+endif
+ifneq ($(origin DISPLAY),undefined)
+override export DISPLAY := $(value DISPLAY)
+endif
+ifneq ($(origin SETUP_SYSTEM_REQUEST),undefined)
+override export SETUP_SYSTEM_REQUEST := $(value SETUP_SYSTEM_REQUEST)
+endif
+ifneq ($(origin SETUP_SYSTEM_RESULT),undefined)
+override export SETUP_SYSTEM_RESULT := $(value SETUP_SYSTEM_RESULT)
+endif
+ifneq ($(origin SETUP_SYSTEM_CANCEL),undefined)
+override export SETUP_SYSTEM_CANCEL := $(value SETUP_SYSTEM_CANCEL)
+endif
+ifneq ($(origin SETUP_SYSTEM_INTERPRETER),undefined)
+override export SETUP_SYSTEM_INTERPRETER := $(value SETUP_SYSTEM_INTERPRETER)
+endif
+override PLAY := /bin/sh ./libexec/play
+.PHONY: help run prepare
+help:
+	@printf '%s\n' 'make prepare  | prepare a development environment' \
+	  'make package  | build the Debian package' 'make install  | install the prepared package' \
+	  'make update   | update the installed package' 'make run      | open the configurator'
+run:
+	@/bin/sh ./libexec/run
+prepare:
+	uv sync --locked --all-groups
+include mk/files.mk mk/projects.mk mk/base.mk mk/workspace.mk mk/package.mk mk/quality.mk

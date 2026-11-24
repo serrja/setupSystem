@@ -1,0 +1,7 @@
+Package: chatgpt
+Pin: origin persistent.oaistatic.com
+Pin-Priority: 500
+
+Package: *
+Pin: origin persistent.oaistatic.com
+Pin-Priority: -1

@@ -84,7 +84,7 @@ class DesktopSystem:
         confirmed.verify(fresh.consent)
         return fresh
 
-    def apply(self, plan: DesktopPlan) -> None:
+    def apply(self, plan: DesktopPlan) -> bool:
         _require_root()
         if plan.consent.deferred:
             raise ValueError("Desktop plan needs a privileged revalidation before apply")
@@ -125,7 +125,7 @@ class DesktopSystem:
             and already_enabled
             and plan.previous_target == "graphical.target"
         ):
-            return
+            return False
         recovery = LoginRecovery(self.files, plan.previous_target, already_enabled)
         enabled = False
         default_changed = False
@@ -225,6 +225,7 @@ class DesktopSystem:
             if self.files.read(self.paths.receipt) != content:
                 raise RuntimeError("Login receipt readback failed")
             recovery.checkpoint("complete")
+            return True
         except BaseException as error:
             errors = recovery.restore()
             commands: list[list[str]] = []

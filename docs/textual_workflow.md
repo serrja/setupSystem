@@ -1,21 +1,7 @@
 # Textual workflow
 
-Open `setup-system` as the desktop user. Ctrl+1 selects Base system; Ctrl+2 selects
-Working environment. Both tabs remain available during execution. Tab and Shift+Tab
-move focus; Enter activates the selected button. Settings are intentions, not observations.
+Open `setup-system` as the desktop user. Switch between **Base system** and **Working environment** while editing or during a run. Inspect refreshes local facts and suggestions. Saving a section updates its XDG configuration.
 
-Base system selects Hyprland, graphical login, keyboard, locale and timezone. Empty
-timezone preserves the machine's setting. Workspace selects the desktop theme, connected display layouts, applications
-and explicit cleanup candidates. Missing dependencies block application, not navigation
-or saving intentions. A blocked selected feature can be deselected to apply independent
-features.
+Preview checks the selected changes and shows their effects. Apply uses that preview after confirmation. Enter the become password only when the confirmed operation needs system tasks. Editing a form while a run is active changes the next preview. An external edit to a saved configuration invalidates its pending confirmation.
 
-Plan is read-only. Apply shows the complete immutable snapshot and requires confirmation.
-Only then may sudo ask for its password using the terminal. Python does not receive or
-store that password. Cancel and Quit wait until the current stage reaches a safe boundary;
-completed stages remain applied and visible. Fix the reported condition and retry.
-
-Workspace Tools provides the repository catalog, project selection, reviewed template
-create/update, shell/RTK, Git inspection and backup restoration inside Textual. Templates
-preserve reviewed versions and dirty working trees. No hidden public CLI is required.
-See [recovery](recovery.md) for receipts and rollback limits.
+Cancellation stops at a safe boundary. Leave a running package transaction time to finish. Preview a recovery operation to see which managed files can be restored. [Configuration](configuration.md) and [recovery](recovery.md).

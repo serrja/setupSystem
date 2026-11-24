@@ -5,17 +5,14 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-import sys
 import time
 
 from pydantic import ConfigDict, Field, StrictBool, StrictFloat, StrictInt, TypeAdapter
 
 from setup_system.domain.contracts import ContractModel
 from setup_system.domain.displays import DisplayOutput, MonitorLayout
-from setup_system.infrastructure.mutation import user_operation
 
 PREVIEW_SECONDS = 12
-_LAYOUTS = TypeAdapter(tuple[MonitorLayout, ...])
 
 
 class OutputStatus(ContractModel):
@@ -40,7 +37,9 @@ def _hyprctl(*args: str) -> str:
     if os.geteuid() == 0 or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         raise ValueError("Monitor layout needs a running user Hyprland session")
     try:
-        result = subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=4)
+        result = subprocess.run(
+            ["/usr/bin/hyprctl", *args], capture_output=True, text=True, timeout=4
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError("Hyprland monitor control is unavailable") from exc
     if result.returncode or len(result.stdout) > 262144:
@@ -121,29 +120,14 @@ def _preview(layouts: tuple[MonitorLayout, ...]) -> None:
 
 
 def preview_layout(layouts: tuple[MonitorLayout, ...]) -> None:
-    """Run in a Textual worker. A separate session restores saved rules even if the TUI exits."""
-    result = subprocess.run(
-        [sys.executable, "-I", "-m", __name__],
-        input=_LAYOUTS.dump_json(layouts),
-        capture_output=True,
-        start_new_session=True,
-        check=False,
-    )
-    if result.returncode:
-        raise RuntimeError(
-            result.stderr.decode(errors="replace").strip() or "Monitor preview failed"
-        )
+    """Restore the previous layout even on interruption of the dedicated Make task."""
 
+    def interrupted(_number: int, _frame: object) -> None:
+        raise RuntimeError("Monitor preview interrupted")
 
-if __name__ == "__main__":
+    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGHUP)}
     try:
-
-        def interrupt(_number: int, _frame: object) -> None:
-            raise RuntimeError("Monitor preview interrupted")
-
-        signal.signal(signal.SIGTERM, interrupt)
-        signal.signal(signal.SIGHUP, interrupt)
-        with user_operation():
-            _preview(_LAYOUTS.validate_json(sys.stdin.buffer.read(32768)))
-    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
-        sys.exit(str(exc))
+        _preview(layouts)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)

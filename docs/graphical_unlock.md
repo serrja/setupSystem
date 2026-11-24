@@ -1,6 +1,6 @@
 # Graphical disk unlock
 
-In **Base system**, select **Graphical unlock** to prepare Plymouth for an existing interactive LUKS root. The plan inspects the running kernel, root device stack, separate cleartext `/boot`, mounted EFI system partition, current Debian GRUB/shim boot entry and active KMS driver. It requires a working initramfs-tools/cryptsetup-initramfs boot, GRUB tools and efibootmgr on the target. If Plymouth, its spinner assets or console-setup are missing, the plan names the Debian packages it will acquire after backing up existing initramfs images. GRUB unlocking an encrypted `/boot` happens before the initramfs starts and remains outside this profile.
+In **Base system**, select **Plymouth graphical unlock** to prepare Plymouth for an existing interactive LUKS root. The plan inspects the running kernel, root device stack, separate cleartext `/boot`, mounted EFI system partition, current Debian GRUB/shim boot entry and active KMS driver. It requires a working initramfs-tools/cryptsetup-initramfs boot, GRUB tools and efibootmgr on the target. The plan includes missing Plymouth, spinner or console-setup packages. Apply backs up affected boot images before installing prerequisites that may trigger a rebuild. A password requested by GRUB to open an encrypted `/boot` belongs to the boot loader and precedes Plymouth.
 
 Apply checks the existing crypttab for interactive password entries and rejects keyfile and automatic-unlock configurations. It checks space for backups and a staged image. The selected Plymouth theme uses Debian's native two-step password dialog, the Mocha palette and the Debian spinner assets. The console keymap is included. Escape switches to the detailed native screen. Passwords stay in the boot prompt.
 
@@ -8,7 +8,7 @@ The executor stages a new image for the **running kernel**, lists its contents t
 
 ## Recovery
 
-Root-owned directories under `/var/lib/setup-system/boot/unlock-*/` hold numbered backups and an `operation.json` with the original paths, modes and SHA-256 hashes. The executor compares current files with recorded after-hashes before restoring them following a build failure. If package installation started, Debian may retain package changes. Inspect the journal before retrying. For power loss, select an alternate kernel or a rescue environment, mount the target filesystems and compare the journal and backups to the current files before restoring. Keep the verified backup until both the normal and recovery entries have booted.
+Root-owned directories under `/var/lib/setup-system/boot/unlock-*/` hold numbered backups and an `operation.json` with the original paths, modes and SHA-256 hashes. After a build failure, recovery checks the current bytes and permissions against the recorded installation before restoring the verified backup. An intervening administrator edit causes a conflict. Debian may retain package changes if installation started. After power loss, select an alternate kernel or a rescue environment, mount the target filesystems and compare the journal and backups to the current files. Keep the backups and recorded staging paths until both normal and recovery entries have booted. [System recovery](recovery.md)
 
 ## Disposable target acceptance
 

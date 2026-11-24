@@ -7,8 +7,7 @@ registry publication or deployment is part of this workflow.
 
 ## 📦 Promotion and exact identity
 
-1. Review the complete working-branch diff and exact SHA. Run `make native-ci` or
-   the equivalent `make ci-local`; include narrow regression evidence and honest
+1. Review the complete working-branch diff and exact SHA. Run `make native-ci` and include narrow regression evidence and honest
    installation/GUI limits in the PR.
 2. Merge the lowerCamelCase working branch into `test` after actual required checks
    and review. Promote `test` → `dev` → `main` using ancestry-preserving merges.
@@ -19,7 +18,7 @@ registry publication or deployment is part of this workflow.
 4. The provider allocates an immutable tag, the separate unprivileged native builder
    exports the exact source and builds the allocated PEP 440 version, and installed
    acceptance runs outside source. A signed receipt binds actual builder job/tools.
-   Only provider jobs receive release-write permission.
+   The provider publishes the canonical Python release.
 5. Read back the completed release, tag's peeled commit, native versions, source/run
    identity, checksums and attestations. Dev releases are prereleases and not latest;
    main releases are stable. Pending or queued is not released.
@@ -88,3 +87,9 @@ alone proves neither.
 APT and user configuration recovery are separate installer operations. A GitHub
 release is not permission to rerun installation on the developer host or a claim of
 transactional package rollback.
+
+## Debian companion package
+
+After the canonical stable release succeeds, this repository's Debian workflow builds the allocated version from the same main commit. The `deb-vX.Y.Z` companion release contains the Debian package, its SHA-256 checksum and the attestation bundle. The canonical `vX.Y.Z` release remains the default latest release. Install and update resolve that stable version once and verify the companion against its source commit and workflow identity before handing the bytes to APT.
+
+Recovery resumes the original release run. A partial draft accepts only missing matching bytes. A conflicting artifact, different tag commit or absent attestation stops publication. Verify a published companion before documenting target installation results. [Debian workflow](../.github/workflows/debian.yml).

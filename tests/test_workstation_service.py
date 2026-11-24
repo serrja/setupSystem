@@ -1,328 +1,440 @@
 """One immutable plan, one mutation, truthful partial results and safe cancellation."""
 
+import asyncio
+import io
+import json
 import os
+import runpy
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import pytest
+import yaml
+from pydantic import ValidationError
+from test_native_ui import Tasks, app_for, idle
+from textual.widgets import Button, Input, Static
 
-from setup_system.composition import build_service
-from setup_system.domain.operations import InstallRequest, Operation
-from setup_system.domain.settings import Section, SystemSettings, UserSettings
+from setup_system.models import PlanSnapshot, WorkspaceOptions
+from setup_system.runner import MakeRunner, Target
+from setup_system.ui.dialogs import Password
 
-
-class Interaction:
-    cancelled = False
-    interactive = True
-
-    def __init__(self):
-        self.lines = []
-        self.confirmed = True
-
-    def write(self, text, **kwargs):
-        self.lines.append(text)
-
-    def confirm(self, prompt):
-        return self.confirmed
+ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture
-def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        "platform.freedesktop_os_release",
-        lambda: {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
+def native_main(name, monkeypatch, action, data, **fixtures):
+    main = runpy.run_path(str(ROOT / "ansible/files" / (name + ".py")))["main"]
+    for key, value in fixtures.items():
+        monkeypatch.setitem(main.__globals__, key, value)
+    monkeypatch.setattr(sys, "argv", [name, action])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(data)))
+    return main()
+
+
+@pytest.fixture(scope="module")
+def outcomes(tmp_path_factory):
+    """Execute the production Ansible status and failure tasks with recorded stage inputs."""
+    run = tmp_path_factory.mktemp("native outcomes")
+    definitions = yaml.safe_load((ROOT / "ansible/tasks/run.yml").read_text())[1]
+    success = definitions["block"]
+    selection = next(
+        task for task in success if "has_selection" in task.get("ansible.builtin.set_fact", {})
     )
-    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    plan = next(task for task in success if "plan" in task.get("ansible.builtin.set_fact", {}))
+    report = next(task for task in success if "outcome" in task.get("ansible.builtin.set_fact", {}))
+    failure = definitions["rescue"][0]
+    scenarios = {
+        "empty": ({}, False, False, [], [], False),
+        "matched": ({"apps": ["firefox"]}, False, False, [], [], False),
+        "failed": ({"apps": ["firefox"]}, False, False, [], [], True),
+        "partial": ({"apps": ["firefox"]}, True, False, ["Packages"], [], True),
+        "cancel": ({"apps": ["firefox"]}, True, True, ["Packages"], [], True),
+        "unsupported": (
+            {"desktop_theme": True},
+            False,
+            False,
+            [],
+            ["Unsupported architecture"],
+            False,
+        ),
+    }
+    tasks = []
+    for key, (fields, mutation, cancel, stages, blockers, rescue) in scenarios.items():
+        intent = WorkspaceOptions.model_validate(fields).model_dump(mode="json")
+        defaults = {
+            "intent": intent,
+            "section": "workspace",
+            "setup_action": "plan",
+            "facts": {},
+            "changed_stages": stages,
+            "mutation_started": mutation,
+            "cancel_requested": cancel,
+            "blockers": blockers,
+            "system_actions": [],
+            "apt_changes": [],
+            "user_changes": [],
+            "latest_debs": {},
+            "latest_tools": {},
+            "boot_facts": {},
+            "execute_run": False,
+            "notices": [],
+            "request": {"expected": None},
+            "ansible_failed_task": {"name": "Prepare next stage"},
+            "ansible_failed_result": {"msg": "Synthetic failure"},
+        }
+        tasks.extend(
+            [
+                {"ansible.builtin.set_fact": defaults},
+                selection,
+                plan,
+                failure if rescue else report,
+                {
+                    "ansible.builtin.copy": {
+                        "dest": str(run / key),
+                        "mode": "0600",
+                        "content": "{{ outcome | to_json }}",
+                    }
+                },
+            ]
+        )
+    fixture = run / "status.yml"
+    fixture.write_text(
+        yaml.safe_dump(
+            [{"hosts": "localhost", "gather_facts": False, "become": False, "tasks": tasks}]
+        )
+    )
+    result = subprocess.run(
+        [
+            str(Path(sys.executable).with_name("ansible-playbook")),
+            "-i",
+            "localhost,",
+            "-c",
+            "local",
+            str(fixture),
+        ],
+        cwd=ROOT,
+        env={
+            "PATH": os.defpath,
+            "HOME": str(run),
+            "ANSIBLE_CONFIG": str(ROOT / "ansible.cfg"),
+            "ANSIBLE_FILTER_PLUGINS": str(ROOT / "ansible/filter_plugins"),
+            "ANSIBLE_LOCAL_TEMP": str(run / "local"),
+            "ANSIBLE_REMOTE_TEMP": str(run / "remote"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return {key: json.loads((run / key).read_text()) for key in scenarios}
 
-    from setup_system.domain.identity import TargetUser
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+def test_plan_never_calls_executor_or_creates_files(tmp_path, monkeypatch):
+    home = tmp_path / "user"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
     for key in ("CONFIG", "DATA", "STATE", "CACHE"):
-        monkeypatch.setenv(f"XDG_{key}_HOME", str(tmp_path / key.lower()))
-    target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/sh")
-
-    class Executor:
-        def run(self, command):
-            raise AssertionError("No real privileged operation in a fixture")
-
-    return build_service(
-        Path(__file__).resolve().parents[1],
-        interaction=Interaction(),
-        executor=Executor(),
-        authorize=lambda: True,
-        identity=lambda _: target,
+        monkeypatch.setenv("XDG_" + key + "_HOME", str(home / key.lower()))
+    result = MakeRunner(ROOT).run(
+        Target.WORKSPACE_PLAN, {"schema": 1, "settings": {}, "expected": None}
     )
+    assert result["status"] in ("nothing_selected", "blocked")
+    assert not list(home.iterdir())
 
 
-def test_plan_never_calls_executor_or_creates_files(service, tmp_path: Path) -> None:
-    service.run(
-        InstallRequest(
-            operation=Operation.PLAN, section=Section.WORKSPACE, settings=UserSettings(happ=True)
-        )
-    )
-    assert list(tmp_path.iterdir()) == []
+def test_unsupported_platform_blocks_apply_but_not_navigation(tmp_path, outcomes):
+    class Blocked(Tasks):
+        def run(self, target, payload, **kwargs):
+            assert target == Target.WORKSPACE_PLAN
+            return outcomes["unsupported"]
+
+    async def run():
+        app = app_for(tmp_path, Blocked())
+        async with app.run_test(size=(100, 35)) as pilot:
+            await pilot.press("ctrl+2")
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            assert "Unsupported architecture" in str(app.query_one("#feedback", Static).render())
+            assert app.query_one("#apply", Button).disabled
+            await pilot.press("ctrl+1")
+            assert app.section == "base"
+
+    asyncio.run(run())
 
 
-def test_unsupported_platform_blocks_apply_but_not_navigation(service, monkeypatch) -> None:
-    monkeypatch.setattr("platform.machine", lambda: "riscv64")
-    request = InstallRequest(
-        operation=Operation.APPLY, section=Section.WORKSPACE, settings=UserSettings(chatgpt=True)
-    )
-    assert service.run(request) == 4
-    assert service.run(InstallRequest(operation=Operation.PLAN)) == 0
+def test_cancel_is_observed_between_completed_stages(outcomes):
+    assert outcomes["cancel"]["status"] == "cancelled"
+    assert outcomes["cancel"]["actions"] == ["Packages"]
+    assert "Prepare next stage" in outcomes["cancel"]["blockers"][0]
 
 
-def test_cancel_is_observed_between_completed_stages(
-    service, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def apply(action, plan):
-        service.cancel.set()
-
-    monkeypatch.setattr(service, "_apply", apply)
-    request = InstallRequest(operation=Operation.APPLY, system=SystemSettings(hyprland=True))
-    # A real resource root is needed for the platform manifest, never a real apply.
-    service.root = Path(__file__).resolve().parents[1]
-    assert service.run(request) == 3
-    assert service.completed == ["base"]
-    assert any("CANCELLED" in line for line in service.interaction.lines)
+def test_partial_failure_never_reports_success(outcomes):
+    assert outcomes["partial"]["status"] == "partial"
+    assert outcomes["partial"]["actions"] == ["Packages"]
+    assert "Synthetic failure" in outcomes["partial"]["blockers"][0]
 
 
-def test_partial_failure_never_reports_success(service, monkeypatch: pytest.MonkeyPatch) -> None:
-    service.root = Path(__file__).resolve().parents[1]
+def test_second_mutation_is_rejected(tmp_path):
+    async def exercise():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(100, 38)) as pilot:
+            await pilot.press("ctrl+2")
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            await pilot.click("#apply")
+            tasks.gate = threading.Event()
+            await pilot.click("#confirm")
+            assert app.query_one("#apply", Button).disabled
+            await pilot.click("#apply")
+            assert [target for target, _, _ in tasks.calls] == [
+                Target.WORKSPACE_PLAN,
+                Target.WORKSPACE_USER_APPLY,
+            ]
+            tasks.gate.set()
+            await idle(app, pilot)
 
-    def apply(action, plan):
-        if action.id == "desktop_files":
-            raise RuntimeError("Synthetic stage failure")
-
-    monkeypatch.setattr(service, "_apply", apply)
-    assert (
-        service.run(InstallRequest(operation=Operation.APPLY, system=SystemSettings(hyprland=True)))
-        == 5
-    )
-    assert service.completed == ["base"]
-    assert any("PARTIAL:" in line for line in service.interaction.lines)
-
-
-def test_second_mutation_is_rejected(service) -> None:
-    service._mutation.acquire()
-    try:
-        assert service.run(InstallRequest(operation=Operation.APPLY)) == 2
-    finally:
-        service._mutation.release()
-
-
-def test_preflight_failure_does_not_report_previous_partial_work(service, monkeypatch) -> None:
-    service.completed = ["previous"]
-    monkeypatch.setattr(
-        service, "plan", lambda request: (_ for _ in ()).throw(ValueError("bad plan"))
-    )
-    assert service.run(InstallRequest(operation=Operation.APPLY)) == 2
-    assert "no operation started" in service.interaction.lines[-1]
-    assert "previous" not in service.interaction.lines[-1]
+    asyncio.run(exercise())
 
 
-def test_validation_diagnostics_never_echo_rejected_values() -> None:
-    from pydantic import ValidationError
+def test_preflight_failure_does_not_report_previous_partial_work(outcomes):
+    assert outcomes["partial"]["actions"]
+    assert outcomes["failed"]["status"] == "blocked"
+    assert outcomes["failed"]["actions"] == []
+    assert "Prepare next stage" in outcomes["failed"]["blockers"][0]
 
-    from setup_system.diagnostics import error_text
 
+def test_validation_diagnostics_never_echo_rejected_values():
     with pytest.raises(ValidationError) as caught:
-        UserSettings.model_validate({"token": "synthetic-private-value"})
-    assert "synthetic-private-value" not in error_text(caught.value)
+        WorkspaceOptions.model_validate({"token": "synthetic-private-value"})
+    assert "synthetic-private-value" not in str(caught.value)
 
 
-def test_region_changes_have_independent_operations_without_desktop(service, monkeypatch) -> None:
-    monkeypatch.setattr("setup_system.infrastructure.regional.actual", lambda kind: None)
-    request = InstallRequest(
-        operation=Operation.PLAN, system=SystemSettings(timezone="Pacific/Tahiti", keyboard="us,ru")
+def test_region_changes_have_independent_operations_without_desktop(monkeypatch, capsys):
+    from setup_system.infrastructure import regional
+
+    monkeypatch.setattr(regional, "actual", lambda kind: None)
+    native_main(
+        "system_contract",
+        monkeypatch,
+        "plan",
+        {
+            "section": "base",
+            "settings": {"timezone": "Pacific/Tahiti", "keyboard": "us,ru"},
+            "xdg": {},
+        },
     )
-    ids = [action.id for action in service.plan(request).actions]
-    assert "timezone" in ids and "keyboard" in ids
-    assert "base" not in ids and "desktop_files" not in ids
+    report = json.loads(capsys.readouterr().out)
+    assert set(report["observed"]) == {"timezone", "keyboard"}
+    assert report["actions"] == ["Set timezone to Pacific/Tahiti", "Set keyboard to us,ru"]
+    assert not report["blockers"]
 
 
-@pytest.mark.parametrize("settings", [UserSettings(), UserSettings(firefox=True)])
-def test_unselected_desktop_is_absent_from_workspace_plan(service, settings) -> None:
-    request = InstallRequest(operation=Operation.PLAN, section=Section.WORKSPACE, settings=settings)
-    ids = {action.id for action in service.plan(request).actions}
-    assert not {"theme", "desktop_files", "base"} & ids
+@pytest.mark.parametrize("apps", [[], ["firefox"]])
+def test_unselected_desktop_is_absent_from_workspace_plan(tmp_path, apps):
+    editor_specs = runpy.run_path(str(ROOT / "ansible/filter_plugins/workspace.py"))["editor_specs"]
+    facts = {
+        "home": str(tmp_path),
+        "xdg": {"config": str(tmp_path / "config"), "data": str(tmp_path / "data")},
+    }
+    rows = editor_specs(str(ROOT), facts, apps, {"apps": apps}, {})
+    assert not rows
+    assert not list(tmp_path.iterdir())
 
 
-def test_empty_workspace_report_distinguishes_no_selection(service) -> None:
-    request = InstallRequest(operation=Operation.APPLY, section=Section.WORKSPACE)
-    assert service.run(request) == 0
-    assert "NO_SELECTION" in service.interaction.lines[-1]
+def test_empty_workspace_report_distinguishes_no_selection(outcomes):
+    assert outcomes["empty"]["status"] == "nothing_selected"
+    assert not outcomes["empty"]["actions"] and not outcomes["empty"]["blockers"]
 
 
-def test_verified_no_changes_does_not_authorize_privileges(service, monkeypatch):
-    monkeypatch.setattr("setup_system.infrastructure.regional.actual", lambda kind: "UTC")
-    service.authorize = lambda: pytest.fail("Verified matching timezone cannot authorize sudo")
-    request = InstallRequest(operation=Operation.APPLY, system=SystemSettings(timezone="UTC"))
-    assert service.run(request) == 0
-    assert service.status == "no_changes"
-    assert "NO_CHANGES" in service.interaction.lines[-1]
+def test_verified_no_changes_does_not_authorize_privileges(outcomes):
+    result = outcomes["matched"]
+    assert result["status"] == "no_changes" and not result["observed"]["needs_system"]
+    with pytest.raises(ValueError, match="no executable changes"):
+        PlanSnapshot.capture("workspace", {"apps": ["firefox"]}, result, "revision")
 
 
-def test_workspace_target_mismatch_stops_before_all_actions(service, monkeypatch):
-    monkeypatch.setattr("platform.machine", lambda: "sparc")
-    monkeypatch.setattr(service, "_apply", lambda *args: pytest.fail("Unsupported action ran"))
-    assert (
-        service.run(
-            InstallRequest(
-                operation=Operation.APPLY,
-                section=Section.WORKSPACE,
-                settings=UserSettings(desktop_theme=True),
-            )
-        )
-        == 4
-    )
-    assert service.status == "blocked"
+def test_workspace_target_mismatch_stops_before_all_actions(outcomes, monkeypatch):
+    from setup_system.infrastructure.native_target import target
+
+    assert not target(
+        {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}, "sparc", "sparc"
+    )[1]
+    rejected = outcomes["unsupported"]
+    assert rejected["status"] == "blocked"
+    with pytest.raises(ValueError):
+        PlanSnapshot.capture("workspace", {"desktop_theme": True}, rejected, "revision")
 
 
 def test_separate_writers_share_one_lock_without_creating_settings(tmp_path):
-    from setup_system.infrastructure.mutation import user_operation
+    import fcntl
+    import shlex
 
-    with user_operation(tmp_path), pytest.raises(RuntimeError, match="Another configuration"):
-        with user_operation(tmp_path):
-            pytest.fail("Concurrent writer acquired the same HOME")
-    with user_operation(tmp_path):
-        assert not list(tmp_path.iterdir())
-
-
-def test_changed_draft_during_confirmation_stops_before_authorization(service, monkeypatch):
-    monkeypatch.setattr("setup_system.infrastructure.regional.actual", lambda kind: None)
-
-    def confirm(prompt):
-        path = Path(os.environ["XDG_CONFIG_HOME"]) / "setup-system/system-intentions.toml"
-        path.parent.mkdir(parents=True)
-        path.write_text('timezone = "UTC"\n')
-        return True
-
-    service.interaction.confirm = confirm
-    service.authorize = lambda: pytest.fail("Stale settings reached sudo")
-    assert (
-        service.run(
-            InstallRequest(
-                operation=Operation.APPLY, system=SystemSettings(timezone="Europe/Paris")
-            )
-        )
-        == 5
+    lock = tmp_path / "private run"
+    lock.mkdir(mode=0o700)
+    script = tmp_path / "locked.sh"
+    script.write_text(
+        (ROOT / "libexec/locked")
+        .read_text()
+        .replace("lock=/run/setup-system", "lock=" + shlex.quote(str(lock)))
     )
-    assert "changed after plan" in service.interaction.lines[-1]
+    fd = os.open(lock, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        assert subprocess.run(["sh", script, "/bin/true"]).returncode == 75
+    finally:
+        os.close(fd)
+    assert subprocess.run(["sh", script, "/bin/true"]).returncode == 0
+    assert not list(lock.iterdir())
 
 
-def test_confirmed_happ_upgrade_passes_the_observed_package_version(service, monkeypatch):
-    from setup_system.adapters.debian import happ_service, packages
+def test_changed_draft_during_confirmation_stops_before_authorization(tmp_path):
+    async def exercise():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(100, 38)) as pilot:
+            app.query_one("#timezone", Input).value = "Europe/Paris"
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            await pilot.click("#apply")
+            app.settings.directory.parent.mkdir(mode=0o700)
+            app.settings.directory.mkdir(mode=0o700)
+            path = app.settings.directory / "base.toml"
+            path.touch(mode=0o600)
+            path.write_text('timezone="UTC"\n')
+            await pilot.click("#confirm")
+            assert not isinstance(app.screen, Password)
+            assert "changed" in str(app.query_one("#feedback", Static).render()).lower()
+            assert [t for t, _, _ in tasks.calls] == [Target.BASE_PLAN]
 
+    asyncio.run(exercise())
+
+
+def test_confirmed_happ_upgrade_passes_the_observed_package_version(monkeypatch, capsys):
+    from setup_system.infrastructure import happ_facts
+
+    unit = {"LoadState": "loaded", "ActiveState": "inactive"}
     calls = []
-    monkeypatch.setattr(packages, "installed_version", lambda name: "4.0")
+    monkeypatch.setattr(happ_facts, "installed_version", lambda: "4.0")
+    monkeypatch.setattr(happ_facts, "unit_info", lambda: unit)
     monkeypatch.setattr(
-        happ_service,
-        "check_existing_happ",
-        lambda version, **kwargs: calls.append(kwargs["expected_happ_version"]),
+        happ_facts, "require_idle", lambda old, new, facts: calls.append((old, new, facts))
     )
-    monkeypatch.setattr(service.executor, "run", lambda command: calls.append(command.settings))
-    result = service.run(
-        InstallRequest(
-            operation=Operation.APPLY,
-            section=Section.WORKSPACE,
-            settings=UserSettings(apps=("happ",)),
-        )
+    native_main(
+        "system_contract",
+        monkeypatch,
+        "happ-inspect",
+        {"settings": {"apps": ["happ"]}, "version": "5.0"},
     )
-    assert result == 0 and calls[0] == "4.0"
-    assert calls[1].expected_happ_version == "4.0"
-    assert any("4.0 →" in line for line in service.interaction.lines)
+    seen = json.loads(capsys.readouterr().out)
+    assert seen == {"installed": "4.0", "unit": unit} and calls == [("4.0", "5.0", unit)]
+    plan = PlanSnapshot.capture(
+        "workspace",
+        {"apps": ["happ"]},
+        {
+            "status": "ready",
+            "actions": ["Update Happ to 5.0"],
+            "observed": {
+                "needs_system": True,
+                "needs_user": False,
+                "debs": {"happ": {"before": seen}},
+            },
+        },
+        None,
+    )
+    assert plan.payload()["expected"]["observed"]["debs"]["happ"]["before"] == seen
 
 
 @pytest.mark.parametrize("record", [b"not json", b"[]", b'{"release":"main"}'])
 def test_invalid_release_record_blocks_only_privileged_operations(tmp_path, monkeypatch, record):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     path = tmp_path / "setup-system/release.json"
-    path.parent.mkdir()
+    path.parent.mkdir(mode=0o700)
     path.write_bytes(record)
-    service = build_service(Path(__file__).resolve().parents[1])
-    assert service.executor is None
-    assert "release.json" in service.privilege_blocker
-    assert path.read_bytes() == record
+    runner = MakeRunner(ROOT)
+    with pytest.raises(ValueError, match="installed Debian package"):
+        runner.run(Target.BASE_APPLY, {"schema": 1, "settings": {}, "expected": None})
+    answer = runner.run(
+        Target.PROJECT_CHECK,
+        {"schema": 1, "settings": {"project": str(tmp_path)}, "expected": None},
+    )
+    assert answer["status"] == "ready" and path.read_bytes() == record
 
 
 @pytest.mark.parametrize(
     "change", ["default_target", "readable_grub_input", "manager_enabled", "unchanged"]
 )
 def test_login_rejects_drift_between_confirmation_and_root_execution(
-    service, tmp_path, monkeypatch, change
+    tmp_path, monkeypatch, capsys, change
 ):
-    from contextlib import contextmanager
     from types import SimpleNamespace
 
     from test_desktop_system import system_fixture
 
-    from setup_system.application.workstation_stages import Stages
-    from setup_system.domain.system_commands import COMMAND
     from setup_system.infrastructure import login, login_plan
-    from setup_system.infrastructure import privileged_tasks as tasks
 
-    system, account, environment, commands, snapshot = system_fixture(tmp_path)
-    service.identity = lambda _: account
-    for key, value in environment.items():
-        monkeypatch.setenv(key, value)
-    monkeypatch.setenv("HOME", str(account.home))
-    service.login_plan = system.plan
-    monkeypatch.setattr(tasks, "DesktopSystem", lambda *args, **kw: system)
+    system, account, env, commands, snapshot = system_fixture(tmp_path)
     monkeypatch.setattr(login_plan, "inspect_system", lambda home: snapshot)
     monkeypatch.setattr(login, "_require_root", lambda: None)
-    monkeypatch.setattr(tasks, "caller", lambda: SimpleNamespace(pw_name=account.name))
-    monkeypatch.setattr(tasks, "protected", lambda *args, **kw: None)
-    monkeypatch.setattr(tasks.system_settings, "SETTINGS_PATH", tmp_path / "system.toml")
-    monkeypatch.setattr(tasks, "resolve_target", lambda name: account)
-    monkeypatch.setattr(tasks.system_settings, "save", lambda *args, **kw: None)
-    monkeypatch.setattr(Stages, "desktop", lambda *args: None)
-    monkeypatch.setattr(
-        "setup_system.application.workstation_plan.desktop_changes", lambda *a, **k: None
-    )
-
     read = system.files.read
-    user_plan = True
+    inspecting = True
     if change != "manager_enabled":
         system.paths.vendor_unit.unlink()
 
-    def user_read(path, **options):
-        if user_plan and path == system.paths.grub_config:
-            raise PermissionError("root-only generated GRUB menu")
+    def read_as_caller(path, **options):
+        if inspecting and path == system.paths.grub_config:
+            raise PermissionError("Generated GRUB menu is root-only")
         return read(path, **options)
 
-    monkeypatch.setattr(system.files, "read", user_read)
+    monkeypatch.setattr(system.files, "read", read_as_caller)
 
-    @contextmanager
-    def packages(*args, **kw):
-        yield SimpleNamespace(install=lambda: system.paths.vendor_unit.write_text("fixture"))
+    def desktop(xdg):
+        assert xdg == env
+        return system, account, env
 
-    monkeypatch.setattr(tasks, "prepare_packages", packages)
-    service.executor.run = lambda command: tasks.execute(
-        service.root, account.name, COMMAND.validate_json(command.model_dump_json())
-    )
+    request = {
+        "section": "base",
+        "settings": {"hyprland": True, "graphical_login": True},
+        "xdg": env,
+    }
+    native_main("system_contract", monkeypatch, "plan", request, desktop=desktop)
+    plan = json.loads(capsys.readouterr().out)
+    assert "login" in plan["observed"] and plan["actions"]
+    inspecting = False
+    if change != "manager_enabled":
+        system.paths.vendor_unit.write_text("Installed vendor unit\n")
+    if change == "default_target":
+        commands.default = "rescue.target"
+    elif change == "manager_enabled":
+        system.paths.display_manager.parent.mkdir(parents=True, exist_ok=True)
+        system.paths.display_manager.symlink_to(system.paths.vendor_unit)
+    elif change == "readable_grub_input":
+        system.paths.grub_default.write_text("GRUB_TIMEOUT=15\n")
+    installed = Path("/usr/lib/setup-system")
 
-    def confirm(prompt):
-        nonlocal user_plan
-        user_plan = False
-        assert str(system.paths.grub_config) in prompt
-        if change == "default_target":
-            commands.default = "rescue.target"
-        elif change == "manager_enabled":
-            system.paths.display_manager.parent.mkdir(parents=True, exist_ok=True)
-            system.paths.display_manager.symlink_to(system.paths.vendor_unit)
-        elif change == "readable_grub_input":
-            system.paths.grub_default.write_text("GRUB_TIMEOUT=15\n")
-        return True
+    def guard(path):
+        assert path == installed
+        assert system.paths.boundary.is_relative_to(tmp_path)
 
-    service.interaction.confirm = confirm
-    request = InstallRequest(
-        operation=Operation.APPLY, system=SystemSettings(hyprland=True, graphical_login=True)
-    )
+    def apply():
+        native_main(
+            "system_contract",
+            monkeypatch,
+            "login",
+            request | {"observed": plan["observed"]},
+            desktop=desktop,
+            protected=guard,
+            ROOT=installed,
+            current_target=lambda: ("amd64", True),
+            os=SimpleNamespace(geteuid=lambda: 0),
+        )
+
     if change == "unchanged":
-        assert service.run(request) == 0, service.interaction.lines
+        apply()
         assert system.paths.receipt.exists()
-        return
-    assert service.run(request) == 5, service.interaction.lines
-    assert any("changed after consent" in line for line in service.interaction.lines)
-    assert not system.paths.receipt.exists() and not system.paths.config.exists()
-    assert not any("set-default" in args or "enable" in args for args in commands.calls)
+    else:
+        with pytest.raises(ValueError, match="changed after consent"):
+            apply()
+        assert not system.paths.receipt.exists() and not system.paths.config.exists()
+        assert not any("set-default" in argv or "enable" in argv for argv in commands.calls)

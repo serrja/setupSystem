@@ -1,19 +1,16 @@
 # Hyprland
 
-Select Hyprland in Textual's Base system section. Signed official Debian 13 backports
-must provide the exact compatible versions in `manifests/platforms.toml`. User configuration
-is separate from package acquisition and runs under the normal desktop account.
+Select **Hyprland, sound, portals and desktop dependencies** in **Base system**. Plan resolves the Debian packages and prepares the session files for the normal desktop account. The portal configuration prefers the Hyprland backend and routes the file chooser to GTK. The session wrapper requests PipeWire, PipeWire Pulse and WirePlumber from the user service manager and starts its clipboard, notification, lock and panel helpers. [Debian target](debian.md) · [Portal selection](../ansible/templates/hyprland-portals.conf)
 
-The managed Lua entrypoint includes `setup-system.profile`; personal overrides stay in
-`$XDG_CONFIG_HOME/hypr/local.lua`. Existing unrelated entrypoints require a reviewed
-include. Outputs use their preferred mode and automatic scale until you preview an explicit
-layout in Textual. The launcher starts the workspace IPC bridge and detects the available
-batteries and backlights. [Panel compatibility and display preview](theme.md).
+The managed `$XDG_CONFIG_HOME/hypr/hyprland.lua` loads `setup-system.profile` and then reads `$XDG_CONFIG_HOME/hypr/local.lua` when present. Use the latter for personal overrides. Review any reported ownership conflict with an existing entrypoint. The normal-user launcher is `$XDG_DATA_HOME/setup-system/bin/start-hyprland`. Session diagnostics go to `$XDG_STATE_HOME/setup-system/hyprland-session.log`.
 
-Super+Enter opens Foot; Super+D applications; Super+E Thunar; Super+F9 the power menu;
-Ctrl+Alt+F3 reaches TTY recovery. The session wrapper configures portals, audio,
-clipboard, notifications and lock/idle without starting a root compositor.
+| Shortcut | Action |
+| --- | --- |
+| Super+Enter | Open Foot |
+| Super+D | Open the application launcher |
+| Super+E | Open Thunar |
+| Super+Escape | Lock the session |
+| Super+F9 | Open the power menu |
+| Ctrl+Alt+F3 | Switch to a text console |
 
-The fallback session launcher is `$XDG_DATA_HOME/setup-system/bin/start-hyprland`.
-See [theme](theme.md), [login](desktop_login.md) and [recovery](recovery.md).
-GUI/GPU/HiDPI, suspend/lock, sound and screen sharing require a disposable target test.
+Check sound, screen sharing through the portal, clipboard, monitor scaling, lock and suspend on the actual target hardware. [Desktop shortcuts](../assets/hyprland/keys.txt) · [Display preview](theme.md) · [Graphical login](desktop_login.md)

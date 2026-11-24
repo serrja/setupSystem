@@ -1,31 +1,16 @@
 # Neovim and language profiles
 
-Under **Working environment**, select **Neovim** to install the pinned upstream editor,
-lazy.nvim, blink.cmp, LSP configuration, conform.nvim, Tree-sitter, fzf-lua, Oil and
-Git navigation. setupSystem takes release digests, plugin revisions and parser selections
-from `manifests/editor.toml`. It generates the native Lazy lock when writing the user's
-configuration. Startup works offline. Changing a profile requires another confirmed Apply.
+Select **Neovim and Wayland clipboard** in **Working environment**. Plan resolves Debian's Neovim package and the reviewed plugin sources. It records the selected Git commits before Apply. The configuration loads local copies of lazy.nvim, blink.cmp, nvim-treesitter, conform.nvim, fzf-lua, Oil and Gitsigns. Startup disables automatic plugin downloads and update checks. [Editor catalog](../config/workspace/editor.toml)
 
-The editor uses the Wayland clipboard in a Wayland session. Open it from the project
-directory to enable language servers and explicit formatting with `<leader>cf`.
-Python projects can provide `.venv/bin/python`. Prettier requires project formatting
-settings. Modelines and project-local Lua configuration are disabled.
+Select language profiles for the work you intend to do. With Neovim selected, the same plan includes the corresponding parsers, language servers and formatters.
 
-| Selected profile | What Apply uses |
+| Profile | Language service and formatter |
 | --- | --- |
-| Python | A dedicated hash-locked environment for Ruff and basedpyright |
-| TypeScript and Vue | Node from Debian and a release npm lock for TypeScript, the TypeScript and Vue language servers, the Vue TS plugin and Prettier |
-| Dart and Flutter | An existing Flutter SDK selected by an absolute `FLUTTER_ROOT` or found on PATH, or the reviewed official Linux x86_64 Flutter SDK with its bundled Dart language server and formatter. Downloading and unpacking the Flutter distribution requires several GiB of free space. |
-| C++ | Debian clangd and clang-format |
+| Python | basedpyright and Ruff in user-local pipx environments. The language server can use the project's `.venv/bin/python`. |
+| TypeScript and Vue | TypeScript and Vue language servers, the Vue TypeScript plugin and Prettier from the user-local npm prefix. Formatting requires a Prettier configuration file or a `prettier` field in the project's `package.json`. |
+| Dart and Flutter | A user-local checkout from Flutter's official stable ref, with the bundled Dart language server and formatter. |
+| C++ | Debian's clangd and clang-format packages. |
 
-With both the editor and a language selected, Apply builds missing language parsers at
-the revisions specified by the pinned Tree-sitter plugin. It then starts Neovim from the
-absolute managed init path in a temporary project. Each selected parser has to parse a
-buffer, each LSP has to initialize, and each formatter has to format a sample. A second
-headless run disables parser installation. Without a language selection the editor checks
-the parsers bundled by Neovim. The release contains a Tree-sitter CLI pin for each
-supported architecture.
+Apply installs missing Tree-sitter parsers explicitly. The editor check opens the absolute managed `init.lua` headlessly in a temporary project, parses a buffer with each selected parser, waits for each selected language server and invokes its formatter. It also checks the clipboard commands and, in a Wayland session, the clipboard provider. Inspect a partial result if packages or files changed before a check failed. [Headless checks](../ansible/files/editor_check.lua) · [Recovery](recovery.md)
 
-After verification, setupSystem writes the environment.d settings for `EDITOR`,
-`VISUAL` and `GIT_EDITOR`. The user session picks those up at the next login. Nano
-removal has a separate confirmation and checks the administrative fallback editor.
+Open Neovim in a project. Use `<leader>ff` for files, `<leader>fg` for search, `-` for Oil and `<leader>cf` to format explicitly. The profile sets `EDITOR`, `VISUAL` and `GIT_EDITOR` to `nvim` through the user environment configuration. A new login picks up those values. Optional nano removal is a separate plan that checks the selected editor and requires another installed administrative editor. [Terminal and shell](terminal_guide.md)

@@ -1,0 +1,79 @@
+name: Debian package
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Stable version allocated by the shared release provider
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  build:
+    if: github.repository == 'serrja/setupSystem' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build the allocated Debian package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          make -f mk/package.mk package VERSION="$VERSION" PACKAGE_DIR="$RUNNER_TEMP/debian"
+          cd "$RUNNER_TEMP/debian"
+          sha256sum "setup-system_${VERSION}_all.deb" > "setup-system_${VERSION}_all.deb.sha256"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        id: proof
+        with:
+          subject-path: ${{ runner.temp }}/debian/*.deb
+          create-storage-record: false
+      - name: Save the signed bundle alongside the package
+        env:
+          BUNDLE: ${{ steps.proof.outputs.bundle-path }}
+          VERSION: ${{ inputs.version }}
+        run: cp -- "$BUNDLE" "$RUNNER_TEMP/debian/setup-system_${VERSION}_all.deb.sigstore.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: archive
+        with:
+          name: debian-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/debian/*
+          if-no-files-found: error
+          compression-level: 0
+    outputs:
+      artifact: ${{ steps.archive.outputs.artifact-id }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+      attestations: read
+    concurrency:
+      group: debian-publish-${{ inputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/debian
+      - name: Verify the canonical release and publish its Debian companion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: bash debian/publish "$VERSION" "$RUNNER_TEMP/debian"

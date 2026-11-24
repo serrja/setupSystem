@@ -1,0 +1,64 @@
+---
+- name: Identify the reviewed Git repository
+  ansible.builtin.set_fact:
+    repo_slug: "{{ plugin.value.repo | regex_replace('^https://github.com/', '') | regex_replace('[.]git$', '') }}"
+- name: List published tags in the supported editor release series
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ repo_slug }}/git/matching-refs/tags/v{{ plugin.value.major }}."
+    return_content: true
+    follow_redirects: none
+    validate_certs: true
+    timeout: 35
+  register: plugin_tags
+  when: plugin.value.major is defined
+- name: Select the newest compatible stable tag or the reviewed branch
+  ansible.builtin.set_fact:
+    reviewed_ref: "{{ plugin_tags.json | stable_tag(plugin.value.major) if plugin.value.major is defined else plugin.value.ref }}"
+- name: Read the reviewed native Git ref directly from the upstream API
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ repo_slug }}/git/ref/{{ reviewed_ref
+      | regex_replace('^refs/', '') }}"
+    return_content: true
+    follow_redirects: none
+    validate_certs: true
+    timeout: 35
+  register: git_ref
+- name: Require the exact reviewed ref and immutable upstream object
+  ansible.builtin.assert:
+    that:
+      - git_ref.json.ref == reviewed_ref
+      - git_ref.json.object.type in ['commit', 'tag']
+      - git_ref.json.object.sha is match('^[a-f0-9]{40}$')
+- name: Dereference an annotated release tag
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ repo_slug }}/git/tags/{{ git_ref.json.object.sha
+      }}"
+    return_content: true
+    follow_redirects: none
+  register: tagged
+  when: git_ref.json.object.type == 'tag'
+- name: Record the source commit
+  ansible.builtin.set_fact:
+    source_commit: "{{ tagged.json.object.sha if git_ref.json.object.type == 'tag' else git_ref.json.object.sha }}"
+- name: Verify the final Git commit
+  ansible.builtin.assert:
+    that:
+      - source_commit is match('^[a-f0-9]{40}$')
+      - git_ref.json.object.type == 'commit' or tagged.json.object.type == 'commit'
+- name: Inspect the local manager checkout without following unknown destinations
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "-I"
+      - "-B"
+      - "{{ playbook_dir }}/files/user_checkout.py"
+      - "{{ git_parent }}/{{ plugin.key }}"
+      - "{{ plugin.value.repo }}"
+  changed_when: false
+  register: local_ref
+- name: Record plugin or SDK selection and drift
+  ansible.builtin.set_fact:
+    latest_tools: "{{ latest_tools | combine({plugin.key: {'manager': 'git', 'current': local_ref.stdout, 'version': source_commit,
+      'repo': plugin.value.repo, 'path':
+      git_parent + '/' + plugin.key}}) }}"
+    user_changes: "{{ user_changes + (['Update ' + plugin.key + ' to ' + source_commit] if local_ref.stdout != source_commit else []) }}"

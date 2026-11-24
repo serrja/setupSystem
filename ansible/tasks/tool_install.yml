@@ -1,0 +1,92 @@
+---
+- name: Check cancellation before the next operation
+  ansible.builtin.include_tasks: cancel.yml
+- name: Validate selected personal manager roots before native access
+  ansible.builtin.assert:
+    that: facts.xdg.data | manager_paths(selected)
+- name: Verify the selected publisher archive before running the native package manager
+  ansible.builtin.get_url:
+    url: "{{ managed.value.artifact.url }}"
+    dest: "{{ run_dir }}/managers/artifacts/{{ managed.value.artifact.filename }}"
+    checksum: "{{ managed.value.artifact.checksum }}"
+    mode: "0600"
+    validate_certs: true
+    use_netrc: false
+  when: managed.value.manager in ['pypi','npm'] and managed.value.current != managed.value.version
+- name: Mark the start of a confirmed manager update
+  ansible.builtin.set_fact:
+    mutation_started: true
+  when: managed.value.current != managed.value.version
+- name: Prepare the private manager prefix for the verified package
+  ansible.builtin.file:
+    path: "{{ tool_prefix }}/bin"
+    state: directory
+    mode: "0700"
+  when: managed.value.manager in ['pypi','npm'] and managed.value.current != managed.value.version
+- name: Install the verified npm tarball using a private registry configuration
+  ansible.builtin.command:
+    chdir: "{{ run_dir }}/managers/work"
+    argv:
+      - "/usr/bin/env"
+      - "-i"
+      - "PATH=/usr/bin:/bin"
+      - "HOME={{ run_dir }}/managers/home"
+      - "TMPDIR={{ run_dir }}/managers/tmp"
+      - "NPM_CONFIG_USERCONFIG={{ run_dir }}/managers/npm.user.conf"
+      - "NPM_CONFIG_GLOBALCONFIG={{ run_dir }}/managers/npm.global.conf"
+      - "NPM_CONFIG_CACHE={{ run_dir }}/managers/npm-cache"
+      - "/usr/bin/npm"
+      - "install"
+      - "--global"
+      - "--ignore-scripts"
+      - "--no-audit"
+      - "--no-fund"
+      - "--git=/bin/false"
+      - "--prefix"
+      - "{{ tool_prefix }}/npm"
+      - "--registry=https://registry.npmjs.org"
+      - "--"
+      - "{{ run_dir }}/managers/artifacts/{{ managed.value.artifact.filename }}"
+  when: managed.value.manager == 'npm' and managed.value.current != managed.value.version
+  changed_when: true
+- name: Install the verified PyPI wheel with pipx using an isolated pip configuration
+  ansible.builtin.command:
+    chdir: "{{ run_dir }}/managers/work"
+    argv:
+      - "/usr/bin/env"
+      - "-i"
+      - "PATH=/usr/bin:/bin"
+      - "HOME={{ run_dir }}/managers/home"
+      - "TMPDIR={{ run_dir }}/managers/tmp"
+      - "PIP_CONFIG_FILE=/dev/null"
+      - "PIP_INDEX_URL=https://pypi.org/simple"
+      - "PIP_DISABLE_PIP_VERSION_CHECK=1"
+      - "PIP_NO_INPUT=1"
+      - "PIP_NO_CACHE_DIR=1"
+      - "PYTHONNOUSERSITE=1"
+      - "PIPX_HOME={{ tool_prefix }}/pipx"
+      - "PIPX_BIN_DIR={{ tool_prefix }}/bin"
+      - "/usr/bin/pipx"
+      - "install"
+      - "--force"
+      - "--python=/usr/bin/python3"
+      - "--pip-args=--only-binary=:all: --index-url https://pypi.org/simple"
+      - "{{ run_dir }}/managers/artifacts/{{ managed.value.artifact.filename }}"
+  when: managed.value.manager == 'pypi' and managed.value.current != managed.value.version
+  changed_when: true
+- name: Install approved editor plugins and SDK using native Git
+  ansible.builtin.git:
+    repo: "{{ managed.value.repo }}"
+    dest: "{{ managed.value.path }}"
+    version: "{{ managed.value.version }}"
+    force: false
+    recursive: false
+  environment:
+    GIT_TERMINAL_PROMPT: "0"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_NOSYSTEM: "1"
+  when: managed.value.manager == 'git' and managed.value.current != managed.value.version
+- name: Record the completed user tool update
+  ansible.builtin.set_fact:
+    changed_stages: "{{ changed_stages + ['Updated ' + managed.key] }}"
+  when: managed.value.current != managed.value.version

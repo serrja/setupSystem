@@ -10,7 +10,7 @@
   "modules-center": ["clock"],
   "modules-right": ["hyprland/language", "pulseaudio", "network", "backlight", "battery", "tray", "custom/power"],
   "custom/launcher": {
-    "format": "󰍜",
+    "format": "Apps",
     "tooltip-format": "Applications · Super+D",
     "on-click": "wofi --show drun --conf \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/wofi.conf\" --style \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/style.css\""
   },
@@ -22,28 +22,28 @@
   },
   "hyprland/language": {"format": "{}", "format-en": "EN", "format-ru": "RU"},
   "pulseaudio": {
-    "format": "󰕾 {volume}%",
-    "format-muted": "󰖁 Muted",
+    "format": "Vol {volume}%",
+    "format-muted": "Muted",
     "on-click": "pavucontrol",
     "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
     "scroll-step": 5
   },
   "network": {
-    "format-wifi": "󰤨 {signalStrength}%",
-    "format-ethernet": "󰈀 Connected",
-    "format-disconnected": "󰤭 Offline",
+    "format-wifi": "Wi-Fi {signalStrength}%",
+    "format-ethernet": "Wired",
+    "format-disconnected": "Offline",
     "tooltip-format": "{ifname} · {ipaddr}",
     "on-click": "nm-connection-editor"
   },
   "backlight": {
-    "format": "󰃠 {percent}%",
+    "format": "Light {percent}%",
     "on-scroll-up": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/brightness.sh\" up",
     "on-scroll-down": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/brightness.sh\" down"
   },
   "battery": {},
   "tray": {"icon-size": 18, "spacing": 8},
   "custom/power": {
-    "format": "󰐥",
+    "format": "Power",
     "tooltip-format": "Session and power",
     "on-click": "sh \"${XDG_CONFIG_HOME:-$HOME/.config}/hypr/setup-system/power.sh\""
   }

@@ -1,0 +1,123 @@
+---
+- name: Validate selected personal manager roots before native access
+  ansible.builtin.assert:
+    that: facts.xdg.data | manager_paths(selected)
+- name: Prepare private inputs and an empty working directory for the native package managers
+  ansible.builtin.file:
+    path: "{{ run_dir }}/managers/{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: [home, work, artifacts, tmp]
+  when: latest_tools.values() | selectattr('manager','in',['npm','pypi']) | list | length > 0
+- name: Install one confirmed tool per cancellation boundary
+  ansible.builtin.include_tasks: tool_install.yml
+  loop: "{{ latest_tools | dict2items }}"
+  loop_control:
+    loop_var: managed
+- name: Verify installed manager release metadata
+  ansible.builtin.assert:
+    that:
+      - (facts.xdg.data | managed_version(item.value.manager,item.key)) == item.value.version
+  loop: "{{ latest_tools | dict2items }}"
+  when: item.value.manager in ['npm','pypi']
+- name: Verify selected user executables
+  ansible.builtin.command:
+    argv: ["{{ tool_prefix }}/{{ item }}", "--version"]
+  loop: "{{ ['flutter/bin/flutter', 'flutter/bin/dart'] if 'dart_flutter' in selected else [] }}"
+  environment:
+    FLUTTER_SUPPRESS_ANALYTICS: "true"
+    CI: "true"
+  changed_when: false
+- name: Check cancellation before the next operation
+  ansible.builtin.include_tasks: cancel.yml
+- name: Mark the start of user file publication
+  ansible.builtin.set_fact:
+    mutation_started: true
+  when: files_preview.changes | default([]) | length > 0
+- name: Publish staged personal files through the common recovery boundary
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "-I", "-B", "-m", "setup_system.file_tasks", "publish"]
+  when: files_preview.changes | default([]) | length > 0
+  changed_when: true
+  register: published
+- name: Record file publication before the editor smoke test
+  ansible.builtin.set_fact:
+    changed_stages: "{{ changed_stages + [published.stdout] }}"
+  when: published.stdout | default('') | length > 0
+- name: Check cancellation before the next operation
+  ansible.builtin.include_tasks: cancel.yml
+- name: Create the selected parser installation directory
+  ansible.builtin.file:
+    path: "{{ facts.xdg.data }}/setup-system/editor-parsers"
+    state: directory
+    mode: "0700"
+  when: parser_changes | default([]) | length > 0
+- name: Install the selected editor parsers on explicit Apply
+  ansible.builtin.command:
+    argv:
+      - "/usr/bin/nvim"
+      - "--headless"
+      - "-n"
+      - "-i"
+      - "NONE"
+      - "-u"
+      - "{{ facts.xdg.config }}/nvim/init.lua"
+      - "+TSInstallSync {{ parser_changes | join(' ') }}"
+      - "+qa"
+  when: parser_changes | default([]) | length > 0
+  changed_when: true
+- name: Prepare a private project for language service verification
+  ansible.builtin.file:
+    path: "{{ run_dir }}/editor-check"
+    state: directory
+    mode: "0700"
+  when: "'neovim' in selected"
+- name: Verify the editor starts offline with its selected parsers and plugins
+  ansible.builtin.command:
+    argv:
+      - "/usr/bin/nvim"
+      - "--headless"
+      - "-n"
+      - "-i"
+      - "NONE"
+      - "-u"
+      - "{{ facts.xdg.config }}/nvim/init.lua"
+      - "-c"
+      - "lua local ok, err = pcall(dofile, vim.env.SETUP_EDITOR_CHECK); if not ok then io.stderr:write(tostring(err)); vim.cmd('cquit 1') end"
+      - "+qa!"
+    chdir: "{{ run_dir }}/editor-check"
+  environment:
+    PATH: "{{ facts.home }}/.local/bin:/usr/bin:/bin"
+    SETUP_EDITOR_CHECK: "{{ playbook_dir }}/files/editor_check.lua"
+    SETUP_EDITOR_PROFILES: "{{ intent.languages | default([]) | to_json }}"
+    SETUP_EDITOR_PARSERS: "{{ selected_parsers | to_json }}"
+    FLUTTER_SUPPRESS_ANALYTICS: "true"
+    CI: "true"
+  when: "'neovim' in selected"
+  changed_when: false
+- name: Record successful headless verification using the installed parser fingerprints
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/editor_proof.py", "record"]
+    stdin: "{{ editor_proof | to_json }}"
+  when: "'neovim' in selected"
+  changed_when: false
+- name: Check installed language servers, formatters and application executables
+  ansible.builtin.command:
+    argv: ["/usr/bin/test", "-x", "{{ item }}"]
+  loop: >-
+    {{ (selected | select('in', commands) | map('extract', commands) | map('dict2items') | flatten
+      | map(attribute='value') | map('regex_replace','^',tool_prefix + '/') | list)
+      + (['/usr/bin/clangd','/usr/bin/clang-format'] if 'cpp' in selected else []) }}
+  changed_when: false
+- name: Verify the developer tools execute in the current user environment
+  ansible.builtin.command:
+    argv: ["{{ item }}", "--version"]
+  loop: >-
+    {{ ([tool_prefix + '/bin/ruff', tool_prefix + '/bin/basedpyright'] if 'python' in selected else [])
+     + ([tool_prefix + '/npm/bin/prettier', tool_prefix + '/npm/bin/tsc'] if 'typescript_vue' in selected else [])
+     + ([tool_prefix + '/npm/bin/codex'] if 'codex' in selected else [])
+     + (['/usr/bin/clangd','/usr/bin/clang-format'] if 'cpp' in selected else []) }}
+  changed_when: false
+- name: Record successful user work and its recovery ID
+  ansible.builtin.set_fact:
+    changed_stages: "{{ changed_stages + user_changes }}"

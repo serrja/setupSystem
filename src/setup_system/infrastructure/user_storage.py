@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
 import stat
 import tempfile
-import uuid
-from datetime import UTC, datetime
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 
 def state_root() -> Path:
-    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "setup-system"
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "setup-system"
 
 
 def inside_home(path: Path) -> Path:
@@ -38,70 +36,42 @@ def atomic_write(
     path: Path, content: bytes, mode: int = 0o600, *, preserve_existing_mode: bool = True
 ) -> str:
     target = inside_home(path)
-    if target.exists():
-        if not target.is_file():
-            raise ValueError(f"Managed target is not a regular file: {target}")
-        if target.read_bytes() == content and (
-            preserve_existing_mode or stat.S_IMODE(target.stat().st_mode) == mode
-        ):
-            return "unchanged"
-        if preserve_existing_mode:
-            mode = stat.S_IMODE(target.stat().st_mode)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
-    candidate = Path(name)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        candidate.chmod(mode)
-        os.replace(candidate, target)
-        directory = os.open(target.parent, os.O_RDONLY)
+    with private_directory(target.parent) as parent:
+        # Anchor staging and replacement to the directory checked above.
+        pinned = Path("/proc/self/fd") / str(parent)
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
         try:
-            os.fsync(directory)
+            previous = os.open(target.name, flags, dir_fd=parent)
+        except FileNotFoundError:
+            previous = None
+        if previous is not None:
+            try:
+                info = os.fstat(previous)
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError(f"Managed target is not a regular file: {target}")
+                previous_mode = stat.S_IMODE(info.st_mode)
+                with open(previous, "rb", closefd=False) as original:
+                    if original.read() == content and (
+                        preserve_existing_mode or previous_mode == mode
+                    ):
+                        return "unchanged"
+                if preserve_existing_mode:
+                    mode = previous_mode
+            finally:
+                os.close(previous)
+        descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=pinned)
+        candidate = Path(name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fchmod(stream.fileno(), mode)
+                os.fsync(stream.fileno())
+            os.replace(candidate.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
         finally:
-            os.close(directory)
-    finally:
-        candidate.unlink(missing_ok=True)
+            candidate.unlink(missing_ok=True)
     return "changed"
-
-
-def new_backup(paths: list[Path]) -> Path:
-    base = inside_home(state_root() / "backups")
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-    folder = base / run_id
-    folder.mkdir(parents=True, mode=0o700, exist_ok=False)
-    folder.chmod(0o700)
-    home = Path.home().resolve()
-    items: list[dict[str, str | int]] = []
-    for source in sorted(set(paths)):
-        target = inside_home(source)
-        if not target.exists():
-            continue
-        if not target.is_file():
-            raise ValueError(f"Backup source is not a regular file: {target}")
-        relative = target.relative_to(home)
-        backup = folder / "files" / relative
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(target, backup)
-        backup.chmod(0o600)
-        items.append(
-            {
-                "source": str(target),
-                "home_relative": str(relative),
-                "backup": str(backup.relative_to(folder)),
-                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-                "mode": stat.S_IMODE(target.stat().st_mode),
-            }
-        )
-    manifest = folder / "manifest.json"
-    manifest.write_text(
-        json.dumps({"run_id": run_id, "items": items, "moves": []}, ensure_ascii=False, indent=2)
-        + "\n"
-    )
-    manifest.chmod(0o600)
-    return folder
 
 
 def safe_file(path: Path, uid: int) -> None:
@@ -120,6 +90,11 @@ def safe_file(path: Path, uid: int) -> None:
         raise ValueError("Settings cannot be writable by other users")
 
 
+def _check_directory(info: os.stat_result, path: Path) -> None:
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError(f"Unsafe owner or permissions on directory: {path}")
+
+
 def checked_directory(path: Path) -> Path:
     home = Path.home().resolve()
     if not path.is_absolute() or ".." in path.parts or not path.is_relative_to(home):
@@ -128,12 +103,43 @@ def checked_directory(path: Path) -> Path:
         if parent.is_symlink():
             raise ValueError(f"Managed path traverses a symlink: {parent}")
         if parent.exists():
-            info = parent.stat()
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
-                raise ValueError(f"Unsafe owner or permissions on directory: {parent}")
+            _check_directory(parent.stat(), parent)
         if parent == home:
             break
     return path
+
+
+@contextmanager
+def private_directory(path: Path) -> Iterator[int]:
+    """Open a verified directory and create missing components below HOME privately."""
+    checked_directory(path)
+    home = Path.home().resolve()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    current = Path("/")
+    descriptor = os.open(current, flags)
+    try:
+        for part in path.parts[1:]:
+            current /= part
+            try:
+                child = os.open(part, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                if current == home or not current.is_relative_to(home):
+                    raise
+                try:
+                    os.mkdir(part, 0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    # Another writer may have just created it. Validate its descriptor below.
+                    pass
+                else:
+                    os.fsync(descriptor)
+                child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            if current.is_relative_to(home):
+                _check_directory(os.fstat(descriptor), current)
+        yield descriptor
+    finally:
+        os.close(descriptor)
 
 
 def target_path(relative: str, *, validate_file: bool = True) -> Path:

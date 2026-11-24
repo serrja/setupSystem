@@ -24,5 +24,8 @@ class ContractModel(BaseModel):
 
     def validated(self, **updates: object) -> Self:
         """Construct a detached and validated revision from declared fields."""
-        values = self.model_dump(round_trip=True, by_alias=False)
-        return self.model_validate({**values, **updates}, by_name=True, by_alias=False)
+        values = self.model_dump(round_trip=True, by_alias=True)
+        for key, value in updates.items():
+            field = type(self).model_fields.get(key)
+            values[field.alias if field and field.alias else key] = value
+        return self.model_validate(values)

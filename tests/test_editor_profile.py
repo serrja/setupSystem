@@ -1,111 +1,132 @@
-"""The selected editor action includes parser verification before completion."""
+"""Profile selection, native Git resolution and headless failure propagation."""
 
+import json
+import os
+import runpy
+import subprocess
+import sys
+import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
+from native_workspace import FILTERS, ROOT, files
+from test_native_ansible import play
+from test_native_ansible import run_env as run_env
 
-from setup_system.composition import build_service
-from setup_system.domain.operations import ApplicationAction, WorkstationPlan
-from setup_system.domain.settings import Section, SystemSettings, UserSettings
-from setup_system.infrastructure import editor
 
-
-def test_neovim_action_fails_if_parser_verification_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setattr(editor, "install_neovim", lambda *_: None)
-    monkeypatch.setattr(editor, "install_plugins", lambda *_: [])
-    monkeypatch.setattr("setup_system.infrastructure.editor.apply_files", lambda *_: None)
-
-    def broken_parser(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("Parser verification failed")
-
-    monkeypatch.setattr(editor, "_headless", broken_parser)
-    monkeypatch.setattr(editor.shutil, "which", lambda name: name)
-    monkeypatch.setattr(
-        editor, "detect_platform", lambda **_kwargs: type("Platform", (), {"implemented": True})()
+def test_neovim_action_fails_if_parser_verification_fails(run_env):
+    """Inject only the failing editor process into the actual Ansible verification task."""
+    stage = Path(run_env["SETUP_SYSTEM_RESULT"]).parent
+    proof = stage / "after-smoke"
+    fixture = stage / "failing-editor"
+    fixture.write_text(
+        "#!" + sys.executable + "\n"
+        "import json,os,sys\n"
+        "assert json.loads(os.environ['SETUP_EDITOR_PARSERS']) == ['python']\n"
+        "assert '--headless' in sys.argv and '-u' in sys.argv\n"
+        "print('Parser verification failed',file=sys.stderr)\nsys.exit(23)\n"
     )
-    service = build_service(Path(__file__).resolve().parents[1])
-    plan = WorkstationPlan(
-        section=Section.WORKSPACE,
-        system=SystemSettings(),
-        user=UserSettings(apps=("neovim",)),
-        actions=(ApplicationAction(id="neovim", description="Editor"),),
+    fixture.chmod(0o700)
+    role = yaml.safe_load((ROOT / "ansible/tasks/user_apply.yml").read_text())
+    verify = next(task for task in role if task["name"].startswith("Verify the editor starts"))
+    args = verify["ansible.builtin.command"]["argv"]
+    assert args[0] == "/usr/bin/nvim"
+    args[0] = str(fixture)
+    (stage / "editor-check").mkdir()
+    book = stage / "smoke.yml"
+    book.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "become": False,
+                    "vars": {
+                        "selected": ["neovim"],
+                        "run_dir": str(stage),
+                        "intent": {"languages": ["python"]},
+                        "selected_parsers": ["python"],
+                        "facts": {
+                            "home": run_env["HOME"],
+                            "xdg": {"config": run_env["XDG_CONFIG_HOME"]},
+                        },
+                    },
+                    "tasks": [
+                        verify,
+                        {
+                            "ansible.builtin.copy": {
+                                "content": "done",
+                                "dest": str(proof),
+                                "mode": "0600",
+                            }
+                        },
+                    ],
+                }
+            ]
+        )
     )
-    with pytest.raises(RuntimeError, match="Parser verification failed"):
-        service._apply(plan.actions[0], plan)
+    result = play([str(book)], run_env)
+    assert result.returncode != 0
+    assert "Parser verification failed" in result.stdout + result.stderr
+    assert not proof.exists()
 
 
-def test_editor_locks_cover_selectable_language_parsers() -> None:
-    import json
-    import tomllib
-
-    from setup_system.infrastructure.catalog_repository import load_components, load_editor
-    from setup_system.resource_locator import ResourceLocator
-
-    root = Path(__file__).resolve().parents[1]
-    manifest = tomllib.loads((root / "manifests/editor.toml").read_text())
-    assert set(manifest["parsers"]) - {"base"} == {
-        item.id for item in load_components(root).components("language")
+def test_editor_catalog_covers_selectable_languages_and_resolves_compatible_git_tags(
+    tmp_path, monkeypatch
+):
+    catalog = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
+    editor = tomllib.loads((ROOT / "config/workspace/editor.toml").read_text())
+    assert set(editor["parsers"]) - {"base"} == {
+        name for name, entry in catalog.items() if entry["kind"] == "language"
     }
-    files = editor.editor_files(root, UserSettings(), load_editor(root))
-    native = json.loads(
-        next(content for path, content in files.items() if path.name == "lazy-lock.json")
-    )
-    assert native == {
-        name: {key: entry[key] for key in ("commit", "branch")}
-        for name, entry in manifest["plugins"].items()
-        if name != "lazy"
-    }
-    resources = ResourceLocator.for_root(root)
-    inputs = resources.resource("catalogs/python_tools.in").read_text().splitlines()
-    locked = resources.resource("catalogs/python_tools.requirements.txt").read_text()
-    assert all(any(row.startswith(name + "==") for row in locked.splitlines()) for name in inputs)
-
-
-def test_missing_flutter_delivery_blocks_before_privilege(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from setup_system.domain.operations import InstallRequest, Operation
-    from setup_system.infrastructure.language_tools import language_blocker
-
-    root = Path(__file__).resolve().parents[1]
-    monkeypatch.setattr("platform.machine", lambda: "aarch64")
-    monkeypatch.setattr(
-        "platform.freedesktop_os_release",
-        lambda: {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"},
-    )
+    assert all(row["repo"].startswith("https://github.com/") for row in editor["plugins"].values())
+    for key in ("config", "data", "state", "cache"):
+        monkeypatch.setenv("XDG_" + key.upper() + "_HOME", str(tmp_path / key))
     monkeypatch.setenv("HOME", str(tmp_path))
-    for kind in ("DATA", "CONFIG", "CACHE", "STATE"):
-        monkeypatch.setenv("XDG_" + kind + "_HOME", str(tmp_path / kind.lower()))
-    monkeypatch.delenv("FLUTTER_ROOT", raising=False)
-    monkeypatch.setenv("PATH", str(tmp_path))
-    assert "arm64" in str(language_blocker(root, "dart_flutter"))
-    import os
+    desired, _ = files(ROOT, {"apps": ["neovim"], "languages": ["python"]})
+    init = desired[tmp_path / "config/nvim/init.lua"].decode()
+    assert all(json.dumps(name) in init for name in editor["plugins"])
+    assert 'local selected = {"python"}' in init and "missing = false" in init
+    assert {"ruff", "basedpyright"} == set(catalog["python"]["pypi"])
+    rows = [{"ref": "refs/tags/" + v} for v in ("v1.3.4", "v1.12.0", "v2.0.0", "v1.13.0-beta")]
+    choose = FILTERS["stable_tag"]
+    assert choose(rows, 1) == "refs/tags/v1.12.0"
+    with pytest.raises(ValueError, match="No stable release"):
+        choose(rows, 4)
 
-    from setup_system.domain.identity import TargetUser
 
-    target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/bash")
-    service = build_service(
-        root,
-        identity=lambda _name: target,
-        authorize=lambda: pytest.fail("authorization before SDK availability"),
-    )
+def test_existing_flutter_checkout_with_local_changes_blocks_before_mutation(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    sdk = tmp_path / "SDK directory"
+    url = "https://github.com/flutter/flutter.git"
+    observe = runpy.run_path(str(ROOT / "ansible/files/user_checkout.py"))["observe"]
+    assert observe(sdk, url) == ""
+    env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    subprocess.run(["git", "init", "--quiet", str(sdk)], check=True, env=env)
+    subprocess.run(["git", "-C", str(sdk), "remote", "add", "origin", url], check=True, env=env)
+    personal = sdk / "personal.txt"
+    personal.write_text("local changes")
+    with pytest.raises(ValueError, match="local edits"):
+        observe(sdk, url)
+    assert personal.read_text() == "local changes"
 
-    request = InstallRequest(
-        operation=Operation.APPLY,
-        yes=True,
-        section=Section.WORKSPACE,
-        settings=UserSettings(language_profiles=("dart_flutter",)),
-    )
-    assert service.run(request) == 4
-    assert any("Flutter archive" in item for item in service.plan(request).blockers)
-    sdk = tmp_path / "flutter sdk"
-    for entry in ("bin/flutter", "bin/cache/dart-sdk/bin/dart", "packages/flutter/pubspec.yaml"):
-        path = sdk / entry
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch(mode=0o755)
-    monkeypatch.setenv("FLUTTER_ROOT", str(sdk))
-    assert language_blocker(root, "dart_flutter") is None
+
+def test_failed_editor_smoke_leaves_retryable_state(tmp_path, monkeypatch):
+    module = runpy.run_path(str(ROOT / "ansible/files/editor_proof.py"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    proof = module["run"]
+    current = {"signature": "1" * 64}
+    monkeypatch.setitem(proof.__globals__, "proof", lambda request: current["signature"])
+    assert not proof("check", {}) and not (tmp_path / "state").exists()
+    assert not proof("check", {})  # A failed native smoke never calls record.
+    proof("record", {})
+    assert proof("check", {})
+    current["signature"] = "2" * 64
+    assert not proof("check", {})
+    file = tmp_path / "state/setup-system/editor-verification.v1"
+    file.write_text("external data")
+    with pytest.raises(ValueError, match="Unrecognized"):
+        proof("record", {})
+    assert file.read_text() == "external data"

@@ -1,21 +1,18 @@
-# Login, clock and boot
+# Graphical login
 
-An explicitly selected graphical-login stage configures greetd, gtkgreet and Cage.
-The pre-authentication bridge/resources are system-owned. Native PAM authenticates the
-normal desktop account, then the bridge starts Hyprland with its verified HOME/XDG
-settings. No compositor or Python UI runs as root.
+In **Base system**, select **Hyprland, sound, portals and desktop dependencies** and **Graphical login**. Inspect the plan before confirming. It includes the user session launcher and, when required, greetd, gtkgreet and Cage. The greeter runs as the dedicated `_greetd` account. PAM authenticates the desktop user. A system-owned bridge starts Hyprland with that user's HOME and XDG directories.
 
-The next normal boot can use the configured graphical target. Application does not
-switch sessions, reboot, stop SSH or enable autologin. Existing encrypted HOME must
-already be unlocked before user runtime/configuration writes. Native disk unlock is
-separate; see [graphical unlock](graphical_unlock.md).
+Apply checks the same account, launcher, display-manager state, default target and GRUB inputs captured during planning. It backs up managed files before writing them and validates the generated GRUB configuration. The managed drop-in keeps a visible five-second boot menu and a ten-second recovery timeout after a failed boot. Enabling graphical login sets the default for subsequent boots. The current session stays open. An encrypted HOME must already be accessible for user configuration. [Graphical disk unlock](graphical_unlock.md)
 
-An optional timezone is validated against installed zoneinfo. Existing locale, NTP
-providers and network settings are preserved. The adapter records actual changes and
-backs up managed login/GRUB files. GRUB retains a visible 5-second menu and a 10-second
-recordfail recovery timeout. Existing boot entries and encryption parameters remain.
+## Recovery and verification
 
-On a disposable target, check login, failed authentication, normal-user Hyprland,
-Ctrl+Alt+F3 recovery and SSH before claiming success. Restore only unchanged managed
-files from the receipt's backups; inspect `journalctl -u greetd` locally without
-publishing account/session data. See [recovery](recovery.md).
+If the greeter fails, switch to a text console with Ctrl+Alt+F3. These commands show the service state and messages from the current boot.
+
+```sh
+systemctl status greetd
+journalctl -b -u greetd
+```
+
+The login journal at `/var/lib/setup-system/desktop-backups/operation.json` records previous state and managed paths. Check the journal and its backups before restoring files or changing the default target. [Recovery](recovery.md)
+
+On an approved disposable target, test failed and successful authentication, the normal-user compositor, text-console access and the site's existing remote access. Keep a working console or rescue entry until those checks pass.
