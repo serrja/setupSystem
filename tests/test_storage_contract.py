@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -126,3 +128,72 @@ def test_managed_block_preserves_user_content_and_removes_only_owned() -> None:
     assert changed.count("# >>> setupSystem >>>") == 1
     removed = managed_block(changed, None)
     assert removed == "user-before\nuser-after\n"
+
+
+def test_apply_and_restore_create_private_intermediates_under_shared_umask(tmp_path, monkeypatch):
+    from setup_system.infrastructure.managed_files import apply_files
+
+    home = tmp_path / "synthetic home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / "nested/state"))
+    target = home / "working/settings/choice.conf"
+    previous = os.umask(0o002)
+    try:
+        create = apply_files({target: b"first"})
+        changed = apply_files({target: b"second"})
+        assert (changed / "files/working/settings/choice.conf").read_bytes() == b"first"
+        assert all(stat.S_IMODE(p.stat().st_mode) == 0o700 for p in home.rglob("*") if p.is_dir())
+        restore(changed.name, apply=True)
+        assert target.read_bytes() == b"first"
+        restore(create.name, apply=True)
+        assert not target.exists()
+        assert os.umask(0o002) == 0o002
+    finally:
+        os.umask(previous)
+
+
+def test_existing_shared_parent_is_preserved_before_an_atomic_write(tmp_path, monkeypatch):
+    from setup_system.infrastructure.managed_files import apply_files
+
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    shared = home / "shared"
+    shared.mkdir()
+    shared.chmod(0o775)
+    target = shared / "nested/record.json"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(shared / "state"))
+    original = os.umask(0o002)
+    try:
+        with pytest.raises(ValueError, match="permissions"):
+            user_storage.atomic_write(target, b"private")
+        with pytest.raises(ValueError, match="permissions"):
+            apply_files({home / "absent": b"private"})
+    finally:
+        os.umask(original)
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o775
+    assert not list(shared.iterdir()) and not (home / "absent").exists()
+
+
+def test_historical_restore_creates_all_missing_parents_privately(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
+    target = home / "old/config/entry"
+    original = os.umask(0o077)
+    try:
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"previous")
+        backup = historical_backup([target])
+        target.unlink()
+        target.parent.rmdir()
+        target.parent.parent.rmdir()
+        os.umask(0o002)
+        assert restore(backup.name, apply=True) == [(str(target), "restored")]
+        assert target.read_bytes() == b"previous"
+        assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(target.parent.parent.stat().st_mode) == 0o700
+    finally:
+        os.umask(original)

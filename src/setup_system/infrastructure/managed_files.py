@@ -36,6 +36,7 @@ from setup_system.infrastructure.receipt_repository import (
 from setup_system.infrastructure.user_storage import (
     atomic_write,
     checked_directory,
+    private_directory,
     state_root,
     target_path,
 )
@@ -203,8 +204,10 @@ def apply_files(
         if not changes and all(p.exists() for p in directories):
             return state_root()
         backup_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
-        folder = checked_directory(state_root() / "backups") / backup_id
-        folder.mkdir(mode=0o700, parents=True)
+        folder = state_root() / "backups" / backup_id
+        with private_directory(folder.parent) as parent:
+            os.mkdir(backup_id, 0o700, dir_fd=parent)
+            os.fsync(parent)
         op = Operation(
             run_id=backup_id,
             files=changes,

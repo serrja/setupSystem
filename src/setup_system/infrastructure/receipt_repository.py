@@ -21,6 +21,7 @@ from setup_system.infrastructure.receipt_migrations import migrate_user_files
 from setup_system.infrastructure.user_storage import (
     atomic_write,
     checked_directory,
+    private_directory,
     read_object,
     safe_file,
     state_root,
@@ -87,17 +88,12 @@ def operation_folder(backup_id: str) -> Path:
 def writer() -> Iterator[None]:
     if os.geteuid() == 0:
         raise ValueError("User configuration and Ansible cannot run as root")
-    directory = checked_directory(state_root())
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
+    with private_directory(state_root()) as descriptor:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("Another user configuration operation is running") from None
         yield
-    finally:
-        os.close(descriptor)
 
 
 def list_operations() -> list[tuple[str, str]]:
