@@ -2,7 +2,6 @@
 """Build a root-owned Debian archive from the checked-out runtime files."""
 
 import argparse
-import gzip
 import hashlib
 import os
 import re
@@ -110,7 +109,13 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         copy(article, documentation / "docs" / article.name)
     manual = base / "usr/share/man/man1/setup-system.1.gz"
     manual.parent.mkdir(parents=True, exist_ok=True)
-    manual.write_bytes(gzip.compress((source_root / "debian/setup-system.1").read_bytes(), mtime=0))
+    with manual.open("wb") as compressed:
+        subprocess.run(
+            ["/usr/bin/gzip", "-n", "-9", "-c", source_root / "debian/setup-system.1"],
+            stdout=compressed,
+            env={"LC_ALL": "C"},
+            check=True,
+        )
     manual.chmod(0o644)
     for script in ("preinst", "prerm"):
         copy(source_root / "debian/guard", control / script, 0o755)

@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -79,20 +80,24 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "Prepare package fixture",
         cwd=fixture,
     )
+    # Exercise the builder under the current CI interpreter as well as through Make below.
     command(
-        "make",
-        "-f",
-        "mk/package.mk",
-        "package",
-        f"VERSION={VERSION}",
-        f"PACKAGE_DIR={out}",
+        sys.executable,
+        "-I",
+        "-B",
+        "debian/build.py",
+        "--version",
+        VERSION,
+        "--output",
+        str(out),
         cwd=fixture,
     )
     return out / FILENAME
 
 
 def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path) -> None:
-    sha = command("git", "rev-parse", "HEAD", cwd=package.parent / "source")
+    fixture = package.parent / "source"
+    sha = command("git", "rev-parse", "HEAD", cwd=fixture)
     for field, value in {
         "Version": VERSION,
         "Package": "setup-system",
@@ -127,6 +132,14 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
             "usr/lib/tmpfiles.d/setup-system.conf",
         ):
             assert f"./{name}" in names
+        manual = archive.extractfile("./usr/share/man/man1/setup-system.1.gz")
+        assert manual is not None
+        with manual:
+            assert manual.read() == subprocess.check_output(
+                ["/usr/bin/gzip", "-n", "-9", "-c"],
+                input=(fixture / "debian/setup-system.1").read_bytes(),
+                env={"LC_ALL": "C"},
+            )
         for entry in archive.getmembers():
             assert entry.uid == entry.gid == 0
             assert not entry.mode & 0o022
@@ -136,7 +149,6 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
     command("dpkg-deb", "-e", str(package), str(control))
     assert (control / "preinst").read_bytes() == (control / "prerm").read_bytes()
     assert not (control / "postinst").exists()
-    fixture = package.parent / "source"
     (fixture / "config/private.txt").write_text("untracked user data")
     (fixture / "ansible/templates/nvim-init.lua").write_text("dirty file without commit identity")
     (fixture / "debian/control").write_text("invalid dirty control")
