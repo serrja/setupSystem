@@ -1,6 +1,6 @@
 # Release guide
 
-The repository uses the reviewed [H02 Python provider](https://github.com/pokerlost/.github/blob/e5cac33af228224af9deaef308e39c1b9f788033/docs/python_release_contract.md)
+The release workflow calls the reviewed [H02 Python provider](https://github.com/pokerlost/.github/blob/e5cac33af228224af9deaef308e39c1b9f788033/docs/python_release_contract.md)
 for allocation, independent native verification and GitHub Releases. The consumer
 owns its native checks, build/injection and outside-installed acceptance. No package
 registry publication or deployment is part of this workflow.

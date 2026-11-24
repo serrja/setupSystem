@@ -1,8 +1,9 @@
 # Git author profiles
 
-Workspace Tools reads the effective author and signing settings for an exact
-checkout. The inspection includes their Git scope and origin. Signing key values
-are hidden in the report.
+Use Workspace Tools to inspect the effective author and signing settings of one checkout.
+The report shows each setting's Git scope and origin and hides signing key values.
+
+## ✍️ Save an author identity
 
 To save an identity, choose a profile name and a source checkout with a configured
 author name and email. An optional existing project directory can use this identity

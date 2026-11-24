@@ -91,22 +91,25 @@ run_package_transaction '
     fi
     exit "$result"
 }
+launch_command=/usr/bin/setup-system
 if candidate=$(PATH=$launcher_search_path command -v setup-system); then
-    if [ "$(readlink -f -- "$candidate")" != /usr/bin/setup-system ]; then
+    if [ "$(readlink -f -- "$candidate")" = /usr/bin/setup-system ]; then
+        launch_command=setup-system
+    else
         echo 'Warning: another launcher earlier in your PATH shadows /usr/bin/setup-system.' >&2
     fi
 fi
-printf '%s\n' 'Start it separately with: /usr/bin/setup-system'
+printf 'Start it separately with: %s\n' "$launch_command"
 }
 # The development Make target sources the same, restricted package transaction.
-if [ "${0##*/}" = install-local ]; then return 0; fi
+if [ "${0##*/}" = install-local.sh ]; then return 0; fi
 
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
     run)
         [ "$#" -eq 1 ] || { usage >&2; exit 2; }
         [ "$(id -u)" != 0 ] || fail 'Start the application as the desktop user.'
-        [ -x /usr/bin/setup-system ] || fail 'Install setup-system first. See https://github.com/serrja/setupSystem#install-the-configurator for the install command.'
+        [ -x /usr/bin/setup-system ] || fail 'Install setup-system first. See https://github.com/serrja/setupSystem/blob/main/docs/debian.md for the install command.'
         exec /usr/bin/setup-system ;;
     install|update) action=$1; shift ;;
     *) usage >&2; exit 2 ;;

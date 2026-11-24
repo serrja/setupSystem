@@ -293,7 +293,7 @@ def test_separate_writers_share_one_lock_without_creating_settings(tmp_path):
     (tmp_path / "dpkg_lock.py").write_bytes((ROOT / "libexec/dpkg_lock.py").read_bytes())
     script = tmp_path / "locked.sh"
     script.write_text(
-        (ROOT / "libexec/locked")
+        (ROOT / "libexec/locked.sh")
         .read_text()
         .replace("lock=/run/setup-system", "lock=" + shlex.quote(str(lock)))
     )

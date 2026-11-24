@@ -22,7 +22,7 @@ from setup_system.infrastructure.managed_files import apply_files, changed_files
 from setup_system.infrastructure.operation_io import read_wire
 from setup_system.infrastructure.receipt_migrations import restore_manifest
 from setup_system.infrastructure.restore_files import LocalRecoveryFiles
-from setup_system.models import BaseOptions, RequestEnvelope, TaskResult, WorkspaceOptions
+from setup_system.models import BaseOptions, RequestEnvelope, Status, TaskResult, WorkspaceOptions
 from setup_system.runner import resource_root
 
 
@@ -115,7 +115,7 @@ def main() -> None:
             return
         if (
             envelope.expected is None
-            or envelope.expected.status not in {"ready", "plan_ready"}
+            or not envelope.expected.status.allows_confirmation
             or envelope.expected.blockers
             or not envelope.expected.observed.needs_user
             or tuple(
@@ -141,7 +141,7 @@ def main() -> None:
     if action == "display-preview":
         preview_layout(WorkspaceOptions.model_validate(settings).monitors)
         reply = TaskResult(
-            status="complete",
+            status=Status.COMPLETE,
             actions=(
                 SystemAction(kind="display_restored", label="Previous display layout restored"),
             ),
@@ -173,13 +173,13 @@ def main() -> None:
     else:
         raise ValueError("Unknown file operation")
     answer = {
-        "status": "blocked" if blockers else "ready",
+        "status": Status.BLOCKED if blockers else Status.READY,
         "actions": actions,
         "observed": observed,
         "blockers": blockers,
     }
     if action.startswith("restore-") and not actions and not blockers:
-        answer["status"] = "no_changes"
+        answer["status"] = Status.NO_CHANGES
     if action == "restore-apply":
         if (
             blockers
@@ -189,7 +189,7 @@ def main() -> None:
             raise ValueError("Restore preview changed; inspect it again")
         if actions:
             restore(settings["backup_id"], apply=True)
-            answer["status"] = "complete"
+            answer["status"] = Status.COMPLETE
     result.write_text(TaskResult.model_validate(answer).model_dump_json(exclude_unset=True))
 
 

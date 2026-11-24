@@ -7,9 +7,12 @@ import re
 import tomllib
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TypedDict
+from typing import Annotated, TypedDict
+
+from pydantic import Field
 
 from setup_system.domain.auth_screen import AuthScreen
+from setup_system.domain.contracts import ContractModel
 from setup_system.infrastructure.receipt_repository import ownership
 from setup_system.infrastructure.tool_paths import personal_path
 
@@ -30,6 +33,21 @@ class RenderSelection(TypedDict, total=False):
 
 class FilePreview(TypedDict):
     after: dict[str, list[str | int]]
+
+
+class EditorSearch(ContractModel):
+    exclude_globs: tuple[
+        Annotated[
+            str, Field(strict=True, max_length=512, pattern=r"^[^!\x00-\x1f\x7f][^\x00-\x1f\x7f]*$")
+        ],
+        ...,
+    ] = Field(min_length=1, max_length=256)
+
+
+def editor_globs_lua(search: str) -> str:
+    """Render catalog globs as Lua strings for Neovim's native shell escaping."""
+    patterns = EditorSearch.model_validate_json(search).exclude_globs
+    return "{" + ", ".join(json.dumps(glob, ensure_ascii=False) for glob in patterns) + "}"
 
 
 def editor_specs(
@@ -64,7 +82,7 @@ def editor_specs(
             content = source.read_text()
             if name == "panel.py":
                 compile(content, str(source), "exec")
-            if name == "start-hyprland":
+            if name == "start-hyprland.sh":
                 add(source, data / "setup-system/bin/start-hyprland", "0700")
             elif name in assets["theme"] and str(home / desktop / name) in managed:
                 dest = home / desktop / name
@@ -235,6 +253,7 @@ def stable_tag(rows: Iterable[dict[str, str]], major: int) -> str:
 class FilterModule:
     def filters(self) -> dict[str, object]:
         return {
+            "editor_globs_lua": editor_globs_lua,
             "editor_proof": editor_proof,
             "stable_tag": stable_tag,
             "workspace_templates": editor_specs,

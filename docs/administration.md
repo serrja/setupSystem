@@ -1,8 +1,12 @@
 # Administrative access
 
-Open the configurator as your ordinary user. In the Base section, enter the existing local login name for administrative access. Preview shows the UID, primary GID, HOME, shell and current sudo membership. Granting access allows that login to run commands as root with its own password. Confirm the account and consequence before entering the **root password** for the packaged Ansible `su` operation.
+In **Base system**, select the existing local account that needs administrative access. Run the configurator as your ordinary user. Preview shows the UID, primary GID, HOME, shell and current sudo membership. Granting access allows that login to run commands as root with its own password. Confirm the account and consequence before entering the **root password** for the packaged Ansible `su` operation.
 
-If sudo is unavailable before installation, run `sh install.sh install --auth su` as the ordinary user from the reviewed release bootstrap. Add `--release vX.Y.Z` to select a published stable version. The bootstrap verifies the GitHub release, checksum and attestation before invoking native `su` for the package transaction. APT checks its installed state and the transaction rechecks the selected package bytes. Start the application separately with `/usr/bin/setup-system`. Updates support the same explicit authentication choice. Default package delivery uses sudo.
+## 📦 First installation without sudo
+
+If sudo is unavailable before installation, run `sh install.sh install --auth su` as the ordinary user from the reviewed release bootstrap. Add `--release vX.Y.Z` to select a published stable version. The bootstrap verifies the GitHub release, checksum and attestation before invoking native `su` for the package transaction. APT checks its installed state and the transaction rechecks the selected package bytes. Start the application separately with `setup-system`. If the installer reports that an older launcher takes precedence in PATH, use the full path it displays. Updates support the same explicit authentication choice. Default package delivery uses sudo.
+
+## 🔐 Grant and verify access
 
 The account must have a unique local passwd entry, an ordinary UID, a local primary group, an owned HOME and an enabled interactive shell. The confirmed snapshot binds these facts and the supplementary groups to the current system boot. The packaged helper checks them again, validates the effective files-based sudoers configuration with `visudo` and `cvtsudoers`, then uses Ansible's existing-user backend with `append` for the single local `sudo` group. The backend may invoke only the native group append for this account. It verifies the resulting membership and lists effective root access through sudo. The native account operation uses a login name. Another administrator must serialize account replacement around this brief check and update. A post-write identity or policy conflict requires administrator review.
 
