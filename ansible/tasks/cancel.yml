@@ -1,0 +1,8 @@
+---
+- name: Observe cancellation at a safe operation boundary
+  ansible.builtin.set_fact:
+    cancel_requested: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_CANCEL') is file }}"
+- name: Stop before the next native mutation
+  ansible.builtin.assert:
+    that: not cancel_requested
+    fail_msg: "Cancelled before the next operation."

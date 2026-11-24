@@ -96,10 +96,9 @@ def configuration(
         result[module] = {
             "bat": name,
             "interval": 10,
-            "format": "{icon} {capacity}%",
-            "format-icons": ["󰁺", "󰁼", "󰁿", "󰂁", "󰁹"],
-            "format-charging": "󰂄 {capacity}%",
-            "format-full": "󰁹 {capacity}%",
+            "format": "Bat {capacity}%",
+            "format-charging": "Charging {capacity}%",
+            "format-full": "Full {capacity}%",
             "states": {"warning": 30, "critical": 15},
             "tooltip-format": name + ": {capacity}% · {time}",
         }

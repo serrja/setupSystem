@@ -7,12 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from setup_system.composition import restore
-from setup_system.domain.tool_releases import RtkRelease
 from setup_system.domain.workspace_facts import ShellStatus
+from setup_system.file_tasks import restore
 from setup_system.infrastructure import rtk, shell
-from setup_system.infrastructure.catalog_repository import read_contract
-from setup_system.resource_locator import ResourceLocator
 
 
 def _shell_fixture(home: Path, root: Path) -> ShellStatus:
@@ -35,7 +32,7 @@ def test_shell_plan_is_read_only_and_restore_protects_later_edits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
     root = tmp_path / "source"
     status = _shell_fixture(home, root)
     monkeypatch.setenv("HOME", str(home))
@@ -73,7 +70,7 @@ def test_shell_rejects_external_state_before_writing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
     root = tmp_path / "source"
     status = _shell_fixture(home, root)
     monkeypatch.setattr(shell, "inspect_shell", lambda: status)
@@ -93,19 +90,19 @@ def test_shipped_zsh_startup_loads_textual_launcher_and_completion() -> None:
 
 
 @pytest.fixture
-def pinned_rtk(tmp_path: Path) -> tuple[Path, str]:
-    root = tmp_path / "source"
-    release = ResourceLocator.for_root().manifest("rtk.toml")
-    target = ResourceLocator.for_root(root).manifest("rtk.toml")
-    target.parent.mkdir(parents=True)
-    target.write_bytes(release.read_bytes())
-    return root, read_contract(target, RtkRelease).version
+def selected_rtk() -> rtk.Release:
+    return rtk.Release(
+        version="1.2.3",
+        archive="rtk-x86_64-unknown-linux-musl.tar.gz",
+        sha256="a" * 64,
+        checksum_sha256="b" * 64,
+    )
 
 
 def test_rtk_detects_product_and_preserves_pinned_binary(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pinned_rtk: tuple[Path, str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, selected_rtk: rtk.Release
 ) -> None:
-    root, version = pinned_rtk
+    version = selected_rtk.version
     binary = tmp_path / "rtk"
     binary.write_text(
         f'#!/bin/sh\nif [ "$1" = "--version" ]; then echo "rtk {version}"; '
@@ -114,26 +111,31 @@ def test_rtk_detects_product_and_preserves_pinned_binary(
     binary.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
 
-    status, action = rtk.plan_rtk(root)
+    monkeypatch.setattr(rtk, "_released_binary", lambda selected: binary.read_bytes())
+    status, action = rtk.plan_rtk(selected_rtk)
     assert status.product_matches and status.version == version
     assert action.startswith("unchanged:")
-    assert rtk.install_rtk(root) == (action, None)
+    assert rtk.install_rtk(selected_rtk) == (action, None)
     assert not (tmp_path / "source" / "backups").exists()
 
 
 def test_rtk_blocks_same_named_other_product(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pinned_rtk: tuple[Path, str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, selected_rtk: rtk.Release
 ) -> None:
-    root, version = pinned_rtk
+    version = selected_rtk.version
     binary = tmp_path / "rtk"
     binary.write_text(f'#!/bin/sh\necho "rtk {version}"\n')
     binary.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
 
-    _, action = rtk.plan_rtk(root)
+    monkeypatch.setattr(rtk, "_released_binary", lambda selected: b"official different bytes")
+    monkeypatch.setattr(
+        rtk, "_verify_executable", lambda *args: pytest.fail("unknown executable ran")
+    )
+    _, action = rtk.plan_rtk(selected_rtk)
     assert action.startswith("blocked:")
     with pytest.raises(ValueError, match="not rtk-ai/rtk"):
-        rtk.install_rtk(root)
+        rtk.install_rtk(selected_rtk)
 
 
 def test_git_profile_uses_native_writer_and_shared_restore(
@@ -144,7 +146,7 @@ def test_git_profile_uses_native_writer_and_shared_restore(
     from setup_system.infrastructure import git_profiles
 
     home = tmp_path / "user home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
@@ -180,7 +182,7 @@ def test_git_override_after_publish_reports_recoverable_partial(tmp_path, monkey
     from setup_system.infrastructure.receipt_repository import list_operations
 
     home = tmp_path / "git home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
@@ -210,16 +212,18 @@ def test_selected_shell_renders_release_palette_and_preserves_edited_prompt(
     from setup_system.infrastructure.palette import palette
 
     home = tmp_path / "prompt home"
-    home.mkdir()
+    home.mkdir(mode=0o700)
     root = tmp_path / "release"
     status = _shell_fixture(home, root)
-    shipped = ResourceLocator.for_root()
-    prompt = "zsh/prompt.zsh"
-    ResourceLocator.for_root(root).asset(prompt).write_bytes(shipped.asset(prompt).read_bytes())
-    colors = "themes/catppuccin_mocha_green.toml"
-    selected = ResourceLocator.for_root(root).resource(colors)
+    shipped = Path(__file__).resolve().parents[1]
+    prompt = "assets/zsh/prompt.zsh"
+    (root / prompt).write_bytes((shipped / prompt).read_bytes())
+    colors = "config/shared/palette.toml"
+    selected = root / colors
     selected.parent.mkdir(parents=True)
-    selected.write_text(shipped.resource(colors).read_text().replace(palette()["green"], "#123456"))
+    selected.write_text(
+        (shipped / colors).read_text().replace(palette(shipped)["green"], "#123456")
+    )
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
@@ -241,3 +245,107 @@ def test_selected_shell_renders_release_palette_and_preserves_edited_prompt(
     assert b"@{" not in installed.read_bytes()
     restore(operation.name, apply=True)
     assert installed.read_bytes() == old
+
+
+def test_downloaded_rtk_archive_and_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+    import io
+    import tarfile
+
+    home = tmp_path / "rtk home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    data = b'#!/bin/sh\ncase "$1" in --version) echo "rtk 1.2.3";; *) echo "token savings";; esac\n'
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as tar:
+        entry = tarfile.TarInfo("bin/rtk")
+        entry.size = len(data)
+        tar.addfile(entry, io.BytesIO(data))
+    archive = stream.getvalue()
+    name = "rtk-x86_64-unknown-linux-musl.tar.gz"
+    digest = hashlib.sha256(archive).hexdigest()
+    checksums = f"{digest}  {name}\n".encode()
+    selected = rtk.Release(
+        version="1.2.3",
+        archive=name,
+        sha256=digest,
+        checksum_sha256=hashlib.sha256(checksums).hexdigest(),
+    )
+
+    def transport(url, limit):
+        if url.endswith("/checksums.txt"):
+            return checksums
+        assert url == f"https://github.com/rtk-ai/rtk/releases/download/v1.2.3/{name}"
+        return archive
+
+    monkeypatch.setattr(rtk, "_read", transport)
+    target = home / ".local/bin/rtk"
+    with pytest.raises(ValueError, match="checksums digest"):
+        rtk.install_rtk(selected.validated(checksum_sha256="0" * 64), update=True)
+    assert not target.exists()
+    _, receipt = rtk.install_rtk(selected, update=True)
+    assert target.read_bytes() == data and receipt.is_dir()
+    assert rtk.install_rtk(selected, update=True)[1] is None
+    restore(receipt.name, apply=True)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("operation", ["rtk-install", "shell-configure", "git-use"])
+@pytest.mark.parametrize("boundary", ["confirmation", "publication"])
+def test_mode_change_after_project_preview_preserves_bytes_and_mode(
+    tmp_path, monkeypatch, selected_rtk, operation, boundary
+):
+    import subprocess
+
+    from setup_system import project_tasks
+    from setup_system.infrastructure import git_profiles
+    from setup_system.infrastructure.managed_files import apply_files
+
+    root = tmp_path / "release"
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    for name in ("CONFIG", "STATE", "DATA", "CACHE"):
+        monkeypatch.setenv("XDG_" + name + "_HOME", str(home / name.lower()))
+    fields = {}
+    if operation == "rtk-install":
+        target = home / ".local/bin/rtk"
+        apply_files({target: b"previously approved release"}, modes={target: 0o755})
+        artifact = (
+            b'#!/bin/sh\ncase "$1" in --version) echo "rtk 1.2.3";; *) echo "savings";; esac\n'
+        )
+        monkeypatch.setattr(rtk, "release", lambda *a: selected_rtk)
+        monkeypatch.setattr(rtk, "_released_binary", lambda *a: artifact)
+    elif operation == "shell-configure":
+        shell_status = _shell_fixture(home, root)
+        monkeypatch.setattr(shell, "inspect_shell", lambda: shell_status)
+        monkeypatch.setattr(shell, "validate_shell", lambda *args: None)
+        target = home / ".zshrc"
+    else:
+        repo = home / "repo"
+        subprocess.run(["git", "init", "--quiet", str(repo)], check=True)
+        target = repo / ".git/config"
+        profile = git_profiles.profile_path("work")
+        profile.parent.mkdir(parents=True)
+        profile.write_text("[user]\nname = Example\nemail = local@example.invalid\n")
+        fields = {"name": "work", "repository": str(repo)}
+    target.chmod(0o755 if operation == "rtk-install" else 0o644)
+    prior = target.read_bytes()
+    prepared = project_tasks.preview(root, operation, fields)
+    target.chmod(0o700 if operation == "rtk-install" else 0o600)
+    modified_mode = target.stat().st_mode
+    with pytest.raises(ValueError):
+        if boundary == "confirmation":
+            project_tasks.execute(
+                root,
+                operation + "-apply",
+                {"settings": fields, "expected": prepared.result.model_dump()},
+            )
+        else:
+            prepared.apply()
+    assert target.read_bytes() == prior and target.stat().st_mode == modified_mode

@@ -1,13 +1,7 @@
 # Linux execution boundaries
 
-The Debian-specific APT, service and login adapters own privileged operating-system
-changes. Portable user configuration, projects and template use cases retain their
-separate ownership. [Architecture](architecture.md) owns the complete boundary model.
+Run `setup-system` in an interactive terminal as the normal workstation account. The two Textual sections share one active operation. Inspecting a machine, planning changes and saving preferences each have a separate purpose. A plan can query release metadata, simulate packages and render files in a temporary run directory. **Save** writes the selected section's TOML settings. [Configuration](configuration.md)
 
-Open Textual normally; only a confirmed system action invokes the finite privileged
-executor. Source paths in HOME are not trusted root executable inputs. Runtime delivery
-and Python builds always run under the normal account. Direct HTTPS and signed Debian
-APT provide downloads; no temporary network client or subscription input exists.
+System changes require the installed Debian package. After confirmation, the app passes a one-use password to Ansible's hidden local prompt. Debian supplies the system interpreter and Ansible. The installed recipes and helpers live under `/usr/lib/setup-system`. Only designated system tasks request root. Personal files and editor, shell and project configuration run under the workstation account.
 
-See [configuration](configuration.md), [Debian support](debian.md) and
-[recovery](recovery.md). Native mocks/containers do not prove real graphical installation.
+Use the result and the affected paths when assessing a failed or interrupted change. A verified file backup can restore a managed configuration. Debian package transactions and boot-loader changes have different recovery procedures. [Debian target](debian.md) · [Recovery](recovery.md) · [Architecture](architecture.md)

@@ -1,25 +1,15 @@
-# Debian target
+# Debian workstation target
 
-The workstation target is an existing minimal Debian 13 (trixie), amd64 or arm64,
-without another desktop. Debian 12 portable capabilities do not imply Hyprland support.
-Unknown distributions, versions and architectures stop before system changes.
+Open `setup-system` as the owner of an existing Debian 13 (trixie) installation on amd64 or arm64. In **Base system**, use **Inspect** to read the machine's capabilities. A different distribution, release, codename or architecture blocks system changes. The configurator starts with the existing filesystems, boot loader and account. [Linux execution boundaries](linux.md)
 
-`manifests/platforms.toml` owns package revisions, architecture aliases and capabilities.
-Hyprland and its matching portal/idle/lock dependencies come from signed official
-trixie-backports; stable/security packages remain official Debian sources. Resolve
-actual availability and simulate before applying. No testing/unstable source, silent
-build, dist-upgrade or desktop removal is used.
+## System packages
 
-APT acquisition uses isolated signed sources and direct HTTPS with TLS verification.
-An exact dependency closure is downloaded, then applied without network inside the
-existing offline namespace adapter. Services remain deferred to preserve current
-network/SSH and sessions. Package installation is not transactionally reversible.
+Selecting **Hyprland, sound, portals and desktop dependencies** includes the desktop package set. Graphical login adds greetd, gtkgreet and Cage. The release lists the package names and which ones come from trixie-backports. APT selects candidates from signed Debian stable, updates, security and backports indexes. [Package selections](../config/base/packages.toml) · [Debian sources](../config/base/debian.sources)
 
-See [official backports instructions](https://backports.debian.org/Instructions/),
-[Hyprland](hyprland.md), [login](desktop_login.md) and [recovery](recovery.md).
+**Plan** refreshes indexes in a private run directory and simulates the complete transaction. Inspect the package changes before confirming. For a system change, the app then asks for the local authorization password. Apply simulates again and compares the intended actions and versions with the package operations APT supplies immediately before dpkg. Package installation can leave completed changes after a failure. Check the application's result and Debian's package logs before retrying. [Recovery](recovery.md)
 
 ## Regional settings
 
-Base system can apply timezone, locale and keyboard independently. An empty field preserves the current value. Timezone changes use an installed IANA zone and verify Debian's active timezone. Locale selection uses Debian's UTF-8 locales. When the selected locale needs generation, the operation backs up its selection file and runs `locale-gen --keep-existing`. The plan lists missing console-setup or locales prerequisites before Apply. The keyboard action preserves unrelated XKB settings in `/etc/default/keyboard` and prepares the console cache through `setupcon --keyboard-only --save-only`. The new mapping takes effect for subsequent console sessions. Each operation compares its observed value again before applying and verifies its result. Recovery metadata and previous configuration bytes are under `/var/lib/setup-system/regional/`.
+Timezone, locale and keyboard each have their own field. An empty field preserves the corresponding system value. **Inspect** refreshes suggestions from installed zoneinfo, Debian's UTF-8 locale list and XKB rules. The plan compares each selection with the active system and includes any required Debian packages.
 
-The normal user's installed application and the sudo authorization prompt are trusted. The isolated system interpreter validates a published setupSystem release tag and its commit against GitHub, obtains the platform matrix and stdlib bootstrap from that commit, then verifies the release archive against its checksums and native build receipt. The root adapter imports the verified root-owned source. The system boundary protects normal operation under a trusted caller. General sudo access gives its holder full administrative authority.
+Locale generation retains existing selections. The keyboard operation preserves unrelated entries in `/etc/default/keyboard` and uses `setupcon --keyboard-only --save-only` to prepare the console keymap. An updated console layout takes effect in subsequent sessions. Each operation verifies its result and stores recovery evidence under `/var/lib/setup-system/regional/`.

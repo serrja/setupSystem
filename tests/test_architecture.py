@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+import json
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
+from ansible.errors import AnsibleFilterError
 from pydantic import ValidationError
 
-from setup_system.domain.operations import InstallRequest, Operation, WorkstationPlan
-from setup_system.domain.settings import Section, SystemSettings, UserSettings
-from setup_system.domain.system_commands import COMMAND
+from setup_system.models import (
+    BaseOptions,
+    PlanSnapshot,
+    WorkspaceOptions,
+    validate_project_settings,
+)
+from setup_system.runner import Target
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/setup_system"
 
@@ -32,7 +41,7 @@ def test_layer_dependencies_and_domain_purity() -> None:
         layer = parts[0]
         tree = ast.parse(path.read_text())
         imports = tuple(module_imports(tree))
-        if layer == "domain":
+        if layer in {"domain", "models.py"}:
             for name in imports:
                 assert not name.startswith("setup_system.") or name.startswith(
                     "setup_system.domain."
@@ -74,11 +83,13 @@ def test_layer_dependencies_and_domain_purity() -> None:
                 "setup_system.entrypoint.",
                 "setup_system.composition.",
                 "setup_system.tui.",
+                "setup_system.ui.",
+                "setup_system.app.",
             ]
             if layer != "application":
                 forbidden.append("setup_system.application.")
             assert not any(name.startswith(tuple(forbidden)) for name in imports), path
-        if layer == "tui":
+        if layer in {"tui", "ui"}:
             assert not any(
                 name.startswith(
                     (
@@ -116,15 +127,20 @@ for name in ("machine", "system", "freedesktop_os_release"):
 def observe(event, args):
     if event == 'open' and isinstance(args[0], str):
         path = args[0]
-        if path.endswith('.toml') and ('/manifests/' in path or '/resources/' in path):
+        caller = sys._getframe(1).f_globals.get('__name__', '')
+        catalog = path.endswith('.toml') and any(
+            '/'+s+'/' in path for s in ('config', 'manifests', 'resources')
+        )
+        private = path.startswith(('/etc/', sys.argv[2] + '/'))
+        if catalog or (private and caller.startswith('setup_system.')):
             raise AssertionError('Import opened ' + path)
 sys.addaudithook(observe)
 sys.path.insert(0, sys.argv[1])
-for module in sys.argv[2:]:
+for module in sys.argv[3:]:
     importlib.import_module(module)
 """
     subprocess.run(
-        [sys.executable, "-I", "-B", "-c", program, str(SOURCE.parent), *modules],
+        [sys.executable, "-I", "-B", "-c", program, str(SOURCE.parent), str(tmp_path), *modules],
         cwd=tmp_path,
         env={**os.environ, "HOME": str(tmp_path)},
         check=True,
@@ -134,154 +150,149 @@ for module in sys.argv[2:]:
 
 def test_confirmed_plan_detaches_and_revalidates_nested_inputs() -> None:
     choices = ["neovim"]
-    request = InstallRequest.model_validate(
-        {"operation": "apply", "section": "workspace", "settings": {"apps": choices}}
-    )
-    raw = {"kind": "application", "id": "neovim", "description": "Configure selected editor"}
-    plan = WorkstationPlan.model_validate(
-        {
-            "section": request.section,
-            "system": request.system,
-            "user": request.settings,
-            "actions": [raw],
-        }
-    )
-    raw["id"] = "firefox"
-    choices[:] = ["codex"]
-    next_request = request.validated(
-        operation=Operation.PLAN, settings=UserSettings(apps=("firefox",))
-    )
-    assert next_request.settings.apps == ("firefox",)
-    assert plan.user.apps == ("neovim",) and plan.actions[0].id == "neovim"
-    with pytest.raises(ValidationError):
-        plan.validated(section="unknown")
-    with pytest.raises(ValidationError):
-        plan.validated(actions=[{**raw, "requires": ["missing"]}])
-    with pytest.raises(ValidationError):
-        WorkstationPlan(
-            section=Section.BASE,
-            system=SystemSettings(),
-            user=UserSettings(),
-            actions=(),
-            matched=1,
-        )
+    actions = ["Configure Neovim"]
+    observed = {"needs_user": True, "needs_system": False, "closure": ["neovim"]}
+    reply = {"status": "ready", "actions": actions, "observed": observed}
+    plan = PlanSnapshot.capture("workspace", {"apps": choices}, reply, "revision")
+    choices[:] = ["firefox"]
+    actions.clear()
+    observed["closure"].clear()
+    payload = plan.payload()
+    assert payload["settings"] == {"apps": ["neovim"]}
+    assert payload["expected"]["actions"] == ["Configure Neovim"]
+    assert payload["expected"]["observed"]["closure"] == ["neovim"]
+    payload["settings"]["apps"].clear()
+    assert plan.payload()["settings"] == {"apps": ["neovim"]}
+    fields = plan.model_dump()
+    for invalid in (
+        {"task": "unknown"},
+        {"expected_json": json.dumps({"status": "ready", "actions": [{"requires": "missing"}]})},
+        {"settings_json": json.dumps({"apps": [{"executable": "/bin/false"}]})},
+        {"matched": 1},
+    ):
+        with pytest.raises(ValidationError):
+            PlanSnapshot.model_validate(fields | invalid)
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("section", "settings"),
     [
-        {
-            "action": "base",
-            "settings": {
-                "hyprland": True,
-                "graphical_login": False,
-                "plymouth": False,
-                "schema_version": True,
-            },
-        },
-        {
-            "action": "login",
-            "settings": {
-                "hyprland": True,
-                "graphical_login": False,
-                "plymouth": False,
-                "schema_version": 1,
-            },
-        },
-        {
-            "action": "workspace_packages",
-            "settings": {"packages": ["git"], "expected_happ_version": "1.0"},
-        },
-        {"action": "timezone", "settings": {"value": "UTC", "closure": ["nano"]}},
-        {"action": "temporary_network", "settings": {}},
-        {"action": "timezone", "settings": {"value": "../outside"}},
-        {"action": "keyboard", "settings": {"value": "UTC"}},
-        {"action": "workspace_packages", "settings": {"packages": []}},
+        ("base", {"hyprland": "yes"}),
+        ("base", {"schema_version": True}),
+        ("base", {"timezone": "../outside"}),
+        ("base", {"keyboard": "UTC"}),
+        ("base", {"timezone": "UTC", "closure": ["nano"]}),
+        ("workspace", {"packages": ["git"], "expected_happ_version": "1.0"}),
+        ("workspace", {"packages": []}),
+        ("workspace", {"theme": {"effects": "off"}}),
     ],
 )
-def test_user_and_privileged_command_schema_reject_invalid_variants(payload):
-    import json
-
+def test_user_and_native_command_schema_reject_invalid_variants(section, settings):
+    request = {"schema": 1, "settings": settings, "expected": None}
+    validate = runpy.run_path(str(SOURCE.parents[1] / "ansible/filter_plugins/native.py"))[
+        "validate_request"
+    ]
+    model = BaseOptions if section == "base" else WorkspaceOptions
     with pytest.raises(ValidationError):
-        COMMAND.validate_python(payload)
-    with pytest.raises(ValidationError):
-        COMMAND.validate_json(json.dumps(payload))
+        model.model_validate(settings)
+    with pytest.raises((AnsibleFilterError, ValueError)):
+        validate(json.loads(json.dumps(request)), section, {}, {})
+    with pytest.raises(ValueError):
+        Target("temporary_network")
+    with pytest.raises((AnsibleFilterError, ValueError)):
+        validate(request | {"settings": {}}, "unknown", {}, {})
 
 
 def test_ui_and_apply_read_the_same_settings_at_the_bound_paths(tmp_path, monkeypatch):
-    from setup_system.composition import build_app
-    from setup_system.domain.identity import TargetUser
-    from setup_system.infrastructure.config_store import ConfigStore
+    from textual.widgets import Input
+
+    from setup_system.app import SetupApp
+    from setup_system.settings import Settings
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    for scope in ("config", "state", "cache", "data"):
-        monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(tmp_path / scope))
-    target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/sh")
-    app = build_app(SOURCE.parents[1], identity=lambda _: target)
-    assert app.views.settings is app.service.settings
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    bound = Settings()
+    app = SetupApp(settings=bound)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "other"))
-    user, system = UserSettings(apps=("firefox",)), SystemSettings(timezone="UTC")
-    revisions = app.views.settings.save(user, system, None, None)
-    assert app.service.settings.user() == (user, revisions[0])
-    assert app.service.settings.draft() == (system, revisions[1])
+    base = bound.save("base", BaseOptions(timezone="UTC"), bound.load("base").revision)
+    user = bound.save(
+        "workspace", WorkspaceOptions(apps=("firefox",)), bound.load("workspace").revision
+    )
+
+    async def exercise():
+        async with app.run_test(size=(100, 35)):
+            assert app.loaded == {"base": base, "workspace": user}
+            assert app.query_one("#timezone", Input).value == "UTC"
+            current = bound.directory / "base.toml"
+            current.write_text('schema_version=1\ntimezone="Asia/Tokyo"\n')
+            with pytest.raises(ValueError, match="changed"):
+                app.verify_revision("base", base.revision)
+            current.chmod(0o666)
+            app.reload("base")
+            assert "base" not in app.loaded and app.loaded["workspace"] == user
+            with pytest.raises(ValueError, match="Unsafe"):
+                app.verify_revision("base", base.revision)
+
+    asyncio.run(exercise())
     assert not (tmp_path / "other").exists()
-    assert (tmp_path / "config/setup-system/settings.toml").is_file()
-
-    original = ConfigStore.read
-
-    def denied(store):
-        if store.uid == 0:
-            raise PermissionError("unreadable system settings")
-        return original(store)
-
-    monkeypatch.setattr(ConfigStore, "read", denied)
-    assert app.views.settings.read().warning
-    with pytest.raises(PermissionError):
-        app.service.plan(InstallRequest(operation=Operation.APPLY, system=system))
 
 
-def test_one_policy_read_covers_base_and_workspace_plans(tmp_path, monkeypatch):
-    from setup_system.composition import build_service
-    from setup_system.domain.identity import TargetUser
-    from setup_system.infrastructure import catalog_repository
+def test_one_platform_policy_covers_base_and_workspace_plans(tmp_path, monkeypatch):
+    from setup_system.infrastructure.native_target import current_target, target
 
-    files = []
-    read = catalog_repository.read_toml
-
-    def count(path):
-        if path.name == "platforms.toml":
-            files.append(path)
-        return read(path)
-
-    monkeypatch.setattr(catalog_repository, "read_toml", count)
-    monkeypatch.setattr(
-        "setup_system.infrastructure.language_tools._existing_flutter", lambda: None
+    root = SOURCE.parents[1]
+    for section in ("base", "workspace"):
+        (play,) = yaml.safe_load((root / f"ansible/{section}.yml").read_text())
+        assert play["vars"]["section"] == section
+        assert "tasks/run.yml" in str(play["tasks"])
+    run = yaml.safe_load((root / "ansible/tasks/run.yml").read_text())
+    assert str(run).count("/files/facts.py") == 1
+    facts = runpy.run_path(str(root / "ansible/files/facts.py"))
+    assert facts["current_target"] is current_target
+    release = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
+    assert target(release, "aarch64", "arm64") == ("arm64", True)
+    assert target(release | {"VERSION_CODENAME": "bookworm"}, "aarch64", "arm64") == (
+        "arm64",
+        False,
     )
-    monkeypatch.setenv("HOME", str(tmp_path))
-    for scope in ("config", "state", "cache", "data"):
-        monkeypatch.setenv("XDG_" + scope.upper() + "_HOME", str(tmp_path / scope))
-    monkeypatch.setattr("platform.machine", lambda: "x86_64")
-    monkeypatch.setattr(
-        "platform.freedesktop_os_release",
-        lambda: {
-            "ID": "debian",
-            "VERSION_ID": "13",
-            "VERSION_CODENAME": "trixie",
-        },
-    )
-    target = TargetUser("fixture", os.getuid(), os.getgid(), tmp_path, "/bin/sh")
-    service = build_service(SOURCE.parents[1], identity=lambda _: target)
-    base = service.plan(
-        InstallRequest(operation=Operation.PLAN, system=SystemSettings(hyprland=True))
-    )
-    assert "base" in {a.id for a in base.actions}
-    workspace = service.plan(
-        InstallRequest(
-            operation=Operation.PLAN,
-            section=Section.WORKSPACE,
-            settings=UserSettings(apps=("happ",), language_profiles=("dart_flutter",)),
-        )
-    )
-    assert "workspace_packages" in {a.id for a in workspace.actions}
-    assert files == [SOURCE.parents[1] / "manifests/platforms.toml"]
+    assert target(release, "mips", "mips")[1] is False
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    ("task", "bad"),
+    [
+        ("template-cache", {"template": "python", "offline": "false"}),
+        ("template-update", {"template": "python", "destination": "/work", "project_name": "new"}),
+        ("template-create", {"template": "python", "destination": "/work/../outside"}),
+        ("git-inspect", {"repository": "not-absolute"}),
+        ("git-use", {"repository": "/work", "name": "team", "owner_directory": "/other"}),
+        ("rtk-install", {"binary": "/other/rtk"}),
+        ("project-editor", {"project_id": "team/name", "command": "/other/nvim"}),
+        ("project-list", {"shell": "/bin/sh"}),
+    ],
+)
+def test_project_operations_reject_unrelated_fields_and_paths(task, bad):
+    with pytest.raises(ValidationError):
+        validate_project_settings(task, bad)
+
+
+def test_project_plan_is_user_only_and_detaches_exact_requested_destination():
+    settings = {"template": "python", "destination": "/work/Тест 2", "project_name": "example"}
+    reply = {
+        "status": "ready",
+        "actions": ["Create selected checkout"],
+        "observed": {"commit": "old"},
+    }
+    plan = PlanSnapshot.capture("template-create", settings, reply, None)
+    settings["destination"] = "/work/next"
+    reply["observed"]["commit"] = "changed"
+    assert not plan.needs_password
+    assert plan.payload()["settings"]["destination"] == "/work/Тест 2"
+    assert plan.payload()["expected"]["observed"] == {"commit": "old"}
+    assert validate_project_settings("template-cache", {"template": "python"}) == {
+        "template": "python",
+        "offline": False,
+    }
+    with pytest.raises(ValidationError):
+        PlanSnapshot.capture("project-editor", {"project_id": "team/name"}, reply, None)

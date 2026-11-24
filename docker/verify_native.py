@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 import zipfile
 from pathlib import Path
 
@@ -16,43 +15,39 @@ from pathlib import Path
 def verify_resources(root: Path, wheel: Path, sdist: Path) -> None:
     """Compare source, wheel and sdist bytes for every packaged runtime resource."""
     expected: dict[str, bytes] = {}
-    for directory in ("assets", "manifests", "src/setup_system/resources"):
+    folders = ("assets", "config", "mk", "libexec", "ansible")
+    for name in ("Makefile", "ansible.cfg", "install.sh"):
+        expected[name] = (root / name).read_bytes()
+    for directory in folders:
         for file in (root / directory).rglob("*"):
-            if file.is_file() and "__pycache__" not in file.parts:
+            if file.is_file() and "__pycache__" not in file.parts and file.suffix != ".pyc":
+                assert not file.is_symlink(), file
                 expected[file.relative_to(root).as_posix()] = file.read_bytes()
+    prefixes = tuple(directory + "/" for directory in folders)
     with tarfile.open(sdist, "r:gz") as source, zipfile.ZipFile(wheel) as dist:
-        prefix = sdist.name.removesuffix(".tar.gz")
-        source_names = {
-            item.name.removeprefix(prefix + "/") for item in source.getmembers() if item.isfile()
+        prefix = sdist.name.removesuffix(".tar.gz") + "/"
+        native = {
+            member.name.removeprefix(prefix) for member in source.getmembers() if member.isfile()
         }
-        source_resources = {
-            name
-            for name in source_names
-            if name.startswith(("assets/", "manifests/", "src/setup_system/resources/"))
+        wheel_members = {
+            name.removeprefix("setup_system/bundle/")
+            for name in dist.namelist()
+            if name.startswith("setup_system/bundle/") and not name.endswith("/")
         }
-        if source_resources != expected.keys():
+        source_members = {name for name in native if name.startswith(prefixes) or name in expected}
+        if source_members != expected.keys() or wheel_members != expected.keys():
             raise ValueError(
-                f"Unexpected sdist resource inventory: {source_resources ^ expected.keys()}"
+                f"Source/resource mismatch: sdist={source_members ^ expected.keys()}, "
+                f"wheel={wheel_members ^ expected.keys()}"
             )
         for path, data in expected.items():
-            package_path = (
-                path.removeprefix("src/") if path.startswith("src/") else "setup_system/" + path
-            )
-            member = source.extractfile(prefix + "/" + path)
-            if member is None or member.read() != data or dist.read(package_path) != data:
-                raise ValueError("Resource mismatch between source and distributions: " + path)
-        names = {p for p in dist.namelist() if not p.endswith("/")}
-        actual = {
-            p.removeprefix("setup_system/")
-            if not p.startswith("setup_system/resources/")
-            else "src/" + p
-            for p in names
-            if p.startswith(
-                ("setup_system/assets/", "setup_system/manifests/", "setup_system/resources/")
-            )
-        }
-        if actual != expected.keys():
-            raise ValueError(f"Unexpected wheel resource inventory: {actual ^ expected.keys()}")
+            member = source.extractfile(prefix + path)
+            if (
+                member is None
+                or member.read() != data
+                or dist.read("setup_system/bundle/" + path) != data
+            ):
+                raise ValueError("Distributions contain different runtime bytes: " + path)
 
 
 def verify(artifacts: Path) -> None:
@@ -68,29 +63,6 @@ def verify(artifacts: Path) -> None:
     environment.pop("PYTHONHOME", None)
     with tempfile.TemporaryDirectory(prefix="setup-system-installed-") as temporary:
         stage = Path(temporary)
-        system_python = tomllib.loads((root / "manifests/platforms.toml").read_text())["hyprland"][
-            "system_python"
-        ]
-        subprocess.run(
-            [
-                "uv",
-                "run",
-                "--no-project",
-                "--isolated",
-                "--python",
-                system_python,
-                "python",
-                "-I",
-                "-B",
-                "-S",
-                str(root / "docker/verify_privileged.py"),
-                str(sdists[0]),
-            ],
-            cwd=stage,
-            env=environment,
-            timeout=240,
-            check=True,
-        )
         executable = stage / "venv/bin/python"
         requirements = stage / "runtime.txt"
         commands = (

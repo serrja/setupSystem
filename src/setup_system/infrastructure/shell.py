@@ -11,13 +11,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from jinja2 import Environment, StrictUndefined
+
 from setup_system.domain.managed_text import managed_block
-from setup_system.domain.receipts import digest
+from setup_system.domain.receipts import FileState, digest
 from setup_system.domain.workspace_facts import ShellStatus
+from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files, changed_files
-from setup_system.infrastructure.theme import render
+from setup_system.infrastructure.palette import palette
 from setup_system.infrastructure.user_storage import target_path
-from setup_system.resource_locator import ResourceLocator
 
 
 def inspect_shell() -> ShellStatus:
@@ -55,18 +57,31 @@ def _targets(
     root: Path,
     status: ShellStatus,
     *,
-    expected: dict[Path, str | None] | None = None,
+    expected: dict[Path, FileState | None] | None = None,
     config_home: Path | None = None,
 ) -> dict[Path, bytes]:
-    assets = ResourceLocator.for_root(root).asset("zsh")
+    assets = root / "assets/zsh"
     if not (assets / "init.zsh").is_file():
         raise ValueError("Installed setupSystem package has no Zsh assets")
-    config_home = config_home or Path(os.environ.get("XDG_CONFIG_HOME", status.home / ".config"))
+    config_home = config_home or Path(os.environ.get("XDG_CONFIG_HOME") or status.home / ".config")
     if not config_home.resolve().is_relative_to(status.home):
         raise ValueError("XDG_CONFIG_HOME outside home requires a scoped install")
     targets = {
         config_home / "zsh" / source.name: (
-            render(source.read_text(), root=root).encode()
+            Environment(
+                undefined=StrictUndefined,
+                variable_start_string="@{",
+                variable_end_string="}@",
+                block_start_string="[%",
+                block_end_string="%]",
+                comment_start_string="[#",
+                comment_end_string="#]",
+                keep_trailing_newline=True,
+                autoescape=False,
+            )
+            .from_string(source.read_text())
+            .render(palette(root))
+            .encode()
             if source.name == "prompt.zsh"
             else source.read_bytes()
         )
@@ -89,9 +104,14 @@ def _targets(
             raise ValueError(f"Startup target is not a regular file: {path}")
         if expected is not None:
             target_path(path.relative_to(status.home).as_posix())
+            expected[path] = observe(path)
         original = path.read_bytes() if path.exists() else None
         if expected is not None:
-            expected[path] = digest(original) if original is not None else None
+            prior = expected[path]
+            if (digest(original) if original is not None else None) != (
+                prior.sha256 if prior else None
+            ):
+                raise ValueError("Shell startup changed while preparing its managed block")
         targets[path] = managed_block((original or b"").decode(), body).encode()
     for path in targets:
         if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -101,8 +121,8 @@ def _targets(
 
 def _snapshot(
     root: Path, status: ShellStatus
-) -> tuple[dict[Path, bytes], dict[Path, str | None], set[Path]]:
-    expected: dict[Path, str | None] = {}
+) -> tuple[dict[Path, bytes], dict[Path, FileState | None], set[Path]]:
+    expected: dict[Path, FileState | None] = {}
     targets = _targets(root, status, expected=expected)
     return targets, expected, set(changed_files(targets, expected=expected))
 
@@ -179,15 +199,23 @@ def validate_shell(root: Path, zsh: Path) -> None:
                 )
 
 
-def apply_shell(root: Path) -> tuple[Path, list[tuple[Path, str]], ShellStatus]:
+def apply_shell(
+    root: Path, *, reviewed: dict[Path, FileState | None] | None = None
+) -> tuple[Path, list[tuple[Path, str]], ShellStatus]:
     """Preserve the current shell, history and text outside managed startup blocks."""
     status = inspect_shell()
     if status.zsh is None:
         raise ValueError("Installed Zsh executable is required")
-    history_dir = Path(os.environ.get("XDG_STATE_HOME", status.home / ".local/state")) / "zsh"
+    history_dir = Path(os.environ.get("XDG_STATE_HOME") or status.home / ".local/state") / "zsh"
     if not history_dir.resolve().is_relative_to(status.home):
         raise ValueError("XDG_STATE_HOME outside home requires a scoped install")
     targets, expected, changes = _snapshot(root, status)
+    if reviewed is not None:
+        if targets.keys() != reviewed.keys() or any(
+            observe(path) != state for path, state in reviewed.items()
+        ):
+            raise ValueError("Shell configuration changed after confirmation")
+        expected = reviewed
     results = [(path, "changed" if path in changes else "unchanged") for path in targets]
     validate_shell(root, status.zsh)
     return apply_files(targets, expected=expected, directories=(history_dir,)), results, status

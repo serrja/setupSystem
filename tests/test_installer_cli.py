@@ -2,23 +2,33 @@
 
 from pathlib import Path
 
-from setup_system.domain.operations import InstallRequest, Operation
-from setup_system.domain.settings import Section
+from setup_system.models import BaseOptions, PlanSnapshot
 
 
 def test_request_is_an_immutable_plan_input() -> None:
     import pytest
     from pydantic import ValidationError
 
-    request = InstallRequest(operation=Operation.PLAN)
+    request = PlanSnapshot.capture(
+        "base",
+        BaseOptions().model_dump(mode="json"),
+        {
+            "status": "ready",
+            "actions": ["Set timezone"],
+            "observed": {"needs_system": True, "needs_user": False},
+        },
+        None,
+    )
     with pytest.raises(ValidationError, match="frozen"):
-        request.section = Section.WORKSPACE
-    assert request.yes is False
+        request.task = "workspace"
+    with pytest.raises(ValidationError):
+        BaseOptions.model_validate({"yes": True})
 
 
 def test_bootstrap_does_not_elevate_the_python_ui() -> None:
     root = Path(__file__).resolve().parents[1]
     source = (root / "install.sh").read_text()
     assert 'exec sudo -- "$executable"' not in source
-    assert 'exec runuser -u "$target"' in source
-    assert 'exec env HOME="$target_home" USER="$target" LOGNAME="$target"' in source
+    run = source.split("    run)", 1)[1].split(";;", 1)[0]
+    assert "id -u" in run and "!= 0" in run
+    assert "exec /usr/bin/setup-system" in run and "sudo " not in run

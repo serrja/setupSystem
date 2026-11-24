@@ -11,9 +11,9 @@ from typing import Any
 from setup_system.domain.backup_manifest import BackupItem, BackupManifest
 from setup_system.domain.receipts import FileChange, FileState, Operation, digest
 from setup_system.infrastructure.user_storage import (
-    atomic_write,
     checked_directory,
     inside_home,
+    private_directory,
     read_object,
     safe_file,
     state_root,
@@ -240,14 +240,17 @@ def restore_manifest(folder: Path, *, apply: bool) -> list[tuple[str, str]]:
     actions: list[tuple[str, str]] = []
     for target, content, mode, status in prepared:
         if apply and status == "would-create":
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(dir=target.parent) as tmp:
-                staged = Path(tmp) / "original"
-                atomic_write(staged, content, mode)
-                try:
-                    os.link(staged, target, follow_symlinks=False)
-                except FileExistsError:
-                    raise ValueError(f"File appeared during restore: {target}") from None
+            with private_directory(target.parent) as parent:
+                with tempfile.NamedTemporaryFile(dir=f"/proc/self/fd/{parent}") as staged:
+                    staged.write(content)
+                    staged.flush()
+                    os.fchmod(staged.fileno(), mode)
+                    os.fsync(staged.fileno())
+                    try:
+                        os.link(staged.name, target.name, dst_dir_fd=parent, follow_symlinks=False)
+                    except FileExistsError:
+                        raise ValueError(f"File appeared during restore: {target}") from None
+                os.fsync(parent)
             status = "restored"
         actions.append((str(target), status))
     return actions

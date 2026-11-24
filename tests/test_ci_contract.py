@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -89,6 +90,33 @@ def test_native_helper_matches_reviewed_snapshot() -> None:
         hashlib.sha256((ROOT / "docker/python_release.py").read_bytes()).hexdigest()
         == (helper["sha256"])
     )
+    assert source["repository"] == "https://github.com/serrja/pythonTemplate"
+    for name, record in source["files"].items():
+        assert re.fullmatch(r"[0-9a-f]{40}", record.get("revision", source["revision"]))
+        data = (ROOT / name).read_bytes()
+        if name == "tests/test_python_release.py":
+            # Reverse the recorded fixture-path adaptation to verify the upstream digest.
+            old = b'ROOT / "docker/python_release.py"'
+            assert data.count(old) == 1
+            data = data.replace(old, b'ROOT / "template/docker/python_release.py"')
+            data = subprocess.check_output(
+                [
+                    str(Path(sys.executable).with_name("ruff")),
+                    "format",
+                    "--isolated",
+                    "--no-cache",
+                    "--line-length",
+                    "88",
+                    "--stdin-filename",
+                    name,
+                    "-",
+                ],
+                input=data,
+            )
+            expected = record["sourceSha256"]
+        else:
+            expected = record["sha256"]
+        assert hashlib.sha256(data).hexdigest() == expected, name
 
 
 def test_isolated_build_constraints_cover_the_complete_locked_backend_graph() -> None:
@@ -129,19 +157,20 @@ def test_make_check_routes_native_and_docker_children_without_executing_recipes(
     import shutil
 
     (tmp_path / "docker").mkdir()
+    shutil.copytree(ROOT / "mk", tmp_path / "mk")
     for name in ("Makefile", "docker/quality.mk", "docker/quality-python.mk"):
         shutil.copyfile(ROOT / name, tmp_path / name)
     command = [
         "make",
         "--no-print-directory",
         "--dry-run",
-        "check",
-        "CONTAINERIZED=0",
         "SHELL=/bin/false",
         "QUALITY_IMAGE=setupsystem-g03:routing-fixture",
     ]
     if docker_child:
-        command.append("SKIP_QUALITY_BUILD=1")
+        command.extend(["-f", "docker/quality-python.mk", "test", "SKIP_QUALITY_BUILD=1"])
+    else:
+        command.append("native-check")
     environment = dict(os.environ)
     for key in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL"):
         environment.pop(key, None)
@@ -159,6 +188,11 @@ def test_make_check_routes_native_and_docker_children_without_executing_recipes(
     assert result.returncode == 0, result.stderr
     assert ("docker run --init" in result.stdout) is docker_child
     assert ("uv run --locked pytest" in result.stdout) is not docker_child
+    for name in ("run", "base-inspect", "workspace-plan"):
+        public = subprocess.check_output(
+            ["make", "--no-print-directory", "-n", name], cwd=tmp_path, env=environment, text=True
+        )
+        assert "docker" not in public and "--locked pytest" not in public
     assert not (tmp_path / "coverage").exists()
 
 
@@ -166,6 +200,7 @@ def test_make_sanitizes_git_routing_for_pytest_only(tmp_path: Path) -> None:
     import shutil
 
     (tmp_path / "docker").mkdir()
+    shutil.copytree(ROOT / "mk", tmp_path / "mk")
     for name in ("Makefile", "docker/quality.mk", "docker/quality-python.mk"):
         shutil.copyfile(ROOT / name, tmp_path / name)
     fake_uv = tmp_path / "fixture-uv"
@@ -201,6 +236,8 @@ def test_make_sanitizes_git_routing_for_pytest_only(tmp_path: Path) -> None:
             "make",
             "--no-print-directory",
             "--dry-run",
+            "-f",
+            "docker/quality.mk",
             "source-identity",
             "CONTAINERIZED=0",
             "SHELL=/bin/false",
@@ -218,18 +255,30 @@ def test_make_sanitizes_git_routing_for_pytest_only(tmp_path: Path) -> None:
 
 
 def test_ci_and_container_consume_reviewed_runtime_versions() -> None:
-    runtime = tomllib.loads((ROOT / "manifests/runtime.toml").read_text())
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    verify = jobs["verify"]["steps"]
+    (setup_uv,) = (
+        step for step in verify if step.get("uses", "").startswith("astral-sh/setup-uv@")
+    )
+    instructions = "\n".join(step.get("run", "") for step in verify)
+    (python,) = re.findall(r"uv python install (\d+\.\d+\.\d+)\b", instructions)
+    runtime = {"uv": setup_uv["with"]["version"], "python": python}
+    assert re.fullmatch(r"\d+\.\d+\.\d+", runtime["uv"])
     for job in ("verify", "compatibility", "release-builder"):
         (setup,) = (
             s for s in jobs[job]["steps"] if s.get("uses", "").startswith("astral-sh/setup-uv@")
         )
         assert setup["with"]["version"] == runtime["uv"]
+        assert re.fullmatch(r"astral-sh/setup-uv@[0-9a-f]{40}", setup["uses"])
         if job != "compatibility":
             shell = "\n".join(step.get("run", "") for step in jobs[job]["steps"])
             versions = re.findall(r"(?:uv python install |--python )(\d+\.\d+\.\d+)", shell)
             assert versions and set(versions) == {runtime["python"]}
     docker = (ROOT / "Dockerfile.quality").read_text()
+    assert 'CMD ["make", "native-check"]' in docker
+    for line in docker.splitlines():
+        if line.startswith(("FROM python:", "FROM ghcr.io/astral-sh/uv:")):
+            assert re.search(r"@sha256:[0-9a-f]{64} AS ", line)
     assert set(re.findall(r"^FROM python:([0-9.]+)-", docker, re.M)) == {runtime["python"]}
     assert set(re.findall(r"^FROM ghcr.io/astral-sh/uv:([0-9.]+)@", docker, re.M)) == {
         runtime["uv"]

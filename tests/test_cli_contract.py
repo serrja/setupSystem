@@ -19,15 +19,25 @@ def test_only_textual_entrypoint_is_published() -> None:
     assert not (root / "src/setup_system/cli/main.py").exists()
 
 
-def test_help_is_read_only_without_importing_textual(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_help_is_read_only_without_importing_textual(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
     result = subprocess.run(
-        [sys.executable, "-I", "-m", "setup_system", "--help"],
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            "import runpy,sys; sys.argv=['setup-system','--help']; "
+            "runpy.run_module('setup_system',run_name='__main__'); "
+            "assert 'textual' not in sys.modules",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0
     assert "Textual" in result.stdout and "Commands:" not in result.stdout
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize(

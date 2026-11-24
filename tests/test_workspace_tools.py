@@ -1,130 +1,116 @@
-"""Textual workspace actions keep exact project identity and never accept shell commands."""
+"""Project commands stay finite, user-scoped and confirmed."""
 
+import os
 from pathlib import Path
 
 import pytest
 
-from setup_system.application import tools
-from setup_system.composition import build_tools
-from setup_system.domain.tool_requests import TOOL_REQUEST, OpenProject, SimpleTool, answer_values
+from setup_system import project_tasks
+from setup_system.domain.templates import answer_values, snapshot_answers
 
 
-@pytest.mark.parametrize("name", ["unknown", "client"])
-def test_editor_requires_an_exact_catalog_name(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    monkeypatch.setattr(tools, "projects", lambda root: {"pokerlost/pokerClient": Path("/fixture")})
+@pytest.mark.parametrize("name", ["unknown", "client", "../escape"])
+def test_editor_requires_an_exact_catalog_name(monkeypatch, tmp_path: Path, name: str) -> None:
+    monkeypatch.setattr(project_tasks, "paths", lambda root: {"pokerlost/pokerClient": tmp_path})
     monkeypatch.setattr(
-        "setup_system.application.tools.run_project",
-        lambda *args, **kwargs: pytest.fail("Ambiguous project entered editor"),
+        project_tasks.subprocess, "run", lambda *a, **kw: pytest.fail("Launched an unknown project")
     )
     with pytest.raises(ValueError, match="exact"):
-        build_tools(Path("/source")).execute(
-            OpenProject(action="open_project", name=name), confirmed=True
-        )
+        project_tasks.execute(tmp_path, "project-editor", {"settings": {"project_id": name}})
 
 
-def test_editor_uses_only_selected_working_directory_and_no_shell(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("target", "program"), [("project-editor", "nvim"), ("project-codex", "codex")]
+)
+def test_projects_launch_in_exact_root_without_shell(
+    monkeypatch, tmp_path, target, program
 ) -> None:
-    monkeypatch.setattr(tools, "projects", lambda root: {"pokerlost/pokerClient": tmp_path})
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(project_tasks, "paths", lambda root: {"serrja/pythonTemplate": tmp_path})
+    monkeypatch.setattr(project_tasks.shutil, "which", lambda name: "/usr/bin/" + name)
     calls = []
     monkeypatch.setattr(
-        "setup_system.application.tools.run_project",
-        lambda argv, **kwargs: calls.append((argv, kwargs)),
+        project_tasks.subprocess, "run", lambda argv, **kw: calls.append((argv, kw))
     )
-    assert build_tools(tmp_path).execute(
-        OpenProject(action="open_project", name="pokerlost/pokerClient"), confirmed=True
-    ) == str(tmp_path)
-    assert calls == [(["nvim", "."], {"cwd": tmp_path, "check": True})]
-
-
-def test_catalog_error_does_not_launch_editor_or_expose_data(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    def fail(root):
-        raise ValueError("Invalid catalog")
-
-    monkeypatch.setattr(tools, "projects", fail)
-    monkeypatch.setattr(
-        "setup_system.application.tools.run_project",
-        lambda *args, **kwargs: pytest.fail("Invalid catalog reached process"),
-    )
-    with pytest.raises(ValueError, match="Invalid catalog"):
-        build_tools(tmp_path).execute(SimpleTool(action="projects"))
+    project_tasks.execute(tmp_path, target, {"settings": {"project_id": "serrja/pythonTemplate"}})
+    assert calls == [
+        (
+            ["/usr/bin/" + program] + (["."] if program == "nvim" else []),
+            {"cwd": tmp_path, "check": True},
+        )
+    ]
 
 
 @pytest.mark.parametrize(
-    "fields",
+    "target",
     [
-        {"action": "prepare_projects"},
-        {"action": "open_project", "name": "repo"},
-        {"action": "open_codex", "name": "repo"},
-        {"action": "create_template", "name": "python", "destination": "workspace"},
-        {"action": "update_template", "name": "python", "destination": "workspace"},
-        {"action": "template_cache", "name": "python"},
-        {"action": "restore", "backup_id": "20260101T123456Z-123456ab"},
-        {"action": "shell"},
-        {"action": "rtk"},
-        {"action": "font_apply"},
-        {"action": "git_use", "name": "profile", "destination": "workspace"},
-        {"action": "git_configure", "name": "profile", "destination": "workspace"},
+        "project-prepare",
+        "template-cache",
+        "template-create",
+        "template-update",
+        "git-configure",
+        "git-use",
+        "shell-configure",
+        "rtk-install",
     ],
 )
-def test_all_mutating_tools_require_explicit_confirmation(tmp_path, fields) -> None:
-    request = TOOL_REQUEST.validate_python(fields)
-    with pytest.raises(ValueError, match="confirmation"):
-        build_tools(tmp_path).execute(request)
-    assert not list(tmp_path.iterdir())
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {"action": "id; reboot"},
-        {"action": "create_template", "name": "python"},
-        {"action": "restore", "backup_id": "../escape"},
-        {"action": "open_codex", "name": "repo", "answers": {"irrelevant": True}},
-        {"action": "git_inspect", "destination": "work", "name": "unexpected"},
-        {"action": "shell", "destination": "inapplicable"},
-        {
-            "action": "create_template",
-            "name": "python",
-            "destination": "work",
-            "answers": {"_src_path": "unreviewed"},
-        },
-    ],
-)
-def test_tool_contract_rejects_unknown_or_cross_action_fields(fields) -> None:
+def test_mutations_require_a_confirmed_preview(tmp_path, target) -> None:
     with pytest.raises(ValueError):
-        TOOL_REQUEST.validate_python(fields)
+        project_tasks.execute(tmp_path, target + "-apply", {"settings": {}})
 
 
-def test_copier_answers_are_immutable_deep_snapshots() -> None:
-    source = {"nested": [{"choices": ["original"]}]}
-    request = TOOL_REQUEST.validate_python(
-        {"action": "create_template", "name": "python", "destination": "work", "answers": source}
+def test_bad_choice_and_stale_checkout_do_not_launch(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        project_tasks, "paths", lambda root: (_ for _ in ()).throw(ValueError("Catalog error"))
     )
-    source["nested"][0]["choices"].append("after inspection")
-    dispatched = answer_values(request.answers)
-    dispatched["nested"][0]["choices"].append("while running")
-    assert answer_values(request.answers) == {"nested": [{"choices": ["original"]}]}
-    assert TOOL_REQUEST.validate_json(TOOL_REQUEST.dump_json(request)) == request
+    monkeypatch.setattr(
+        project_tasks.subprocess, "run", lambda *a, **kw: pytest.fail("Launched editor")
+    )
+    with pytest.raises(ValueError, match="Catalog error"):
+        project_tasks.execute(
+            tmp_path, "project-editor", {"settings": {"project_id": "serrja/setupSystem"}}
+        )
+    with pytest.raises(ValueError):
+        project_tasks.execute(
+            tmp_path, "project-editor", {"settings": {"project_id": "x", "answers": {"a": 1}}}
+        )
+    with pytest.raises(ValueError):
+        project_tasks.execute(tmp_path, "shell-command", {"settings": {}})
 
 
-def test_importing_views_does_not_load_native_adapters(tmp_path: Path) -> None:
+def test_copier_answers_are_deep_snapshots() -> None:
+    initial = {"nested": [{"choices": ["original"]}]}
+    snapshot = snapshot_answers(initial)
+    initial["nested"][0]["choices"].append("changed")
+    answer_values(snapshot)["nested"].append("changed")
+    assert answer_values(snapshot) == {"nested": [{"choices": ["original"]}]}
+    with pytest.raises(ValueError, match="Internal"):
+        snapshot_answers({"_src_path": "other"})
+
+
+def test_importing_ui_does_not_load_project_executors(tmp_path) -> None:
     import subprocess
     import sys
 
-    check = """
-import sys
-import setup_system.tui.installer
-import setup_system.tui.tools
-import setup_system.tui.displays
-assert not [m for m in sys.modules if m.startswith("setup_system.infrastructure")]
-"""
+    check = (
+        "import sys; import setup_system.app; "
+        "assert 'setup_system.project_tasks' not in sys.modules"
+    )
     subprocess.run(
         [sys.executable, "-I", "-B", "-c", check],
         cwd=tmp_path,
-        env={"HOME": str(tmp_path / "not-created")},
+        env={**os.environ, "HOME": str(tmp_path)},
         check=True,
     )
     assert not list(tmp_path.iterdir())
+
+
+def test_empty_xdg_exports_from_make_use_home_defaults(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for key in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.setenv(key, "")
+    root = Path(__file__).resolve().parents[1]
+    result = project_tasks.execute(root, "project-list", {"settings": {}})
+    assert result.status == "ready" and "python" in result.observed["templates"]
+    assert result.observed["git_profiles"] == {}
+    assert list(tmp_path.iterdir()) == []

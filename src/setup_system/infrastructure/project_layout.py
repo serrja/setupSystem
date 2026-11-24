@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from setup_system.domain.projects import Project, ProjectLayout
-from setup_system.infrastructure.catalog_repository import load_projects
+from setup_system.domain.projects import Project, ProjectCatalog, ProjectLayout
+from setup_system.infrastructure.managed_files import apply_files
+
+
+def load_projects(root: Path) -> ProjectCatalog:
+    with (root / "config/workspace/projects.toml").open("rb") as stream:
+        return ProjectCatalog.model_validate(tomllib.load(stream))
 
 
 def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
@@ -26,23 +32,18 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
             message = "Invalid owner group"
         elif location and location[-1] == "id":
             message = "Invalid project ID"
-        elif location and location[-1] == "state":
-            message = "Invalid project state"
         else:
             message = "Unsupported project catalog schema or structure"
         raise ValueError(message) from None
     projects_root = home / catalog.projects_root.removeprefix("$HOME/")
     projects = tuple(
-        Project(
-            id=record.id, target=projects_root / record.id, origin=record.origin, state=record.state
-        )
+        Project(id=record.id, target=projects_root / record.id, origin=record.origin)
         for record in catalog.project
     )
     return ProjectLayout(
         projects_root=projects_root,
         owner_groups=catalog.owner_groups,
         projects=projects,
-        verify_origins=projects_root != home / "Projects",
     )
 
 
@@ -88,39 +89,40 @@ def active_projects(layout: ProjectLayout) -> dict[str, Path]:
     for project in layout.projects:
         if not _exact_git_root(project.target):
             continue
-        if layout.verify_origins:
-            allowed = {
-                f"git@github.com:{project.id}.git",
-                f"https://github.com/{project.id}.git",
-            }
-            fetch_urls = _git(
-                project.target, "remote", "get-url", "--all", "origin", required=False
+        allowed = {
+            f"git@github.com:{project.id}.git",
+            f"https://github.com/{project.id}.git",
+        }
+        fetch_urls = _git(project.target, "remote", "get-url", "--all", "origin", required=False)
+        push_urls = _git(
+            project.target, "remote", "get-url", "--push", "--all", "origin", required=False
+        )
+        urls = (fetch_urls + push_urls).decode().splitlines()
+        if (
+            project.origin not in allowed
+            or not fetch_urls.strip()
+            or not push_urls.strip()
+            or any(url not in allowed for url in urls)
+        ):
+            raise ValueError(
+                f"Explicit project root requires canonical fetch/push origins: {project.id}"
             )
-            push_urls = _git(
-                project.target, "remote", "get-url", "--push", "--all", "origin", required=False
-            )
-            urls = (fetch_urls + push_urls).decode().splitlines()
-            if (
-                project.origin not in allowed
-                or not fetch_urls.strip()
-                or not push_urls.strip()
-                or any(url not in allowed for url in urls)
-            ):
-                raise ValueError(
-                    f"Explicit project root requires canonical fetch/push origins: {project.id}"
-                )
         result[project.id] = project.target
     return result
 
 
-def prepare_owner_directories(layout: ProjectLayout) -> tuple[Path, ...]:
-    """Create only the root and owner groups after explicit workstation confirmation."""
+def owner_directories(layout: ProjectLayout) -> tuple[Path, ...]:
+    """Validate the declared root and owner groups before any writes."""
     paths = (layout.projects_root, *(layout.projects_root / group for group in layout.owner_groups))
     for path in paths:
         if _symlink_component(path) is not None or (path.exists() and not path.is_dir()):
             raise ValueError(f"Unsafe layout path: {path}")
         if (path / ".git").exists():
             raise ValueError(f"Layout parent cannot be a Git repository: {path}")
-    for path in paths:
-        path.mkdir(exist_ok=True)
+    return paths
+
+
+def prepare_owner_directories(layout: ProjectLayout) -> tuple[Path, ...]:
+    paths = owner_directories(layout)
+    apply_files({}, directories=paths)
     return paths

@@ -22,7 +22,7 @@ vim.opt.listchars = { tab = "→ ", trail = "·", extends = "›", precedes = "�
 vim.opt.exrc = false
 vim.opt.modeline = false
 vim.opt.shadafile = "NONE"
-vim.opt.clipboard = vim.env.WAYLAND_DISPLAY and "unnamedplus" or ""
+vim.opt.clipboard = (vim.env.WAYLAND_DISPLAY or "") ~= "" and "unnamedplus" or ""
 vim.opt.statusline = "%f %m %r %= %y %l:%c"
 vim.cmd.colorscheme("catppuccin_mocha_green")
 

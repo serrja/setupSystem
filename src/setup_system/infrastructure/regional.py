@@ -8,13 +8,12 @@ import stat
 import subprocess
 from pathlib import Path
 
-from setup_system.bootstrap.source import protected
 from setup_system.diagnostics import PartialApplyError, error_text
-from setup_system.domain.system_commands import RegionalKind
 from setup_system.domain.system_facts import InspectionPaths
-from setup_system.domain.system_receipts import RegionalReceipt
+from setup_system.domain.system_receipts import RegionalKind, RegionalReceipt
 from setup_system.infrastructure import processes, system_files
 from setup_system.infrastructure.clock import timezone_file, validate_timezone
+from setup_system.infrastructure.system_paths import protected
 
 KEYBOARD = Path("/etc/default/keyboard")
 LOCALE = Path("/etc/locale.conf")
@@ -112,8 +111,14 @@ def validate(setting: str, value: object) -> str:
         raise ValueError(f"Select an explicit {setting}")
     if setting == "timezone" and validate_timezone(value) == value:
         return value
-    if setting == "keyboard" and value in {"us", "us,ru"}:
-        return value
+    if setting == "keyboard":
+        layouts = value.split(",")
+        symbols = Path("/usr/share/X11/xkb/symbols")
+        if 1 <= len(layouts) <= 4 and all(
+            re.fullmatch(r"[a-z][a-z0-9_-]{0,15}", layout) and (symbols / layout).is_file()
+            for layout in layouts
+        ):
+            return value
     if setting == "locale" and re.fullmatch(r"(?:C|[a-z]{2,3}_[A-Z]{2})\.UTF-8", value):
         if (
             not _generated(value)

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path, PurePosixPath
-from typing import Annotated, Literal
+from pathlib import Path
+from typing import Annotated
 
 from packaging.version import InvalidVersion, Version
-from pydantic import ConfigDict, Field, StrictBool, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from setup_system.domain.contracts import ContractModel
 
-ProjectState = Literal["existing"]
 OwnerGroup = Annotated[str, Field(pattern=r"^[a-z][A-Za-z0-9]*$")]
 
 
@@ -23,19 +22,6 @@ def _normalized_version(value: str) -> Version:
     if str(version) != value or any(character in value for character in "+!"):
         raise ValueError("Template release versions must be normalized without local/epoch parts")
     return version
-
-
-def git_tag_for_python_version(value: str) -> str:
-    """Map a native dev version to the shared GitHub tag, retaining older formats."""
-    version = _normalized_version(value)
-    if (
-        version.dev is not None
-        and version.pre is None
-        and version.post is None
-        and len(version.release) == 3
-    ):
-        return f"v{version.base_version}-dev.{version.dev}"
-    return "v" + value
 
 
 def python_version_for_git_tag(tag: str) -> str:
@@ -68,7 +54,7 @@ class TemplateVersion(ContractModel):
 class TemplateMetadata(ContractModel):
     """Trusted template choices belonging to an existing project record."""
 
-    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     alias: Annotated[str, Field(pattern=r"^[a-z][a-z0-9]*$")]
     recommended_version: str | None = Field(default=None, alias="recommendedVersion")
@@ -86,40 +72,20 @@ class TemplateMetadata(ContractModel):
         return self
 
 
-class PolicyMetadata(ContractModel):
-    """Reviewed policy provenance; this metadata never loads or executes rules."""
-
-    commit: Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
-    document: str
-    sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-
-    @model_validator(mode="after")
-    def relative_document(self) -> PolicyMetadata:
-        path = PurePosixPath(self.document)
-        if (
-            path.is_absolute()
-            or str(path) != self.document
-            or ".." in path.parts
-            or "\\" in self.document
-            or any(not re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in path.parts)
-            or path.suffix != ".md"
-        ):
-            raise ValueError("Policy document must be a safe relative Markdown path")
-        return self
+class CatalogTemplate(ContractModel):
+    alias: Annotated[str, Field(pattern=r"^[a-z][a-z0-9]*$")]
 
 
 class ProjectRecord(ContractModel):
     """Catalog input; resolved paths and current Git state are separate values."""
 
     id: Annotated[str, Field(pattern=r"^[a-z][A-Za-z0-9]*/(?:[A-Za-z][A-Za-z0-9]*|\.github)$")]
-    state: ProjectState
-    origin: str | None = None
-    template: TemplateMetadata | None = None
-    policy: PolicyMetadata | None = None
+    origin: str
+    template: CatalogTemplate | None = None
 
     @model_validator(mode="after")
-    def canonical_policy_origin(self) -> ProjectRecord:
-        if (self.policy is not None or self.template is not None) and self.origin not in {
+    def canonical_origin(self) -> ProjectRecord:
+        if self.origin not in {
             f"https://github.com/{self.id}.git",
             f"git@github.com:{self.id}.git",
         }:
@@ -130,7 +96,7 @@ class ProjectRecord(ContractModel):
 class ProjectCatalog(ContractModel):
     """Versioned TOML contract; cross-record path authorization stays in the planner."""
 
-    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     schema_version: Annotated[int, Field(strict=True, ge=1, le=1)] = Field(alias="schemaVersion")
     projects_root: str = Field(alias="projectsRoot")
@@ -174,11 +140,9 @@ class Project(ContractModel):
     id: str
     target: Path
     origin: str | None
-    state: ProjectState
 
 
 class ProjectLayout(ContractModel):
     projects_root: Path
     owner_groups: tuple[str, ...]
     projects: tuple[Project, ...]
-    verify_origins: StrictBool = False

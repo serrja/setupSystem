@@ -14,7 +14,6 @@ from setup_system.application import templates
 from setup_system.domain.projects import (
     TemplateMetadata,
     TemplateVersion,
-    git_tag_for_python_version,
     python_version_for_git_tag,
 )
 from setup_system.domain.templates import TemplatePlan, TemplateSource
@@ -26,7 +25,6 @@ from setup_system.infrastructure import copier_templates
     [("1.2.3", "v1.2.3"), ("1.2.3.dev0", "v1.2.3-dev.0"), ("1.2.3.dev12", "v1.2.3-dev.12")],
 )
 def test_native_versions_round_trip_with_github_tags(native: str, tag: str) -> None:
-    assert git_tag_for_python_version(native) == tag
     assert python_version_for_git_tag(tag) == native
     assert TemplateVersion(version=native, tag=tag, commit="a" * 40).version == native
 
@@ -310,11 +308,11 @@ def test_internal_answers_and_symlink_destinations_are_rejected(
 
 
 def test_catalog_rejects_source_substitution(tmp_path: Path) -> None:
-    manifests = tmp_path / "manifests"
-    manifests.mkdir()
+    manifests = tmp_path / "config/workspace"
+    manifests.mkdir(parents=True)
     (manifests / "projects.toml").write_text(
         'schemaVersion=1\nprojectsRoot="$HOME/Projects"\nownerGroups=["fixture"]\n'
-        '[[project]]\nid="fixture/template"\nstate="existing"\n'
+        '[[project]]\nid="fixture/template"\n'
         'origin="https://untrusted.invalid/template.git"\n'
         '[project.template]\nalias="python"\n'
     )
@@ -405,72 +403,117 @@ def test_current_github_dev_tag_verifies_native_metadata_and_copier_answers(
     assert answers["_commit"] == "v0.3.0-dev.2"
 
 
-def test_workspace_tool_update_accepts_parent_relative_destination(
+def test_make_template_uses_absolute_destination_and_preserves_answers(
     tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.composition import build_tools
-    from setup_system.domain.tool_requests import WriteTemplate
+    from setup_system.project_tasks import execute
 
-    caller = tmp_path / "caller"
-    caller.mkdir()
-    monkeypatch.chdir(caller)
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
-    build_tools(tmp_path).execute(
-        WriteTemplate(
-            action="create_template", name="python", destination=Path("../project"), version="0.1.0"
-        ),
-        confirmed=True,
-    )
-    destination = tmp_path / "project"
-    git(destination, "init", "--quiet")
-    head = commit(destination, "generated project")
-    build_tools(tmp_path).execute(
-        WriteTemplate(
-            action="update_template", name="python", destination=Path("../project"), version="0.2.0"
-        ),
-        confirmed=True,
-    )
-    assert "Updated documentation" in (destination / "README.md").read_text()
-    assert git(destination, "rev-parse", "HEAD") == head
-
-
-def test_workspace_tool_lists_reviewed_versions_and_creates_recommendation(
-    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from setup_system.composition import build_tools
-    from setup_system.domain.tool_requests import SimpleTool, WriteTemplate
-
-    monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
-    assert "python: 0.1.0, 0.2.0" in build_tools(tmp_path).execute(SimpleTool(action="templates"))
-    destination = tmp_path / "selected"
-    result = build_tools(tmp_path).execute(
-        WriteTemplate(action="create_template", name="python", destination=destination),
-        confirmed=True,
-    )
-    assert f"python 0.2.0 · {source.metadata.versions[-1].commit}" in result
-    assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
-    with pytest.raises(ValueError, match="destination"):
-        build_tools(tmp_path).execute(
-            WriteTemplate(action="create_template", name="python"), confirmed=True
-        )
-
-
-def test_workspace_tool_preserves_explicit_answers_and_requires_confirmation(
-    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from setup_system.composition import build_tools
-    from setup_system.domain.tool_requests import WriteTemplate
-
-    monkeypatch.setattr(templates, "load_templates", lambda root: {"python": source})
-    destination = tmp_path / "interactive"
-    request = WriteTemplate(
-        action="create_template",
-        name="python",
-        destination=destination,
-        answers={"projectName": "interactiveProject"},
-    )
-    with pytest.raises(ValueError, match="confirmation"):
-        build_tools(tmp_path).execute(request)
+    destination = tmp_path / "user project"
+    request = {
+        "settings": {
+            "template": "python",
+            "destination": str(destination),
+            "project_name": "interactiveProject",
+        }
+    }
+    response = execute(tmp_path, "template-versions", {"settings": {"template": "python"}})
+    assert "0.2.0" in response.observed["versions"]
+    with pytest.raises(ValueError):
+        execute(tmp_path, "template-create-apply", request)
     assert not destination.exists()
-    build_tools(tmp_path).execute(request, confirmed=True)
+    planned = execute(tmp_path, "template-create-plan", request)
+    assert planned.observed["version"] == "0.2.0" and not destination.exists()
+    assert (
+        execute(
+            tmp_path, "template-create-apply", {**request, "expected": planned.model_dump()}
+        ).status
+        == "complete"
+    )
     assert "interactiveProject" in (destination / "README.md").read_text()
+    assert yaml.safe_load((destination / ".copier-answers.yml").read_text())["_commit"] == "v0.2.0"
+    git(destination, "init", "--quiet")
+    commit(destination, "generated")
+    preserved = destination / "my-file"
+    preserved.write_text("private project data")
+    commit(destination, "personal")
+    before = git(destination, "rev-parse", "HEAD")
+    update = {
+        "settings": {"template": "python", "version": "0.2.0", "destination": str(destination)}
+    }
+    preview = execute(tmp_path, "template-update-plan", update)
+    assert (
+        execute(
+            tmp_path, "template-update-apply", {**update, "expected": preview.model_dump()}
+        ).status
+        == "complete"
+    )
+    assert (
+        git(destination, "rev-parse", "HEAD") == before
+        and preserved.read_text() == "private project data"
+    )
+
+
+def test_cached_release_lookup_has_no_checkout_or_network_dependency(
+    tmp_path: Path, source: TemplateSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.domain.projects import TemplateMetadata
+
+    bare = TemplateSource(
+        project=source.project, url=source.url, metadata=TemplateMetadata(alias="python")
+    )
+    prepared = plan(source, tmp_path / "generated", version="0.2.0")
+    copier_templates.prepare_cache(prepared)
+    monkeypatch.setattr(copier_templates, "_fetch_ref", lambda *args: pytest.fail("network access"))
+    cached = copier_templates.available_versions(bare, prepared.cache_root, offline=True)
+    assert [r.version for r in cached] == ["0.2.0", "0.1.0"]
+    choice = copier_templates.selected_source(
+        bare, prepared.cache_root, None, tmp_path, update=False, offline=True
+    )
+    assert choice.metadata.recommended_version == "0.2.0"
+    offline = templates.plan_template(
+        {"python": choice},
+        template="python",
+        version=None,
+        destination=tmp_path / "offline copy",
+        offline=True,
+        defaults=True,
+    )
+    assert copier_templates.execute_template(offline).status == "created"
+
+
+def test_public_git_and_local_copier_do_not_inherit_ambient_credentials(
+    tmp_path, monkeypatch, source
+):
+    import os
+    from types import SimpleNamespace
+
+    for key in ("SSH_AUTH_SOCK", "SSH_ASKPASS", "GH_TOKEN", "HTTPS_PROXY", "GIT_CONFIG_PARAMETERS"):
+        monkeypatch.setenv(key, "synthetic-private-value")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    bare = TemplateSource(
+        project=source.project,
+        url=source.url,
+        metadata=TemplateMetadata(alias=source.metadata.alias),
+    )
+    destination = tmp_path / "destination"
+    selected = plan(source, destination)
+    checkout = tmp_path / "verified.git"
+    monkeypatch.setattr(copier_templates, "copier_executable", lambda: tmp_path / "official-copier")
+    calls = []
+
+    def capture(argv, *, env, **kwargs):
+        assert not any(value == "synthetic-private-value" for value in env.values())
+        assert env["HOME"] != os.environ["HOME"]
+        assert env["GIT_ASKPASS"] == "/bin/false" and env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+        calls.append((argv, env))
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(copier_templates.subprocess, "run", capture)
+    assert copier_templates.available_versions(bare, tmp_path / "cache", offline=False) == ()
+    copier_templates._run_copier(selected, checkout, destination)
+    git, copier = calls
+    assert "http.followRedirects=false" in git[0] and git[1]["HOME"] == "/dev/null"
+    assert git[0][-2] == source.url and git[1]["GIT_TERMINAL_PROMPT"] == "0"
+    assert copier[1]["GIT_ALLOW_PROTOCOL"] == "file" and "--skip-tasks" in copier[0]
