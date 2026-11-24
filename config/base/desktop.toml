@@ -1,4 +1,4 @@
 # Session resources are installed only by the base selection.
-session = ["brightness.sh", "hypridle.conf", "keys.txt", "panel.py", "power.sh", "screenshot.sh", "session.sh", "start-hyprland"]
+session = ["brightness.sh", "hypridle.conf", "keys.txt", "panel.py", "power.sh", "screenshot.sh", "session.sh", "start-hyprland.sh"]
 theme = ["foot.ini", "hyprlock.conf", "mako.conf", "profile.lua", "style.css", "wallpaper.svg", "waybar.json", "wofi.conf"]
 commands = ["Hyprland", "hyprctl", "hyprland-dialog", "hyprland-run", "start-hyprland", "foot", "wofi", "thunar", "waybar", "mako", "hypridle", "hyprlock", "swaybg", "wl-paste", "wl-copy", "grim", "slurp", "cliphist", "notify-send", "busctl", "wpctl", "pavucontrol", "nm-connection-editor", "nm-applet", "playerctl", "dbus-update-activation-environment", "dbus-run-session", "systemctl", "loginctl", "flock", "less", "fc-cache"]

@@ -1,6 +1,10 @@
 # Testing
 
-Run the locked checks described in [development](development.md). Fixtures exercise validation, fixed Make goals, PTY authentication, signed-source failures, file races, recovery and package contents. Headless tests exercise the persistent tabs, preview, confirmation and cancellation.
+Run `make native-ci` from the repository root with the locked toolchain. [Development](development.md)
+
+## 🧪 What the native gate covers
+
+Fixtures exercise validation, fixed Make goals, PTY authentication, signed-source failures, file races, recovery and package contents. Headless tests exercise the persistent tabs, preview, confirmation and cancellation.
 
 ## Disposable Debian target
 

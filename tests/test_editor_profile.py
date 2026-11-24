@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 from native_workspace import FILTERS, ROOT, files
+from pydantic import ValidationError
 from test_native_ansible import play
 from test_native_ansible import run_env as run_env
 
@@ -94,6 +95,67 @@ def test_editor_catalog_covers_selectable_languages_and_resolves_compatible_git_
     assert choose(rows, 1) == "refs/tags/v1.12.0"
     with pytest.raises(ValueError, match="No stable release"):
         choose(rows, 4)
+
+
+def test_search_exclusions_follow_the_catalog_in_both_editor_pickers(run_env):
+    stage = Path(run_env["SETUP_SYSTEM_RESULT"]).parent
+    globs = ["**/private file", '**/quo"te', "**/подборка/$(echo test)"]
+    catalog = stage / "editor.toml"
+    catalog.write_text("[search]\nexclude_globs = " + json.dumps(globs, ensure_ascii=False))
+    output = stage / "init.lua"
+    step = {
+        "src": str(ROOT / "ansible/templates/nvim-init.lua"),
+        "dest": str(output),
+        "mode": "0600",
+        "variable_start_string": "@{",
+        "variable_end_string": "}@",
+    }
+    book = stage / "editor.yml"
+    lookup = "{{ lookup('ansible.builtin.file', catalog_path) | native_toml }}"
+    book.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "become": False,
+                    "vars": {
+                        "catalog_path": str(catalog),
+                        "editor_catalog": lookup,
+                        "plugin_lua": "{}",
+                        "selected_lua": "{}",
+                    },
+                    "tasks": [{"ansible.builtin.template": step}],
+                }
+            ]
+        )
+    )
+    result = play([str(book)], run_env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    init = output.read_text()
+    rows = next(line for line in init.splitlines() if line.startswith("local excluded = {"))
+    assert (
+        json.loads("[" + rows.removeprefix("local excluded = {").removesuffix("}") + "]") == globs
+    )
+    assert 'vim.fn.shellescape("!" .. glob)' in init
+    assert any("rg --files" in line and "rgFlags" in line for line in init.splitlines())
+    assert any("rg_opts =" in line and "rgFlags" in line for line in init.splitlines())
+
+
+@pytest.mark.parametrize(
+    "search",
+    [
+        {"exclude_globs": []},
+        {"exclude_globs": [""]},
+        {"exclude_globs": ["!allow-credentials"]},
+        {"exclude_globs": ["line\nbreak"]},
+        {"exclude_globs": [False]},
+        {"exclude_globs": ["valid"], "unknown": True},
+    ],
+)
+def test_invalid_editor_search_policy_stops_rendering(search):
+    with pytest.raises(ValidationError):
+        FILTERS["editor_globs_lua"](json.dumps(search))
 
 
 def test_existing_flutter_checkout_with_local_changes_blocks_before_mutation(tmp_path, monkeypatch):

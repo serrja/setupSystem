@@ -1,8 +1,6 @@
 UV ?= uv
 PLAYBOOKS := $(wildcard ansible/*.yml)
-SHELL_SOURCES := install.sh libexec/run libexec/play libexec/locked libexec/file-task libexec/project-task \
-                 docker/source_identity.sh assets/hyprland/*.sh assets/hyprland/start-hyprland debian/guard debian/install-local \
-                 debian/publish debian/setup-system
+SHELL_SOURCES := debian/publish $(wildcard *.sh assets/hyprland/*.sh debian/*.sh docker/*.sh libexec/*.sh)
 
 .PHONY: lint typecheck test native-check native-build native-verify native-ci
 lint:

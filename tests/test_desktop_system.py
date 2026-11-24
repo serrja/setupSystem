@@ -482,7 +482,7 @@ def test_display_manager_launcher_requires_an_active_local_logind_seat(
     )
     for executable in fake_bin.iterdir():
         executable.chmod(0o755)
-    source = (ROOT / "assets/hyprland/start-hyprland").read_text()
+    source = (ROOT / "assets/hyprland/start-hyprland.sh").read_text()
     for name in ("CONFIG", "DATA", "STATE", "CACHE"):
         source = source.replace(f"@{name}_HOME@", shlex.quote(str(tmp_path / name.lower())))
     launcher = tmp_path / "start-hyprland"

@@ -50,14 +50,14 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         "Makefile",
         "ansible.cfg",
         "install.sh",
-        "LICENSE",
+        "LICENSE.md",
         "docs",
         "README.md",
         "debian/setup-system.1",
         "THIRD_PARTY_NOTICES.md",
         "debian/control",
-        "debian/setup-system",
-        "debian/guard",
+        "debian/setup-system.sh",
+        "debian/guard.sh",
         "debian/setup-system.conf",
     )
     entries = git("ls-tree", "-rz", "--full-tree", sha, "--", *inputs)
@@ -96,9 +96,9 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
     copy(source_root / "Makefile", runtime / "Makefile")
     copy(source_root / "install.sh", runtime / "install.sh", 0o755)
     copy(source_root / "ansible.cfg", runtime / "ansible.cfg")
-    copy(source_root / "debian/setup-system", base / "usr/bin/setup-system", 0o755)
+    copy(source_root / "debian/setup-system.sh", base / "usr/bin/setup-system", 0o755)
     copy(source_root / "debian/setup-system.conf", base / "usr/lib/tmpfiles.d/setup-system.conf")
-    copy(source_root / "LICENSE", base / "usr/share/doc/setup-system/copyright")
+    copy(source_root / "LICENSE.md", base / "usr/share/doc/setup-system/copyright")
     copy(
         source_root / "THIRD_PARTY_NOTICES.md",
         base / "usr/share/doc/setup-system/THIRD_PARTY_NOTICES.md",
@@ -118,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         )
     manual.chmod(0o644)
     for script in ("preinst", "prerm"):
-        copy(source_root / "debian/guard", control / script, 0o755)
+        copy(source_root / "debian/guard.sh", control / script, 0o755)
     metadata = (source_root / "debian/control").read_text()
     (control / "control").write_text(
         f"Version: {version}\nX-Setup-System-Source: {sha}\n{metadata}"

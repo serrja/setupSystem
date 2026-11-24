@@ -32,3 +32,27 @@ dart_flutter = ["dart"]
 [npm_compatible_series]
 typescript = 6
 typescript-language-server = 5
+
+# Both the file picker and live grep exclude these ripgrep globs.
+[search]
+exclude_globs = [
+    "**/.env*",
+    "**/.aws/**",
+    "**/.git/**",
+    "**/.cache/**",
+    "**/.venv/**",
+    "**/node_modules/**",
+    "**/credentials.json",
+    "**/credentials.toml",
+    "**/secrets.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/id_rsa*",
+    "**/id_ed25519*",
+    "**/backups/**",
+    "**/.ssh/**",
+    "**/.gnupg/**",
+    "**/.local/state/**",
+]

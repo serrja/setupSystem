@@ -41,8 +41,8 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "debian/build.py",
         "debian/publish",
         "debian/control",
-        "debian/setup-system",
-        "debian/guard",
+        "debian/setup-system.sh",
+        "debian/guard.sh",
         "debian/setup-system.conf",
         "Makefile",
         "mk/package.mk",
@@ -54,9 +54,9 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "ansible/templates/nvim-init.lua",
         "assets/hyprland/keys.txt",
         "config/workspace/applications.toml",
-        "libexec/run",
+        "libexec/run.sh",
         "src/setup_system/app.py",
-        "LICENSE",
+        "LICENSE.md",
         "THIRD_PARTY_NOTICES.md",
     ):
         target = fixture / name
@@ -126,7 +126,7 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
             "usr/lib/setup-system/ansible/workspace.yml",
             "usr/lib/setup-system/config/workspace/applications.toml",
             "usr/lib/setup-system/mk/workspace.mk",
-            "usr/lib/setup-system/libexec/run",
+            "usr/lib/setup-system/libexec/run.sh",
             "usr/lib/setup-system/ansible/templates/nvim-init.lua",
             "usr/lib/python3/dist-packages/setup_system/app.py",
             "usr/lib/tmpfiles.d/setup-system.conf",
@@ -180,7 +180,7 @@ def executable(directory: Path, name: str, content: str) -> Path:
 
 def test_fixed_make_entrypoint_rejects_caller_flags(tmp_path: Path) -> None:
     destination = tmp_path / "record"
-    script = (ROOT / "debian/setup-system").read_text()
+    script = (ROOT / "debian/setup-system.sh").read_text()
     make = executable(
         tmp_path, "make", '#!/bin/sh\nenv > "$RECORD"\nprintf "%s\\n" "$@" >> "$RECORD"\n'
     )
@@ -204,7 +204,7 @@ def test_guard_admits_owner_ancestor_and_refuses_parallel_writer(tmp_path: Path)
     lock = tmp_path / "lock"
     lock.mkdir(mode=0o755)
     content = (
-        (ROOT / "debian/guard")
+        (ROOT / "debian/guard.sh")
         .read_text()
         .replace("lock=/run/setup-system", f"lock={shlex.quote(str(lock))}")
     )
@@ -750,6 +750,9 @@ printf 'installed 1.2.3' > "$STATE"
         "PATH=/usr/sbin:/usr/bin:/sbin:/bin", f"PATH={shlex.quote(str(tools))}:/usr/bin:/bin"
     )
     content = content.replace("exec /usr/bin/setup-system", "exec " + shlex.quote(str(launcher)))
+    content = content.replace(
+        " = /usr/bin/setup-system ]; then", f" = {shlex.quote(str(launcher))} ]; then"
+    )
     content = content.replace("lock=/run/setup-system", 'lock="$LOCK"').replace(
         "mktemp -d /run/setup-system/deb.XXXXXXXX", 'mktemp -d "$LOCK/deb.XXXXXXXX"'
     )
@@ -775,7 +778,9 @@ printf 'installed 1.2.3' > "$STATE"
         INVOKED=str(invoked),
         STARTED=str(started),
         PATH=(
-            f"{legacy_dir}:/usr/bin:/bin" if scenario in ("new", "same_shadow") else "/usr/bin:/bin"
+            f"{legacy_dir}:/usr/bin:/bin"
+            if scenario in ("new", "same_shadow")
+            else f"{tools}:/usr/bin:/bin"
         ),
         LOCK=str(lock),
     )
@@ -794,7 +799,7 @@ printf 'installed 1.2.3' > "$STATE"
             "sh",
             "-c",
             '. ./install.sh; package_auth=$1; shift; package_transaction "$@"',
-            "install-local",
+            "install-local.sh",
             auth,
             str(source),
             digest,
@@ -809,8 +814,9 @@ printf 'installed 1.2.3' > "$STATE"
         check=False,
     )
     assert ("Start it separately with: /usr/bin/setup-system" in result.stdout) == (
-        scenario in ("new", "same", "same_shadow")
+        scenario in ("new", "same_shadow")
     )
+    assert ("Start it separately with: setup-system" in result.stdout) == (scenario == "same")
     if scenario in ("new", "same", "same_shadow"):
         assert result.returncode == 0, result.stderr
     else:
@@ -846,7 +852,7 @@ def test_apply_reports_a_live_writer_before_starting_the_operation(tmp_path, wri
         item.touch(mode=0o600)
     stage = tmp_path / "operation"
     contents = (
-        (ROOT / "libexec/locked")
+        (ROOT / "libexec/locked.sh")
         .read_text()
         .replace("lock=/run/setup-system", "lock=" + shlex.quote(str(native)))
     )

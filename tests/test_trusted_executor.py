@@ -22,7 +22,7 @@ def test_system_apply_requires_the_installed_package(tmp_path, section, action):
     command.write_text("#!/bin/sh\ntouch " + str(marker) + "\n")
     command.chmod(0o700)
     reply = subprocess.run(
-        ["/bin/sh", ROOT / "libexec/play", section, action],
+        ["/bin/sh", ROOT / "libexec/play.sh", section, action],
         cwd=tmp_path,
         env={
             "PATH": str(tmp_path),
@@ -64,7 +64,7 @@ def test_play_rejects_an_unsafe_request_before_selecting_any_executable(tmp_path
     fake.chmod(0o700)
     (tmp_path / "ansible-playbook").touch()
     response = subprocess.run(
-        ["/bin/sh", ROOT / "libexec/play", "base", "plan"],
+        ["/bin/sh", ROOT / "libexec/play.sh", "base", "plan"],
         cwd=tmp_path,
         env=dict(
             os.environ,

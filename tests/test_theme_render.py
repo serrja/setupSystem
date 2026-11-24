@@ -52,7 +52,7 @@ def test_launcher_passes_quoted_xdg_paths_literally(tmp_path):
     paths = {key: str(owner / key) for key in ("config", "data", "state", "cache")}
     exports = [
         line
-        for line in (ASSETS / "start-hyprland").read_text().splitlines()
+        for line in (ASSETS / "start-hyprland.sh").read_text().splitlines()
         if line.startswith("export XDG_") and "@{" in line
     ]
     assert len(exports) == 4

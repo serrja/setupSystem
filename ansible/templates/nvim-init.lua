@@ -31,30 +31,10 @@ require("nvim-treesitter.configs").setup({ parser_install_dir = parsers, auto_in
 vim.api.nvim_create_autocmd("FileType",{callback=function(ev) pcall(vim.treesitter.start,ev.buf) end})
 local project = require("config.project")
 local fzf = require("fzf-lua")
-local excluded = {
-  "!**/.env*",
-  "!**/.aws/**",
-  "!**/.git/**",
-  "!**/.cache/**",
-  "!**/.venv/**",
-  "!**/node_modules/**",
-  "!**/credentials.json",
-  "!**/credentials.toml",
-  "!**/secrets.*",
-  "!**/*.pem",
-  "!**/*.key",
-  "!**/*.p12",
-  "!**/*.pfx",
-  "!**/id_rsa*",
-  "!**/id_ed25519*",
-  "!**/backups/**",
-  "!**/.ssh/**",
-  "!**/.gnupg/**",
-  "!**/.local/state/**",
-}
+local excluded = @{ editor_catalog.search | to_json | editor_globs_lua }@
 local rgFlags = table.concat(
-  vim.tbl_map(function(item)
-    return "-g " .. vim.fn.shellescape(item)
+  vim.tbl_map(function(glob)
+    return "-g " .. vim.fn.shellescape("!" .. glob)
   end, excluded),
   " "
 )

@@ -1,6 +1,8 @@
 # Graphical login
 
-In **Base system**, select **Hyprland, sound, portals and desktop dependencies** and **Graphical login**. Inspect the plan before confirming. It includes the user session launcher and, when required, greetd, gtkgreet and Cage. The greeter runs as the dedicated `_greetd` account. PAM authenticates the desktop user. A system-owned bridge starts Hyprland with that user's HOME and XDG directories.
+In **Base system**, select **Hyprland, sound, portals and desktop dependencies** and **Graphical login**. Review the login and boot changes before confirming. The plan includes the user session launcher and, when required, greetd, gtkgreet and Cage. The greeter runs as the dedicated `_greetd` account. PAM authenticates the desktop user. A system-owned bridge starts Hyprland with that user's HOME and XDG directories.
+
+## 🖥️ Enable graphical login on the next boot
 
 Apply checks the same account, launcher, display-manager state, default target and GRUB inputs captured during planning. It backs up managed files before writing them and validates the generated GRUB configuration. The managed drop-in keeps a visible five-second boot menu and a ten-second recovery timeout after a failed boot. Enabling graphical login sets the default for subsequent boots. The current session stays open. An encrypted HOME must already be accessible for user configuration. [Graphical disk unlock](graphical_unlock.md)
 
