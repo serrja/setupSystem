@@ -93,6 +93,16 @@ async def idle(app, pilot):
     raise AssertionError("Worker did not finish")
 
 
+async def press_plan(app, pilot, button_id, task):
+    """Wait for the requested preview after the button message bubbles up to the app."""
+    button = app.query_one(button_id, Button)
+    assert button.display and not button.disabled
+    button.press()
+    async with asyncio.timeout(5):
+        while app.pending is None or app.pending.task != task or app.cancel_event is not None:
+            await pilot.pause()
+
+
 def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
     async def scenario():
         tasks = Tasks()
@@ -169,8 +179,7 @@ def test_user_restore_and_changed_settings_block_stale_plan(tmp_path):
         async with app.run_test(size=(105, 36)) as pilot:
             await pilot.press("ctrl+2")
             app.query_one("#backup", Input).value = "20261124T100000Z-0123abcd"
-            app.query_one("#restore-plan", Button).press()
-            await idle(app, pilot)
+            await press_plan(app, pilot, "#restore-plan", "restore")
             assert tasks.calls[-1][0] == Target.RESTORE_PLAN
             await pilot.click("#apply")
             assert isinstance(app.screen, Consent)
@@ -285,8 +294,7 @@ def test_cleanup_has_its_own_snapshot_and_preserves_other_form_fields(tmp_path):
         async with app.run_test(size=(105, 36)) as pilot:
             await pilot.press("ctrl+2")
             app.query_one("#rounding", Input).value = ""
-            app.query_one("#cleanup-plan", Button).press()
-            await idle(app, pilot)
+            await press_plan(app, pilot, "#cleanup-plan", "cleanup")
             assert app.runner.calls[-1][1]["settings"] == {"cleanup": [], "cleanup_mode": "remove"}
             assert app.query_one("#rounding", Input).value == ""
 
@@ -381,8 +389,7 @@ def test_administrative_consent_precedes_the_dedicated_root_prompt(tmp_path):
         async with app.run_test(size=(110, 45)) as pilot:
             await app.workers.wait_for_complete()
             app.query_one("#admin-account", Input).value = "alice"
-            app.query_one("#admin-plan", Button).press()
-            await idle(app, pilot)
+            await press_plan(app, pilot, "#admin-plan", "admin")
             assert app.pending.task == "admin"
             await pilot.click("#apply")
             assert isinstance(app.screen, Consent)

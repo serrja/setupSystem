@@ -178,10 +178,9 @@ def test_recovery_form_previews_and_preserves_conflicting_edits(tmp_path, monkey
             await pilot.press("ctrl+2")
             app.query_one("#backup", Input).value = operation.name
             app.query_one("#restore-plan", Button).press()
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            assert "conflict" in str(app.query_one("#feedback", Static).render()).lower()
+            async with asyncio.timeout(20):
+                while "conflict" not in str(app.query_one("#feedback", Static).render()).lower():
+                    await pilot.pause()
             assert app.pending is None and app.query_one("#apply", Button).disabled
             assert target.read_bytes() == b"later personal edit"
 
@@ -195,18 +194,19 @@ def test_project_git_and_template_forms_produce_only_their_required_inputs(tmp_p
     async def run():
         app = SetupApp(runner=Tasks())
         async with app.run_test(size=(110, 48)) as pilot:
-            chosen = []
 
             async def choose(group, target, fields):
-                app.push_screen(ProjectTools(group, {}, {"python": "Python"}, {}), chosen.append)
+                selection = asyncio.get_running_loop().create_future()
+                app.push_screen(
+                    ProjectTools(group, {}, {"python": "Python"}, {}), selection.set_result
+                )
                 await pilot.pause()
                 form = app.screen
                 for key, value in fields.items():
                     field = form.query_one("#" + key)
                     field.value = value
                 form.query_one("#" + target, Button).press()
-                await pilot.pause()
-                return chosen.pop().values
+                return (await asyncio.wait_for(selection, 5)).values
 
             git = {
                 "repository": str(tmp_path),

@@ -19,17 +19,19 @@ from setup_system.settings import Settings
 from setup_system.ui.dialogs import Consent, Password
 
 
-def test_save_waiting_for_directory_lock_keeps_ui_responsive(tmp_path: Path) -> None:
+def test_save_waiting_for_directory_lock_keeps_ui_responsive(tmp_path: Path, monkeypatch) -> None:
     async def scenario() -> None:
         settings = Settings(tmp_path, tmp_path / ".config")
         settings.directory.parent.mkdir(mode=0o700)
         settings.directory.mkdir(mode=0o700)
         app = SetupApp(settings=settings)
-        async with app.run_test() as pilot:
-            await pilot.pause()
+        async with app.run_test():
+            await app.workers.wait_for_complete()
             assert "base" in app.loaded
             fd = os.open(settings.directory, os.O_RDONLY | os.O_DIRECTORY)
+            directory = os.fstat(fd)
             held = threading.Event()
+            attempted = threading.Event()
             release = threading.Event()
             expired = threading.Event()
 
@@ -37,17 +39,25 @@ def test_save_waiting_for_directory_lock_keeps_ui_responsive(tmp_path: Path) -> 
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX)
                     held.set()
-                    if not release.wait(3):
+                    if not release.wait(10):
                         expired.set()
                 finally:
                     os.close(fd)
 
             owner = threading.Thread(target=lock)
             owner.start()
-            await asyncio.to_thread(held.wait, 2)
-            app.query_one("#save", Button).press()
+            flock = fcntl.flock
+
+            def observed_flock(target, operation):
+                if operation == fcntl.LOCK_EX and os.path.samestat(os.fstat(target), directory):
+                    attempted.set()
+                return flock(target, operation)
+
             try:
-                await asyncio.sleep(0.05)
+                assert await asyncio.to_thread(held.wait, 2)
+                monkeypatch.setattr(fcntl, "flock", observed_flock)
+                app.query_one("#save", Button).press()
+                assert await asyncio.to_thread(attempted.wait, 2)
                 app.post_message(events.Key("ctrl+2", None))
                 async with asyncio.timeout(2):
                     while app.query_one(TabbedContent).active != "workspace":
