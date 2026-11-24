@@ -35,6 +35,7 @@ from setup_system.models import (
     PlanTask,
     ProjectTask,
     Section,
+    Status,
     WorkspaceOptions,
 )
 from setup_system.runner import (
@@ -451,7 +452,7 @@ class SetupApp(App[None]):
                 observed = result.observed.model_dump(mode="json", exclude_unset=True)
                 if (
                     group
-                    and result.status == "ready"
+                    and result.status is Status.READY
                     and self.section == "workspace"
                     and self.navigation.screen.is_active
                 ):
@@ -474,7 +475,7 @@ class SetupApp(App[None]):
                 if (
                     planning
                     and not cancel.is_set()
-                    and result.status in {"ready", "plan_ready"}
+                    and result.status.allows_confirmation
                     and result.actions
                     and not result.blockers
                 ):

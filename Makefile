@@ -45,14 +45,14 @@ endif
 ifneq ($(origin SETUP_SYSTEM_INTERPRETER),undefined)
 override export SETUP_SYSTEM_INTERPRETER := $(value SETUP_SYSTEM_INTERPRETER)
 endif
-override PLAY := /bin/sh ./libexec/play
+override PLAY := /bin/sh ./libexec/play.sh
 .PHONY: help run prepare
 help:
 	@printf '%s\n' 'make prepare  | prepare a development environment' \
 	  'make package  | build the Debian package' 'make install  | install the prepared package' \
 	  'make update   | update the installed package' 'make run      | open the configurator'
 run:
-	@/bin/sh ./libexec/run
+	@/bin/sh ./libexec/run.sh
 prepare:
 	uv sync --locked --all-groups
 include mk/files.mk mk/projects.mk mk/base.mk mk/admin.mk mk/workspace.mk mk/package.mk mk/quality.mk

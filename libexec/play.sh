@@ -46,7 +46,7 @@ if [ "$section/$action" = admin/apply ]; then
     set -- "$@" -e "admin_request_sha=$consent"
 fi
 case "$action" in
-    apply|user-apply|cleanup-apply) set -- /bin/sh "$root/libexec/locked" "$interpreter" -I -B "$playbook" -i localhost, -c local "$root/ansible/$section.yml" -e "setup_action=$action" "$@" ;;
+    apply|user-apply|cleanup-apply) set -- /bin/sh "$root/libexec/locked.sh" "$interpreter" -I -B "$playbook" -i localhost, -c local "$root/ansible/$section.yml" -e "setup_action=$action" "$@" ;;
     *) set -- "$interpreter" -I -B "$playbook" -i localhost, -c local "$root/ansible/$section.yml" -e "setup_action=$action" "$@" ;;
 esac
 exec /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" LANG=C.UTF-8 \

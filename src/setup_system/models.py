@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, Self, get_args
 
@@ -22,7 +23,7 @@ from setup_system.domain.administration import AdminAccount, AdminIntent
 from setup_system.domain.contracts import MAX_MESSAGE_BYTES
 from setup_system.domain.contracts import ContractModel as Model
 from setup_system.domain.intentions import BaseOptions as BaseOptions
-from setup_system.domain.intentions import Identifier
+from setup_system.domain.intentions import CleanupMode, Identifier
 from setup_system.domain.intentions import Monitor as Monitor
 from setup_system.domain.intentions import Section as Section
 from setup_system.domain.intentions import Theme as Theme
@@ -34,7 +35,7 @@ from setup_system.domain.receipts import RunId
 
 class CleanupOptions(Model):
     cleanup: tuple[Identifier, ...]
-    cleanup_mode: Literal["remove", "purge", "autoremove"]
+    cleanup_mode: CleanupMode
 
     @field_validator("cleanup")
     @classmethod
@@ -147,19 +148,24 @@ def validate_project_settings(task: str, fields: object) -> dict[str, object]:
     return model.model_validate(fields).model_dump(mode="json", exclude_none=True)
 
 
-Status = Literal[
-    "ready",
-    "blocked",
-    "plan_ready",
-    "no_changes",
-    "nothing_selected",
-    "complete",
-    "needs_reboot",
-    "partial",
-    "failed",
-    "cancelled",
-    "requires_user_login",
-]
+class Status(StrEnum):
+    """Stable outcome identifiers in the native operation protocol."""
+
+    READY = "ready"
+    BLOCKED = "blocked"
+    PLAN_READY = "plan_ready"
+    NO_CHANGES = "no_changes"
+    NOTHING_SELECTED = "nothing_selected"
+    COMPLETE = "complete"
+    NEEDS_REBOOT = "needs_reboot"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    REQUIRES_USER_LOGIN = "requires_user_login"
+
+    @property
+    def allows_confirmation(self) -> bool:
+        return self in (Status.PLAN_READY, Status.READY)
 
 
 class AdminObservations(Observations):
@@ -223,7 +229,7 @@ class TaskResult(Model):
                     f"Member of sudo group (GID {account.sudo_gid}): {membership}",
                 ]
             )
-            if self.status == "no_changes" and account.member:
+            if self.status is Status.NO_CHANGES and account.member:
                 lines.append("Effective sudo access requires a privileged policy check.")
         return "\n".join(lines)
 
@@ -332,7 +338,7 @@ class PlanSnapshot(Model):
     def executable(self) -> Self:
         settings = settings_model(self.task).model_validate_json(self.settings_json)
         result = TaskResult.model_validate_json(self.expected_json)
-        if result.status not in {"plan_ready", "ready"} or result.blockers or not result.actions:
+        if not result.status.allows_confirmation or result.blockers or not result.actions:
             raise ValueError("This plan has no executable changes")
         if isinstance(settings, AdminIntent):
             if (

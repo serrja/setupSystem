@@ -23,7 +23,7 @@ from setup_system.infrastructure.admin_account import (
 from setup_system.infrastructure.native_target import current_target
 from setup_system.infrastructure.operation_io import read_admin_request
 from setup_system.infrastructure.system_paths import protected
-from setup_system.models import AdminObservations, RequestEnvelope, TaskResult
+from setup_system.models import AdminObservations, RequestEnvelope, Status, TaskResult
 
 
 class ExistingLogin(User):
@@ -98,7 +98,7 @@ def plan(account: AdminAccount, boot_identity: str) -> TaskResult:
         )
     )
     return TaskResult(
-        status="no_changes" if account.member else "ready",
+        status=Status.NO_CHANGES if account.member else Status.READY,
         actions=actions,
         observed=AdminObservations(
             account=account,
@@ -148,14 +148,14 @@ def run(action: str, raw: bytes) -> TaskResult:
         except (ValueError, OSError):
             unchanged = False
         return TaskResult(
-            status="blocked" if unchanged or not backend.attempted else "partial",
+            status=Status.BLOCKED if unchanged or not backend.attempted else Status.PARTIAL,
             blockers=(
                 f"{error}. Membership or its effective policy could not be confirmed."
                 " Inspect the account again.",
             ),
         )
     return TaskResult(
-        status="requires_user_login",
+        status=Status.REQUIRES_USER_LOGIN,
         actions=(
             AdminAction(
                 kind="admin",
@@ -177,7 +177,7 @@ def preflight(request: str) -> int:
         print(read_admin_request(request, "apply")["digest"])
     except (OSError, ValueError):
         result = TaskResult(
-            status="blocked",
+            status=Status.BLOCKED,
             blockers=("Invalid or changed administrative request. Preview a new account plan.",),
         )
         path = Path(request).with_name("result.json")
@@ -204,11 +204,11 @@ def main() -> None:
         outcome = run(sys.argv[1], raw)
     except ValidationError:
         outcome = TaskResult(
-            status="blocked",
+            status=Status.BLOCKED,
             blockers=("Invalid administrative request. Preview the account again.",),
         )
     except (ValueError, OSError) as error:
-        outcome = TaskResult(status="blocked", blockers=(str(error),))
+        outcome = TaskResult(status=Status.BLOCKED, blockers=(str(error),))
     print(json.dumps(outcome.model_dump(mode="json", exclude_unset=True)))
 
 

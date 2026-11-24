@@ -20,7 +20,7 @@ from setup_system.infrastructure.system_paths import verify_program_tree
 from setup_system.make_transport import FOREGROUND as FOREGROUND
 from setup_system.make_transport import SYSTEM, Phase, TransportError, execute_make
 from setup_system.make_transport import Target as Target
-from setup_system.models import RequestEnvelope, TaskResult
+from setup_system.models import RequestEnvelope, Status, TaskResult
 
 INSTALLED = Path("/usr/lib/setup-system")
 
@@ -138,7 +138,12 @@ def _result(path: Path, code: int) -> TaskResult | None:
         result = TaskResult.model_validate_json(data)
     except ValidationError:
         raise ValueError("The native operation returned an invalid result") from None
-    if code and result.status not in {"failed", "partial", "blocked", "cancelled"}:
+    if code and result.status not in {
+        Status.FAILED,
+        Status.PARTIAL,
+        Status.BLOCKED,
+        Status.CANCELLED,
+    }:
         raise TransportError(f"Native operation failed with exit status {code}")
     return result
 
@@ -169,7 +174,7 @@ class AsyncMakeRunner:
             if os.geteuid() == 0 or os.geteuid() != os.getuid():
                 raise ValueError("Open setup-system as your normal user")
             if stop.is_set():
-                return TaskResult(status="cancelled")
+                return TaskResult(status=Status.CANCELLED)
             command = Command.model_validate(command)
             if command.target in SYSTEM:
                 root = await self.check_authorization()
@@ -235,7 +240,7 @@ class AsyncMakeRunner:
                 SETUP_SYSTEM_CANCEL=str(stage / "cancel"),
             )
             if stop.is_set():
-                return TaskResult(status="cancelled")
+                return TaskResult(status=Status.CANCELLED)
             report(Phase.STARTED)
             try:
                 code = await execute_make(
@@ -257,7 +262,7 @@ class AsyncMakeRunner:
             if recorded is not None:
                 return recorded
             if code == 130:
-                return TaskResult(status="cancelled")
+                return TaskResult(status=Status.CANCELLED)
             raise TransportError(
                 f"Make exited with status {code} before returning an operation result."
             )

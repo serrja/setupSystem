@@ -50,7 +50,7 @@ class Preview:
 def _planned(actions: list[ProjectAction], observed: dict[str, object]) -> TaskResult:
     return TaskResult.model_validate(
         {
-            "status": "ready" if actions else "no_changes",
+            "status": Status.READY if actions else Status.NO_CHANGES,
             "actions": tuple(actions),
             "observed": observed,
         }
@@ -255,7 +255,7 @@ def preview(
             if not path.exists()
         )
         return Preview(
-            TaskResult(status="ready" if changes else "no_changes", actions=changes),
+            TaskResult(status=Status.READY if changes else Status.NO_CHANGES, actions=changes),
             lambda: project_layout.prepare_owner_directories(layout),
         )
     if operation == "shell-configure":
@@ -295,7 +295,7 @@ def preview(
             raise ValueError("Existing RTK is managed by its system package")
         return Preview(
             TaskResult(
-                status="ready" if changes else "no_changes",
+                status=Status.READY if changes else Status.NO_CHANGES,
                 actions=changes,
                 observed=ProjectObservations.model_validate(observed),
             ),
@@ -313,7 +313,7 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
     if target == "project-list":
         Empty.model_validate(fields)
         return TaskResult(
-            status="ready",
+            status=Status.READY,
             observed=ProjectObservations.model_validate(
                 {
                     "projects": {k: str(v) for k, v in paths(root).items()},
@@ -331,7 +331,7 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
             rows[0].version if rows else None,
         )
         return TaskResult(
-            status="ready",
+            status=Status.READY,
             observed=ProjectObservations(
                 versions=tuple(r.version for r in rows), recommended=recommended
             ),
@@ -339,7 +339,7 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
     if target == "git-inspect":
         repo = Repository.model_validate(fields).repository
         return TaskResult(
-            status="ready",
+            status=Status.READY,
             observed=ProjectObservations(identity=dict(git_profiles.inspect_repository(repo))),
         )
     if target in {"project-editor", "project-codex"}:
@@ -348,7 +348,7 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
             ProjectChoice.model_validate(fields),
             "nvim" if target == "project-editor" else "codex",
         )
-        return TaskResult(status="complete")
+        return TaskResult(status=Status.COMPLETE)
     operation, _, phase = target.rpartition("-")
     if phase not in ("plan", "apply"):
         raise ValueError("Unknown project operation")
@@ -359,12 +359,12 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
     if (
         not accepted
         or not accepted.same_plan(proposed.result)
-        or accepted.status != "ready"
+        or accepted.status is not Status.READY
         or not accepted.actions
     ):
         raise ValueError("A matching confirmation is required; refresh the project plan")
     proposed.apply()
-    return TaskResult(status="complete", actions=accepted.actions, observed=accepted.observed)
+    return TaskResult(status=Status.COMPLETE, actions=accepted.actions, observed=accepted.observed)
 
 
 def main() -> None:
@@ -374,12 +374,12 @@ def main() -> None:
     try:
         reply = execute(resource_root(), target, json.loads(read_wire(request)))
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
-        status: Status = (
-            "partial"
+        status = (
+            Status.PARTIAL
             if isinstance(error, PartialApplyError)
-            else "failed"
+            else Status.FAILED
             if target.endswith("-apply")
-            else "blocked"
+            else Status.BLOCKED
         )
         reply = TaskResult(status=status, blockers=(str(error),))
     result.write_text(reply.model_dump_json(exclude_unset=True))

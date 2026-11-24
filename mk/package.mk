@@ -5,6 +5,6 @@ package:
 
 .PHONY: install update
 install:
-	@/bin/sh debian/install-local "$(PACKAGE_DIR)"
+	@/bin/sh debian/install-local.sh "$(PACKAGE_DIR)"
 update:
 	@/bin/sh ./install.sh update $(if $(VERSION),--release "v$(VERSION)")

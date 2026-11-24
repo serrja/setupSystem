@@ -38,7 +38,7 @@ def test_privileged_sources_require_exact_release_url(url):
 
 def test_unrecognized_role_is_rejected_before_dispatch(tmp_path):
     run = subprocess.run(
-        ["/bin/sh", str(ROOT / "libexec/play"), "base", "shell"],
+        ["/bin/sh", str(ROOT / "libexec/play.sh"), "base", "shell"],
         cwd=ROOT,
         capture_output=True,
         text=True,
