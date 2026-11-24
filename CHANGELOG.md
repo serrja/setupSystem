@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Keep the terminal responsive during settings transactions and path completion.
+  Preserve the confirmed Make operation through cancellation or a terminal error.
+- Support root-authenticated package delivery and a separately confirmed sudo
+  group grant for an existing local Debian login.
+- Share the design of the native graphical login and session lock. Ship offline
+  configuration, authentication and recovery guides with a launch manpage.
+
 - Use one versioned file journal for desktop, fonts, editors, shell and Git
   settings. Workspace recovery previews changes and preserves later edits.
 - Render the selected font policy in the managed desktop applications.

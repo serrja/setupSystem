@@ -1,0 +1,24 @@
+.TH SETUP-SYSTEM 1
+.SH NAME
+setup-system \- configure a Debian workstation
+.SH SYNOPSIS
+.B setup-system
+.SH DESCRIPTION
+Run the Textual interface in an interactive terminal as the desktop user.
+Choose Base system or Working environment, preview the selected changes, and
+confirm an individual operation. Saving preferences is independent of Apply.
+Press F1 for installed documentation and Ctrl-Q to leave at a safe boundary.
+.SH FILES
+.TP
+.I ~/.config/setup-system/base.toml
+Base selections. XDG_CONFIG_HOME overrides the configuration directory.
+.TP
+.I ~/.config/setup-system/workspace.toml
+Workspace selections.
+.TP
+.I /usr/share/doc/setup-system/docs/
+Offline administration, configuration and recovery guides.
+.SH SEE ALSO
+.BR apt (8),
+.BR su (1),
+.BR sudo (8)

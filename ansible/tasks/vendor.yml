@@ -24,5 +24,6 @@
   ansible.builtin.set_fact:
     latest_debs: "{{ latest_debs | combine({'happ': latest_debs.happ | combine({'before': happ.stdout | from_json})}) }}"
     system_actions: >-
-      {{ system_actions + (['Start the installed Happ service'] if (happ.stdout | from_json).unit.ActiveState != 'active' else []) }}
+      {{ system_actions + ([{'kind': 'happ_start', 'label': 'Start the installed Happ service'}]
+         if (happ.stdout | from_json).unit.ActiveState != 'active' else []) }}
   when: vendor_id == 'happ'

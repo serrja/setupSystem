@@ -42,7 +42,7 @@
   register: published
 - name: Record file publication before the editor smoke test
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + [published.stdout] }}"
+    changed_stages: "{{ changed_stages + [{'kind': 'backup', 'backup_id': published.stdout, 'label': published.stdout}] }}"
   when: published.stdout | default('') | length > 0
 - name: Check cancellation before the next operation
   ansible.builtin.include_tasks: cancel.yml

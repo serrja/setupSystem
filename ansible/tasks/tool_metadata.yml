@@ -28,4 +28,6 @@
     latest_tools: >-
       {{ latest_tools | combine({tool[0]: {'manager':tool[1],'current':current_version,'version':version,
          'artifact': release_meta | package_artifact(tool[0], tool[1], version)}}) }}
-    user_changes: "{{ user_changes + (['Install ' + tool[0] + ' ' + version] if current_version != version else []) }}"
+    user_changes: >-
+      {{ user_changes + ([{'kind': 'tool', 'name': tool[0], 'version': version, 'label': 'Install ' + tool[0] + ' ' + version}]
+         if current_version  != version else []) }}

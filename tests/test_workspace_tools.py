@@ -16,7 +16,11 @@ def test_editor_requires_an_exact_catalog_name(monkeypatch, tmp_path: Path, name
         project_tasks.subprocess, "run", lambda *a, **kw: pytest.fail("Launched an unknown project")
     )
     with pytest.raises(ValueError, match="exact"):
-        project_tasks.execute(tmp_path, "project-editor", {"settings": {"project_id": name}})
+        project_tasks.execute(
+            tmp_path,
+            "project-editor",
+            {"schema": 1, "expected": None, "settings": {"project_id": name}},
+        )
 
 
 @pytest.mark.parametrize(
@@ -32,7 +36,11 @@ def test_projects_launch_in_exact_root_without_shell(
     monkeypatch.setattr(
         project_tasks.subprocess, "run", lambda argv, **kw: calls.append((argv, kw))
     )
-    project_tasks.execute(tmp_path, target, {"settings": {"project_id": "serrja/pythonTemplate"}})
+    project_tasks.execute(
+        tmp_path,
+        target,
+        {"schema": 1, "expected": None, "settings": {"project_id": "serrja/pythonTemplate"}},
+    )
     assert calls == [
         (
             ["/usr/bin/" + program] + (["."] if program == "nvim" else []),
@@ -56,7 +64,9 @@ def test_projects_launch_in_exact_root_without_shell(
 )
 def test_mutations_require_a_confirmed_preview(tmp_path, target) -> None:
     with pytest.raises(ValueError):
-        project_tasks.execute(tmp_path, target + "-apply", {"settings": {}})
+        project_tasks.execute(
+            tmp_path, target + "-apply", {"schema": 1, "expected": None, "settings": {}}
+        )
 
 
 def test_bad_choice_and_stale_checkout_do_not_launch(monkeypatch, tmp_path) -> None:
@@ -68,14 +78,20 @@ def test_bad_choice_and_stale_checkout_do_not_launch(monkeypatch, tmp_path) -> N
     )
     with pytest.raises(ValueError, match="Catalog error"):
         project_tasks.execute(
-            tmp_path, "project-editor", {"settings": {"project_id": "serrja/setupSystem"}}
+            tmp_path,
+            "project-editor",
+            {"schema": 1, "expected": None, "settings": {"project_id": "serrja/setupSystem"}},
         )
     with pytest.raises(ValueError):
         project_tasks.execute(
-            tmp_path, "project-editor", {"settings": {"project_id": "x", "answers": {"a": 1}}}
+            tmp_path,
+            "project-editor",
+            {"schema": 1, "expected": None, "settings": {"project_id": "x", "answers": {"a": 1}}},
         )
     with pytest.raises(ValueError):
-        project_tasks.execute(tmp_path, "shell-command", {"settings": {}})
+        project_tasks.execute(
+            tmp_path, "shell-command", {"schema": 1, "expected": None, "settings": {}}
+        )
 
 
 def test_copier_answers_are_deep_snapshots() -> None:
@@ -110,7 +126,9 @@ def test_empty_xdg_exports_from_make_use_home_defaults(tmp_path, monkeypatch) ->
     for key in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         monkeypatch.setenv(key, "")
     root = Path(__file__).resolve().parents[1]
-    result = project_tasks.execute(root, "project-list", {"settings": {}})
+    result = project_tasks.execute(
+        root, "project-list", {"schema": 1, "expected": None, "settings": {}}
+    )
     assert result.status == "ready" and "python" in result.observed["templates"]
     assert result.observed["git_profiles"] == {}
     assert list(tmp_path.iterdir()) == []

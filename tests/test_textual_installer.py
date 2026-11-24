@@ -1,8 +1,8 @@
 """Headless Textual tests preserve navigation, snapshots, consent and safe cancellation."""
 
 import asyncio
+from asyncio import Event
 from pathlib import Path
-from threading import Event
 
 import pytest
 from test_native_ui import Tasks, idle
@@ -120,7 +120,7 @@ def test_confirmation_cancel_never_reaches_mutation() -> None:
 
 def test_failed_worker_keeps_diagnostics_and_navigation_available() -> None:
     class Failed(Tasks):
-        def run(self, *args, **kwargs):
+        async def run(self, *args, **kwargs):
             raise ValueError("Synthetic resolver failure")
 
     async def run():
@@ -140,6 +140,7 @@ def test_same_form_intentions_survive_repeated_navigation() -> None:
     async def run():
         app = SetupApp(runner=Tasks())
         async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
             app.query_one("#hyprland", Checkbox).value = True
             await pilot.press("ctrl+2")
             app.query_one("#apps", SelectionList).select("firefox")

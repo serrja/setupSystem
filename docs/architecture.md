@@ -17,3 +17,21 @@ The app writes a private JSON request containing the selections and confirmed ob
 The Textual app and the Ansible controller run as the desktop user. System tasks use native Ansible become. The app sends a single password to its dedicated PTY after the expected prompt and disabled terminal echo. Terminal input and output are excluded from persistent logs. Distribution packages provide Ansible and its Python dependencies.
 
 The section forms and worker have separate lifetimes. Editing a form changes the next preview. Package transactions and mutating tasks use an exclusive lock. File publication checks the previously observed content and owner, records partial progress, and verifies written files before marking them complete. The same receipt supports restore after an interrupted run.
+
+## Async execution
+
+A command captures one target and a validated request. Noninteractive commands use asyncio subprocesses. The privileged Make targets require the root-owned Debian installation. The password path responds to the native no-echo Ansible prompt in a dedicated PTY. The runner keeps ownership of the process and lock until completion or a safe cancellation boundary. The UI displays structured progress and operation outcomes. Stable action kinds identify executable changes; their labels are for display.
+
+The settings worker holds the complete ownership, revision, flock, fsync and rename transaction. Quit waits for the writer. Path completion debounces edits and limits the scan and cache.
+
+## Native tools and retained adapters
+
+| Responsibility | Native tool and project-specific check |
+| --- | --- |
+| Packages and applications | APT resolves dependencies. The pre-dpkg hook checks the confirmed closure and the Debian release. npm, pipx and Git use reviewed sources and per-run artifact identities. |
+| File publication and recovery | Ansible renders templates. The publication adapter retains displaced inodes and verifies hashes, mode, owner and conflicts during Restore. |
+| System login and boot | greetd, PAM, GRUB, cryptsetup and initramfs-tools own their respective operations. The adapters check account identity, mount layout, recovery menu and backups. |
+| Projects and displays | Git, Copier and Hyprland perform changes. The adapters constrain paths, protect local edits and restore the previous display layout after a timed preview. |
+| Administrative onboarding | Native su authenticates root. The Debian user module appends the confirmed account to the local sudo group. Account and sudo policy checks run again before the group change. |
+| Editor and shell | Neovim manages plugins, parsers and language tools. The editor proof checks headless operation before cleanup. Shell, Git and Codex adapters preserve settings outside the managed scope. |
+| Packaging | dpkg-deb builds the archive. The packaging recipe reads tracked blobs from the exact Git commit and records the source SHA. The project retains this path for reproducibility, lifecycle locks and the current provenance contract. debhelper, dh-python and pybuild are alternatives for the filesystem layout; a switch requires reproducing those properties on the builder. |

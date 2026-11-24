@@ -43,9 +43,17 @@ class Consent(ModalScreen[bool]):
 class Password(ModalScreen[BecomePassword | None]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
 
+    def __init__(self, *, root_account: bool = False) -> None:
+        super().__init__()
+        self.root_account = root_account
+
     def compose(self) -> ComposeResult:
         with Container(id="dialog"):
-            yield Label("Sudo password for the confirmed system operation")
+            yield Label(
+                "Root password for su to grant sudo access"
+                if self.root_account
+                else "Your sudo password for the confirmed system operation"
+            )
             yield Input(password=True, id="password")
             with Horizontal(classes="buttons"):
                 yield Button("Cancel", id="back")

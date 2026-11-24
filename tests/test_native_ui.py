@@ -1,12 +1,14 @@
 import asyncio
+import json
 import os
-import threading
 from pathlib import Path
 
 import pytest
 from textual.widgets import Button, Input, Static, TabbedContent
 
 from setup_system.app import SetupApp, main
+from setup_system.domain.observations import NativeObservations
+from setup_system.models import TaskResult
 from setup_system.runner import Target
 from setup_system.settings import Settings
 from setup_system.suggestions import Catalog
@@ -20,7 +22,17 @@ class Tasks:
         self.gate = None
         self.exit_status = "complete"
 
-    def run(self, target, payload, *, password=None, cancel=None):
+    async def check_authorization(self):
+        return Path("/usr/lib/setup-system")
+
+    async def run(self, command, *, password=None, cancel=None, on_event=None):
+        target = command.target
+        payload = json.loads(command.request_json)
+        return TaskResult.model_validate(
+            await self.reply(target, payload, password=password, cancel=cancel)
+        )
+
+    async def reply(self, target, payload, *, password=None, cancel=None):
         self.calls.append(
             (target, payload, password.take() == b"synthetic fixture" if password else None)
         )
@@ -35,17 +47,34 @@ class Tasks:
                 },
             }
         if target.value.endswith("-plan"):
+            action = {"kind": "user_file", "path": "test", "label": "Apply the selected component"}
+            if target == Target.BASE_PLAN:
+                action = {
+                    "kind": "region",
+                    "field": "timezone",
+                    "value": "UTC",
+                    "label": "Apply the selected component",
+                }
+            elif target == Target.RESTORE_PLAN:
+                action = {
+                    "kind": "restore",
+                    "path": "/home/example/restored",
+                    "operation": "would-restore",
+                    "label": "Restore the managed file",
+                }
+            elif target == Target.CLEANUP_PLAN:
+                action = {"kind": "apt", "record": "Remv nano [7.2]", "label": "Remove nano"}
             return {
                 "status": "ready",
-                "actions": ["Apply the selected component"],
+                "actions": [action],
                 "observed": {
                     "uid": os.getuid(),
-                    "needs_system": target == Target.BASE_PLAN,
-                    "needs_user": target != Target.BASE_PLAN,
+                    "needs_system": target in {Target.BASE_PLAN, Target.CLEANUP_PLAN},
+                    "needs_user": target not in {Target.BASE_PLAN, Target.CLEANUP_PLAN},
                 },
             }
         if self.gate is not None:
-            assert self.gate.wait(10)
+            await asyncio.wait_for(self.gate.wait(), timeout=10)
         return {"status": "partial" if cancel.is_set() else self.exit_status}
 
 
@@ -59,7 +88,7 @@ def app_for(tmp_path, tasks):
 async def idle(app, pilot):
     for _ in range(100):
         await pilot.pause(0.01)
-        if app.cancel_event is None:
+        if app.cancel_event is None and app.reviewing is None:
             return
     raise AssertionError("Worker did not finish")
 
@@ -69,6 +98,7 @@ def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
         tasks = Tasks()
         app = app_for(tmp_path, tasks)
         async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
             field = app.query_one("#timezone", Input)
             field.value = "UTC"
             await pilot.click("#plan")
@@ -89,7 +119,7 @@ def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
             password = app.screen.query_one("#password", Input)
             assert password.password
             password.value = "synthetic fixture"
-            tasks.gate = threading.Event()
+            tasks.gate = asyncio.Event()
             await pilot.click("#authorize")
             assert password.value == ""
             await pilot.pause()
@@ -105,7 +135,14 @@ def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
                     },
                     "expected": {
                         "status": "ready",
-                        "actions": ["Apply the selected component"],
+                        "actions": [
+                            {
+                                "kind": "region",
+                                "field": "timezone",
+                                "value": "UTC",
+                                "label": "Apply the selected component",
+                            }
+                        ],
                         "observed": {"uid": os.getuid(), "needs_system": True, "needs_user": False},
                     },
                 },
@@ -194,16 +231,16 @@ def test_completion_refresh_modes_paths_and_keyboard(tmp_path):
             app.query_one("#mode", Input).value = "1920x1080@60"
             form.update_layout(False)
             assert form.options().monitors[0].output == "DP-1"
-            app.suggestions.refresh("workspace", {"outputs": []})
+            await app.suggestions.refresh("workspace", NativeObservations(outputs=()))
             assert not app.suggestions.outputs.values
-            assert app.suggestions.project_values("") == ()
+            assert await app.suggestions.project_values("") == ()
             project = app.settings.home / "Архив 2"
             project.mkdir()
-            assert str(project) in app.suggestions.project_values(str(project)[:-1])
+            assert str(project) in await app.suggestions.project_values(str(project)[:-1])
             project.rmdir()
-            assert str(project) in app.suggestions.project_values(str(project)[:-1])
-            app.suggestions.refresh("workspace", {})
-            assert str(project) not in app.suggestions.project_values(str(project)[:-1])
+            assert str(project) in await app.suggestions.project_values(str(project)[:-1])
+            await app.suggestions.refresh("workspace", NativeObservations())
+            assert str(project) not in await app.suggestions.project_values(str(project)[:-1])
 
     asyncio.run(scenario())
 
@@ -224,7 +261,7 @@ def test_user_only_workspace_quit_waits_until_writer_reaches_a_boundary(tmp_path
             await pilot.click("#plan")
             await idle(app, pilot)
             await pilot.click("#apply")
-            tasks.gate = threading.Event()
+            tasks.gate = asyncio.Event()
             await pilot.click("#confirm")
             assert tasks.calls[-1][0] == Target.WORKSPACE_USER_APPLY
             assert tasks.calls[-1][2] is None
@@ -258,10 +295,13 @@ def test_cleanup_has_its_own_snapshot_and_preserves_other_form_fields(tmp_path):
 
 def test_only_base_user_files_use_unprivileged_make_after_consent(tmp_path):
     class PersonalBase(Tasks):
-        def run(self, target, payload, **flags):
-            reply = super().run(target, payload, **flags)
+        async def reply(self, target, payload, **flags):
+            reply = await super().reply(target, payload, **flags)
             if target == Target.BASE_PLAN:
                 reply["observed"].update(needs_system=False, needs_user=True)
+                reply["actions"] = [
+                    {"kind": "user_file", "path": "test", "label": "Apply the selected component"}
+                ]
             return reply
 
     async def scenario():
@@ -280,12 +320,117 @@ def test_only_base_user_files_use_unprivileged_make_after_consent(tmp_path):
 
 
 def test_base_user_apply_enters_real_play_without_a_become_prompt(tmp_path, monkeypatch):
-    from setup_system.runner import MakeRunner
+    from setup_system.runner import AsyncMakeRunner, Command
 
     monkeypatch.setenv("HOME", str(tmp_path))
     for key in ("CONFIG", "DATA", "STATE", "CACHE"):
         monkeypatch.setenv("XDG_" + key + "_HOME", str(tmp_path / key.lower()))
-    runner = MakeRunner()
-    reply = runner.run(Target("base-user-apply"), {"schema": 1, "settings": {}, "expected": None})
-    assert reply["status"] == "blocked" and reply["blockers"]
+    runner = AsyncMakeRunner()
+    expected = {
+        "status": "ready",
+        "actions": [{"kind": "user_file", "path": "test", "label": "Fixture"}],
+        "observed": {"needs_system": False, "needs_user": True},
+    }
+    reply = asyncio.run(
+        runner.run(
+            Command.capture(
+                Target.BASE_USER_APPLY, {"schema": 1, "settings": {}, "expected": expected}
+            )
+        )
+    )
+    assert reply.status == "blocked" and reply.blockers
     assert not list(tmp_path.iterdir())
+
+
+def test_administrative_consent_precedes_the_dedicated_root_prompt(tmp_path):
+    from textual.widgets import Label
+
+    class AdminTasks(Tasks):
+        async def reply(self, target, payload, **flags):
+            result = await super().reply(target, payload, **flags)
+            if target == Target.ADMIN_PLAN:
+                return {
+                    "status": "ready",
+                    "actions": [
+                        {
+                            "kind": "admin",
+                            "username": "alice",
+                            "label": "Grant alice administrative access",
+                        }
+                    ],
+                    "observed": {
+                        "needs_system": True,
+                        "needs_user": False,
+                        "boot_identity": "a" * 64,
+                        "account": {
+                            "username": "alice",
+                            "uid": 1002,
+                            "gid": 1002,
+                            "sudo_gid": 27,
+                            "home": "/home/alice",
+                            "shell": "/bin/sh",
+                            "member": False,
+                        },
+                    },
+                }
+            return result
+
+    async def scenario():
+        tasks = AdminTasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 45)) as pilot:
+            await app.workers.wait_for_complete()
+            app.query_one("#admin-account", Input).value = "alice"
+            app.query_one("#admin-plan", Button).press()
+            await idle(app, pilot)
+            assert app.pending.task == "admin"
+            await pilot.click("#apply")
+            assert isinstance(app.screen, Consent)
+            view = str(app.screen.query_one("#review Static", Static).render())
+            assert all(fact in view for fact in ("alice", "1002", "/home/alice", "/bin/sh"))
+            assert not list(app.screen.query(Input))
+            await pilot.click("#confirm")
+            assert isinstance(app.screen, Password) and app.screen.root_account
+            assert "Root password" in str(app.screen.query_one(Label).render())
+            await pilot.press("escape")
+            assert [call[0] for call in tasks.calls] == [Target.ADMIN_PLAN]
+            await pilot.click("#apply")
+            await pilot.click("#confirm")
+            field = app.screen.query_one(Input)
+            field.value = "synthetic fixture"
+            await pilot.click("#authorize")
+            await idle(app, pilot)
+            assert not field.value
+            target, request, received = tasks.calls[-1]
+            assert target == Target.ADMIN_APPLY and received
+            assert request["settings"] == {"username": "alice"}
+            assert "synthetic fixture" not in repr(request)
+
+    asyncio.run(scenario())
+
+
+def test_settings_change_after_password_prompt_expires_the_response(tmp_path):
+    from setup_system.runner import BecomePassword
+
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 45)) as pilot:
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            await pilot.click("#apply")
+            await pilot.click("#confirm")
+            assert isinstance(app.screen, Password)
+            directory = app.settings.directory
+            directory.mkdir(mode=0o700, parents=True)
+            config = directory / "base.toml"
+            config.write_text('schema_version = 1\ntimezone = "UTC"\n')
+            config.chmod(0o600)
+            answer = BecomePassword("synthetic fixture")
+            app.screen.dismiss(answer)
+            await idle(app, pilot)
+            with pytest.raises(RuntimeError, match="expired"):
+                answer.take()
+            assert tasks.calls[-1][0] == Target.BASE_PLAN and app.pending is None
+
+    asyncio.run(scenario())

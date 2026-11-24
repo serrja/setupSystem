@@ -16,10 +16,13 @@ from pydantic import JsonValue
 
 from setup_system.application import templates
 from setup_system.diagnostics import PartialApplyError
+from setup_system.domain.actions import ProjectAction
+from setup_system.domain.observations import ProjectObservations
 from setup_system.domain.receipts import FileState
 from setup_system.domain.templates import TemplateSource
 from setup_system.infrastructure import copier_templates, git_profiles, project_layout, rtk, shell
 from setup_system.infrastructure.file_publication import observe
+from setup_system.infrastructure.operation_io import read_wire
 from setup_system.infrastructure.user_storage import inside_home
 from setup_system.models import (
     CreateProfile,
@@ -28,6 +31,7 @@ from setup_system.models import (
     Profile,
     ProjectChoice,
     Repository,
+    RequestEnvelope,
     Status,
     TaskResult,
     TemplateChoice,
@@ -43,7 +47,7 @@ class Preview:
     apply: Callable[[], object]
 
 
-def _planned(actions: tuple[str, ...] | list[str], observed: dict[str, object]) -> TaskResult:
+def _planned(actions: list[ProjectAction], observed: dict[str, object]) -> TaskResult:
     return TaskResult.model_validate(
         {
             "status": "ready" if actions else "no_changes",
@@ -167,7 +171,19 @@ def _template(root: Path, operation: str, fields: object) -> Preview:
             return result
 
     return Preview(
-        _planned(actions, observed),
+        _planned(
+            [
+                ProjectAction.model_validate(
+                    {
+                        "kind": operation,
+                        "target": str(cache if operation == "template-cache" else destination),
+                        "label": label,
+                    }
+                )
+                for label in actions
+            ],
+            observed,
+        ),
         run,
     )
 
@@ -206,7 +222,18 @@ def _git(operation: str, fields: object) -> Preview:
             return git_profiles.use_profile(choice.name, repo, yes=True, reviewed=before)
 
     observed["before"] = _before(before)
-    return Preview(_planned([line for line in changes if line != "unchanged"], observed), write)
+    actions = [
+        ProjectAction.model_validate(
+            {
+                "kind": operation,
+                "target": str(path),
+                "fields": keys,
+                "label": f"Update {path}: {', '.join(keys)}",
+            }
+        )
+        for path, keys in changes.items()
+    ]
+    return Preview(_planned(actions, observed), write)
 
 
 def preview(
@@ -222,7 +249,11 @@ def preview(
     if operation == "project-prepare":
         layout = project_layout.load_layout(root)
         dirs = project_layout.owner_directories(layout)
-        changes = tuple(f"Create {path}" for path in dirs if not path.exists())
+        changes = tuple(
+            ProjectAction(kind="project-prepare", target=str(path), label=f"Create {path}")
+            for path in dirs
+            if not path.exists()
+        )
         return Preview(
             TaskResult(status="ready" if changes else "no_changes", actions=changes),
             lambda: project_layout.prepare_owner_directories(layout),
@@ -231,10 +262,14 @@ def preview(
         status, updates = shell.plan_shell(root)
         if not status.zsh:
             raise ValueError("Install Zsh before configuring its startup files")
-        changes = tuple(f"Configure {p}" for p, state in updates if state != "unchanged")
+        shell_changes = [
+            ProjectAction(kind="shell-configure", target=str(p), label=f"Configure {p}")
+            for p, state in updates
+            if state != "unchanged"
+        ]
         before = _files([p for p, _ in updates])
         return Preview(
-            _planned(changes, {"before": _before(before)}),
+            _planned(shell_changes, {"before": _before(before)}),
             lambda: shell.apply_shell(root, reviewed=before),
         )
     if operation == "rtk-install":
@@ -244,7 +279,11 @@ def preview(
         if binary.path and not binary.product_matches:
             raise ValueError(text)
         target = binary.path or Path.home() / ".local/bin/rtk"
-        changes = () if binary.version == selected.version else (text,)
+        changes = (
+            ()
+            if binary.version == selected.version
+            else (ProjectAction(kind="rtk-install", target=str(target), label=text),)
+        )
         prior = _files([target]) if target.is_relative_to(Path.home()) else {}
         observed = {
             **selected.model_dump(),
@@ -256,7 +295,9 @@ def preview(
             raise ValueError("Existing RTK is managed by its system package")
         return Preview(
             TaskResult(
-                status="ready" if changes else "no_changes", actions=changes, observed=observed
+                status="ready" if changes else "no_changes",
+                actions=changes,
+                observed=ProjectObservations.model_validate(observed),
             ),
             lambda: rtk.install_rtk(selected, update=True, reviewed=prior),
         )
@@ -266,17 +307,20 @@ def preview(
 def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
     if os.geteuid() == 0:
         raise ValueError("Project operations require the normal desktop user")
+    envelope = RequestEnvelope.model_validate(payload).for_target(target)
     operation = target.removesuffix("-apply").removesuffix("-plan")
-    fields = validate_project_settings(operation, payload.get("settings", {}))
+    fields = validate_project_settings(operation, envelope.settings)
     if target == "project-list":
         Empty.model_validate(fields)
         return TaskResult(
             status="ready",
-            observed={
-                "projects": {k: str(v) for k, v in paths(root).items()},
-                "templates": {k: v.url for k, v in templates.load_templates(root).items()},
-                "git_profiles": {k: str(v) for k, v in git_profiles.list_profiles()},
-            },
+            observed=ProjectObservations.model_validate(
+                {
+                    "projects": {k: str(v) for k, v in paths(root).items()},
+                    "templates": {k: v.url for k, v in templates.load_templates(root).items()},
+                    "git_profiles": {k: str(v) for k, v in git_profiles.list_profiles()},
+                }
+            ),
         )
     if target == "template-versions":
         choice = TemplateChoice.model_validate(fields)
@@ -288,12 +332,15 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
         )
         return TaskResult(
             status="ready",
-            observed={"versions": [r.version for r in rows], "recommended": recommended},
+            observed=ProjectObservations(
+                versions=tuple(r.version for r in rows), recommended=recommended
+            ),
         )
     if target == "git-inspect":
         repo = Repository.model_validate(fields).repository
         return TaskResult(
-            status="ready", observed={"identity": dict(git_profiles.inspect_repository(repo))}
+            status="ready",
+            observed=ProjectObservations(identity=dict(git_profiles.inspect_repository(repo))),
         )
     if target in {"project-editor", "project-codex"}:
         launch(
@@ -305,13 +352,13 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
     operation, _, phase = target.rpartition("-")
     if phase not in ("plan", "apply"):
         raise ValueError("Unknown project operation")
-    accepted = TaskResult.model_validate(payload.get("expected")) if phase == "apply" else None
+    accepted = envelope.expected
     proposed = preview(root, operation, fields, accepted)
     if phase == "plan":
         return proposed.result
     if (
         not accepted
-        or accepted != proposed.result
+        or not accepted.same_plan(proposed.result)
         or accepted.status != "ready"
         or not accepted.actions
     ):
@@ -325,7 +372,7 @@ def main() -> None:
     request = Path(os.environ["SETUP_SYSTEM_REQUEST"])
     result = Path(os.environ["SETUP_SYSTEM_RESULT"])
     try:
-        reply = execute(resource_root(), target, json.loads(request.read_bytes()))
+        reply = execute(resource_root(), target, json.loads(read_wire(request)))
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         status: Status = (
             "partial"
@@ -335,7 +382,7 @@ def main() -> None:
             else "blocked"
         )
         reply = TaskResult(status=status, blockers=(str(error),))
-    result.write_text(reply.model_dump_json())
+    result.write_text(reply.model_dump_json(exclude_unset=True))
 
 
 if __name__ == "__main__":

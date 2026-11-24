@@ -31,7 +31,11 @@ def test_observed_flags_require_booleans(value):
             PlanSnapshot.capture(
                 "workspace",
                 {},
-                {"status": "ready", "actions": ["Set editor"], "observed": observed},
+                {
+                    "status": "ready",
+                    "actions": [{"kind": "editor_verify", "label": "Verify editor"}],
+                    "observed": observed,
+                },
                 None,
             )
     with pytest.raises(ValidationError):
