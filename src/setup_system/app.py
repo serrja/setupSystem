@@ -198,7 +198,7 @@ class SetupApp(App[None]):
             self.feedback.update(message)
 
     async def reload(self, section: Section, *, announce: bool = False) -> None:
-        if section in self.reloading or section in self.saving:
+        if not self.view_active or section in self.reloading or section in self.saving:
             return
         self.reloading.add(section)
         self.loaded.pop(section, None)
@@ -226,12 +226,12 @@ class SetupApp(App[None]):
         self, section: Section, options: BaseOptions | WorkspaceOptions, revision: str
     ) -> None:
         try:
-            self.loaded[section] = await self.settings.publish(section, options, revision)
-            if not self.quit_when_finished:
+            saved = await self.settings.publish(section, options, revision)
+            if self.view_active:
+                self.loaded[section] = saved
                 self.report(f"Saved {section} intentions")
         except ERRORS as exc:
-            if not self.quit_when_finished:
-                self.report(str(exc))
+            self.report(str(exc))
         finally:
             self.saving.discard(section)
             if self.quit_when_finished and not self.saving and self.cancel_event is None:
@@ -247,6 +247,8 @@ class SetupApp(App[None]):
             raise ValueError("Settings changed since inspection. Reload and review a new plan.")
 
     def buttons(self) -> None:
+        if not self.view_active:
+            return
         running = self.cancel_event is not None or self.reviewing is not None
         for name in RUN_BUTTONS:
             self.controls[name].disabled = running
@@ -255,6 +257,8 @@ class SetupApp(App[None]):
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
+        if not self.view_active:
+            return
         name = event.button.id
         section = self.section
         try:
@@ -335,7 +339,7 @@ class SetupApp(App[None]):
         self.start(f"{task}-plan", settings, section, (task, revision))
 
     def tool_request(self, choice: ToolChoice | None) -> None:
-        if choice is None or self.cancel_event:
+        if choice is None or self.cancel_event or not self.view_active:
             return
         task = PROJECT_PLANS.get(choice.target)
         if task is not None:
@@ -348,7 +352,12 @@ class SetupApp(App[None]):
         password = None
 
         def current() -> bool:
-            return self.pending is plan and self.reviewing is plan and not self.quit_when_finished
+            return (
+                self.view_active
+                and self.navigation.screen.is_active
+                and self.pending is plan
+                and self.reviewing is plan
+            )
 
         try:
             await self.verify_revision(section, plan.revision)
@@ -356,6 +365,8 @@ class SetupApp(App[None]):
                 return
             if not await self.push_screen(Consent(plan), wait_for_dismiss=True):
                 self.report("Apply cancelled")
+                return
+            if not current():
                 return
             await self.verify_revision(section, plan.revision)
             if not current():
@@ -369,6 +380,8 @@ class SetupApp(App[None]):
                 )
                 if password is None:
                     self.report("Authorization cancelled")
+                    return
+                if not current():
                     return
                 await self.verify_revision(section, plan.revision)
                 if not current():
@@ -417,8 +430,7 @@ class SetupApp(App[None]):
         self.report(f"Running {target}")
 
         def progress(event: RunEvent) -> None:
-            if not self.quit_when_finished:
-                self.report(event.message)
+            self.report(event.message)
 
         async def perform() -> None:
             nonlocal password
@@ -428,14 +440,21 @@ class SetupApp(App[None]):
                     if cancel.is_set():
                         self.report("Plan cancelled")
                         return
+                if not self.view_active:
+                    return
                 with self.suspend() if command.target in FOREGROUND else nullcontext():
                     result = await self.runner.run(
                         command, password=password, cancel=cancel, on_event=progress
                     )
-                if self.quit_when_finished:
+                if not self.view_active:
                     return
                 observed = result.observed.model_dump(mode="json", exclude_unset=True)
-                if group and result.status == "ready" and self.section == "workspace":
+                if (
+                    group
+                    and result.status == "ready"
+                    and self.section == "workspace"
+                    and self.navigation.screen.is_active
+                ):
                     if not isinstance(result.observed, ProjectObservations):
                         raise ValueError("The project operation returned incompatible facts")
                     tools = ProjectTools(
@@ -449,6 +468,8 @@ class SetupApp(App[None]):
                     if not isinstance(result.observed, NativeObservations):
                         raise ValueError("Inspection returned incompatible facts")
                     await self.suggestions.refresh(section, result.observed)
+                    if not self.view_active or not self.workspace_form.is_attached:
+                        return
                     self.workspace_form.refresh_modes()
                 if (
                     planning
@@ -477,8 +498,7 @@ class SetupApp(App[None]):
                     details += "\n" + ", ".join(result.observed.versions)
                 self.report(details)
             except ERRORS as exc:
-                if not self.quit_when_finished:
-                    self.report(str(exc))
+                self.report(str(exc))
             finally:
                 if password is not None:
                     password.discard()

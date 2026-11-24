@@ -40,15 +40,22 @@ class Help(ModalScreen[None]):
         yield Button("Close help", id="help-close")
 
     @on(Select.Changed)
-    async def show_topic(self, event: Select.Changed) -> None:
+    def show_topic(self, event: Select.Changed) -> None:
         key = event.value
-        if isinstance(key, str) and key in TOPICS:
-            try:
-                async with aiofiles.open(self.directory / (key + ".md"), encoding="utf-8") as src:
-                    content = await src.read()
-            except (OSError, UnicodeError):
-                content = "The local guide is unavailable. Check the installed package."
-            await self.query_one(Markdown).update(content)
+        if isinstance(key, str) and key in TOPICS and self.is_active:
+            self.run_worker(self.read_topic(key), group="help-topic", exclusive=True)
+
+    async def read_topic(self, key: str) -> None:
+        if not self.app.is_running or not self.is_active:
+            return
+        markdown = self.query_one(Markdown)
+        try:
+            async with aiofiles.open(self.directory / (key + ".md"), encoding="utf-8") as src:
+                content = await src.read()
+        except (OSError, UnicodeError):
+            content = "The local guide is unavailable. Check the installed package."
+        if self.app.is_running and self.is_active and markdown.is_attached:
+            await markdown.update(content)
 
     @on(Button.Pressed, "#help-close")
     def action_close(self) -> None:

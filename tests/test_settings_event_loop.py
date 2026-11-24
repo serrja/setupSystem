@@ -13,7 +13,7 @@ from textual import events
 from textual.widgets import Button, Input, Static, TabbedContent
 
 from setup_system.app import SetupApp
-from setup_system.models import PlanSnapshot
+from setup_system.models import PlanSnapshot, TaskResult
 from setup_system.runner import AsyncMakeRunner, BecomePassword, Target
 from setup_system.settings import Settings
 from setup_system.ui.dialogs import Consent, Password
@@ -328,3 +328,150 @@ def test_startup_read_finishing_during_exit_leaves_form_untouched(tmp_path, monk
         assert "base" not in app.loaded and not tasks.calls
 
     asyncio.run(scenario())
+
+
+def hold_completion_until_shutdown(monkeypatch, app, owner, name, *, after_removal=False):
+    entered, release, returned = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original = getattr(owner, name)
+
+    async def delayed(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        entered.set()
+        await release.wait()
+        while app.is_running or (after_removal and app.workspace_form.query("#output")):
+            await asyncio.sleep(0)
+        returned.set()
+        return result
+
+    monkeypatch.setattr(owner, name, delayed)
+    return entered, release, returned
+
+
+@pytest.mark.parametrize("stage", ["plan", "inspect", "refresh", "projects"])
+def test_native_work_finishing_after_stop_cannot_update_or_open_a_view(
+    tmp_path, monkeypatch, stage
+):
+    class ProjectTasks(Tasks):
+        async def run(self, command, **flags):
+            if command.target == Target.PROJECT_LIST:
+                return TaskResult.model_validate(
+                    {"status": "ready", "observed": {"projects": {"fixture": "/tmp/example"}}}
+                )
+            return await super().run(command, **flags)
+
+    async def exercise():
+        tasks = ProjectTasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 45)) as pilot:
+            await app.workers.wait_for_complete()
+            if stage == "plan":
+                owner, method, trigger = app, "verify_revision", "plan"
+            elif stage == "refresh":
+                owner, method, trigger = app.suggestions, "refresh", "inspect"
+            elif stage == "projects":
+                await pilot.press("ctrl+2")
+                owner, method, trigger = tasks, "run", "manage-projects"
+            else:
+                owner, method, trigger = tasks, "run", "inspect"
+            entered, release, returned = hold_completion_until_shutdown(
+                monkeypatch, app, owner, method, after_removal=stage == "refresh"
+            )
+            refresh_modes = app.workspace_form.refresh_modes
+            push_screen = app.push_screen
+
+            def record_modes():
+                assert app.view_active, "Inspect must not render after shutdown"
+                return refresh_modes()
+
+            def record_screen(*args, **kwargs):
+                assert app.view_active, (
+                    "A completed request must not open a new screen after shutdown"
+                )
+                return push_screen(*args, **kwargs)
+
+            monkeypatch.setattr(app.workspace_form, "refresh_modes", record_modes)
+            monkeypatch.setattr(app, "push_screen", record_screen)
+            app.query_one("#" + trigger, Button).press()
+            await asyncio.wait_for(entered.wait(), 2)
+            release.set()
+        assert returned.is_set() and app.cancel_event is None
+        if stage == "plan":
+            assert not tasks.calls and app.pending is None
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("stage", ["authorization", "password"])
+def test_shutdown_during_consent_does_not_request_or_transfer_a_credential(
+    tmp_path, monkeypatch, stage
+):
+    async def exercise():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        answer = None
+        async with app.run_test(size=(110, 45)) as pilot:
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            await pilot.click("#apply")
+            if stage == "authorization":
+                entered, release, returned = hold_completion_until_shutdown(
+                    monkeypatch, app, tasks, "check_authorization"
+                )
+                push_screen = app.push_screen
+
+                def record(*args, **kwargs):
+                    assert app.view_active, "A stopped app must not open a password dialog"
+                    return push_screen(*args, **kwargs)
+
+                monkeypatch.setattr(app, "push_screen", record)
+                app.screen.query_one("#confirm", Button).press()
+            else:
+                await pilot.click("#confirm")
+                assert isinstance(app.screen, Password)
+                entered, release, returned = hold_completion_until_shutdown(
+                    monkeypatch, app, app, "verify_revision"
+                )
+                answer = BecomePassword("synthetic fixture")
+                app.screen.dismiss(answer)
+            await asyncio.wait_for(entered.wait(), 2)
+            release.set()
+        assert returned.is_set()
+        assert [call[0] for call in tasks.calls] == [Target.BASE_PLAN]
+        if answer is not None:
+            with pytest.raises(RuntimeError, match="expired"):
+                answer.take()
+
+    asyncio.run(exercise())
+
+
+def test_authorization_finishing_behind_help_does_not_open_another_modal(tmp_path, monkeypatch):
+    from setup_system.ui.help import Help
+
+    async def exercise():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def delay():
+            entered.set()
+            await release.wait()
+
+        monkeypatch.setattr(tasks, "check_authorization", delay)
+        async with app.run_test(size=(110, 45)) as pilot:
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            reviewed = app.pending
+            await pilot.click("#apply")
+            await pilot.click("#confirm")
+            await asyncio.wait_for(entered.wait(), 2)
+            try:
+                await pilot.press("f1")
+                assert isinstance(app.screen, Help)
+            finally:
+                release.set()
+            await wait_until(lambda: app.reviewing is None or isinstance(app.screen, Password))
+            assert isinstance(app.screen, Help)
+            assert app.pending is reviewed
+            assert [call[0] for call in tasks.calls] == [Target.BASE_PLAN]
+
+    asyncio.run(exercise())
