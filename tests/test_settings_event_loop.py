@@ -120,57 +120,62 @@ def test_navigation_during_settings_read(tmp_path, monkeypatch, stage):
     async def scenario():
         tasks = Tasks()
         app = app_for(tmp_path, tasks)
-        mounted = asyncio.Event()
+
+        async def navigate(entered, release):
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                if stage == "plan":
+                    app.query_one("#timezone", Input).value = "Asia/Tokyo"
+                app.post_message(events.Key("ctrl+2", None))
+                await wait_until(lambda: app.section == "workspace")
+            finally:
+                release.set()
+
         if stage == "mount":
             entered, release = hold_reads(monkeypatch, app.settings)
+            # Observe navigation even if a regression blocks entering run_test itself.
+            async with asyncio.TaskGroup() as group:
+                probe = group.create_task(navigate(entered, release))
+                async with app.run_test(size=(110, 42)):
+                    await probe
+            return
 
-        async def exercise():
-            nonlocal entered, release
-            async with app.run_test(size=(110, 42)) as pilot:
-                if stage == "mount":
-                    await release.wait()
-                    return
-                await wait_until(lambda: "base" in app.loaded)
-                field = app.query_one("#timezone", Input)
-                field.value = "UTC"
-                if stage in {"apply", "confirmed", "authorized"}:
-                    await pilot.click("#plan")
-                    await idle(app, pilot)
-                if stage in {"confirmed", "authorized"}:
-                    await pilot.click("#apply")
-                if stage == "authorized":
-                    await pilot.click("#confirm")
-                    app.screen.query_one("#password", Input).value = "synthetic fixture"
-                entered, release = hold_reads(monkeypatch, app.settings)
-                trigger = {"confirmed": "confirm", "authorized": "authorize"}.get(stage, stage)
-                app.screen.query_one("#" + trigger, Button).press()
-                mounted.set()
-                await release.wait()
-                if stage == "plan":
-                    await idle(app, pilot)
-                    assert tasks.calls[-1][1]["settings"]["timezone"] == "UTC"
-                if stage == "apply":
-                    await wait_until(lambda: isinstance(app.screen, Consent))
-                    await pilot.press("escape")
-                elif stage == "confirmed":
-                    await wait_until(lambda: isinstance(app.screen, Password))
-                    await pilot.press("escape")
-                elif stage == "authorized":
-                    await idle(app, pilot)
-                    assert tasks.calls[-1][0] == Target.BASE_APPLY
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            app.query_one("#timezone", Input).value = "UTC"
+            if stage in {"apply", "confirmed", "authorized"}:
+                await pilot.click("#plan")
+                await idle(app, pilot)
+                assert app.pending is not None
+            if stage in {"confirmed", "authorized"}:
+                await pilot.click("#apply")
+                await wait_until(
+                    lambda: isinstance(app.screen, Consent) and app.screen.query("#confirm")
+                )
+            if stage == "authorized":
+                await pilot.click("#confirm")
+                await wait_until(
+                    lambda: isinstance(app.screen, Password) and app.screen.query("#password")
+                )
+                app.screen.query_one("#password", Input).value = "synthetic fixture"
 
-        session = asyncio.create_task(exercise())
-        try:
-            if stage != "mount":
-                await asyncio.wait_for(mounted.wait(), 5)
-            await asyncio.wait_for(entered.wait(), 5)
+            entered, release = hold_reads(monkeypatch, app.settings)
+            trigger = {"confirmed": "confirm", "authorized": "authorize"}.get(stage, stage)
+            app.screen.query_one("#" + trigger, Button).press()
+            await navigate(entered, release)
+
             if stage == "plan":
-                app.query_one("#timezone", Input).value = "Asia/Tokyo"
-            app.post_message(events.Key("ctrl+2", None))
-            await wait_until(lambda: app.section == "workspace")
-        finally:
-            release.set()
-            await session
+                await idle(app, pilot)
+                assert tasks.calls[-1][1]["settings"]["timezone"] == "UTC"
+            elif stage == "apply":
+                await wait_until(lambda: isinstance(app.screen, Consent))
+                await pilot.press("escape")
+            elif stage == "confirmed":
+                await wait_until(lambda: isinstance(app.screen, Password))
+                await pilot.press("escape")
+            elif stage == "authorized":
+                await idle(app, pilot)
+                assert tasks.calls[-1][0] == Target.BASE_APPLY
 
     asyncio.run(scenario())
 
