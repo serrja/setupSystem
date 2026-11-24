@@ -421,9 +421,13 @@ names = sorted(path.name for path in root.glob("setup-system*"))
 def emit(value):
     print(json.dumps(value))
 def release():
+    assets = [{"name": name, "id": i+1, "state": "uploaded"} for i, name in enumerate(names)]
+    if (root / "duplicate-asset").exists():
+        assets.append(assets[0])
     return {"id": 17, "tag_name": native, "prerelease": False,
+            "target_commitish": (root / "target").read_text(),
             "draft": state.read_text() == "yes", "body": (root / "notes").read_text(),
-            "assets": [{"name": name, "id": i+1} for i, name in enumerate(names)]}
+            "assets": assets}
 if args[:2] == ["attestation", "verify"]:
     digest = hashlib.sha256(Path(args[2]).read_bytes()).hexdigest()
     sys.exit(0 if Path(args[args.index("--bundle")+1]).read_text().strip() == digest else 1)
@@ -432,7 +436,7 @@ elif args[:2] == ["attestation", "download"]:
     assert digest == (root / "attested-original").read_text()
     Path("sha256:" + digest + ".jsonl").write_text(digest + chr(10))
 elif args[0] == "api":
-    endpoint = next(arg for arg in args if arg.startswith("repos/"))
+    endpoint = next(arg for arg in args if arg.startswith(("repos/", "https://uploads.github.com/")))
     item = endpoint.split("/")[-1]
     if "/matching-refs/" in endpoint:
         emit([] if item == native and not (root / "ref").exists() else
@@ -446,27 +450,46 @@ elif args[0] == "api":
             "repository":"serrja/setupSystem",
             "version":"1.2.3", "sha":sha, "branch":"main"})})
     elif "releases?" in endpoint:
-        emit([release()] if state.exists() else [])
-    elif endpoint.endswith("releases/17"):
+        # Listing may still omit the draft even though creation returned its ID.
+        visible = state.exists() and not (root / "hide-created-draft").exists()
+        emit([release()] if visible else [])
+    elif endpoint == "repos/serrja/setupSystem/releases" and args[1:3] == ["-X", "POST"]:
+        assert not state.exists() and "tag_name="+native in args and "target_commitish="+sha in args
+        assert "draft=true" in args and "make_latest=false" in args
+        notes = next(arg.removeprefix("body=@") for arg in args if arg.startswith("body=@"))
+        shutil.copyfile(notes, root / "notes")
+        (root / "target").write_text(sha)
+        state.write_text("yes")
         emit(release())
+    elif endpoint == "repos/serrja/setupSystem/releases/17":
+        if args[1:3] == ["-X", "PATCH"]:
+            assert "draft=false" in args and "make_latest=false" in args
+            assert state.read_text() == "yes" and len(names) == 3
+            state.write_text("no")
+        response = release()
+        if args[1] != "-X" and len(names) == 3:
+            assets_lag = root / "hide-upload-readback"
+            draft_lag = root / "show-draft-readback"
+            if response["draft"] and assets_lag.exists():
+                response["assets"] = response["assets"][:-1]
+                assets_lag.unlink()
+            elif not response["draft"] and draft_lag.exists():
+                response["draft"] = True
+                draft_lag.unlink()
+        emit(response)
+    elif endpoint.startswith("https://uploads.github.com/repos/serrja/setupSystem/releases/17/assets?name="):
+        assert args[1:3] == ["-X", "POST"] and "Content-Type: application/octet-stream" in args
+        src = Path(args[args.index("--input")+1])
+        assert src.name == endpoint.partition("?name=")[2]
+        assert not (root / src.name).exists() and state.read_text() == "yes"
+        if src.name.endswith(".sigstore.json") and (root / "interrupt").exists():
+            sys.exit(73)
+        shutil.copyfile(src, root / src.name)
+        emit({"name": src.name, "state": "uploaded"})
     elif "releases/assets/" in endpoint:
         sys.stdout.buffer.write((root / names[int(item)-1]).read_bytes())
     else:
         sys.exit("Unexpected endpoint: "+endpoint)
-elif args[:3] == ["release","create",native]:
-    assert "--draft" in args and "--latest=false" in args
-    assert not state.exists()
-    shutil.copyfile(args[args.index("--notes-file") + 1], root / "notes")
-    state.write_text("yes")
-elif args[:3] == ["release","upload",native]:
-    src = Path(args[3])
-    assert not (root / src.name).exists() and state.read_text() == "yes"
-    if src.name.endswith(".sigstore.json") and (root / "interrupt").exists():
-        sys.exit(73)
-    shutil.copyfile(src, root / src.name)
-elif args[:3] == ["release","edit",native]:
-    assert "--draft=false" in args and "--latest=false" in args
-    state.write_text("no")
 else:
     sys.exit(str(args))
 """,
@@ -494,9 +517,27 @@ else:
 
     interruption = service / "interrupt"
     interruption.touch()
-    assert publish().returncode == 73
+    delayed = service / "hide-created-draft"
+    delayed.touch()
+    first = publish()
+    assert first.returncode == 73, first.stderr
     assert (service / "draft").read_text() == "yes" and (service / FILENAME).is_file()
     interruption.unlink()
+    delayed.unlink()
+    # Existing drafts created with the previous CLI carry the default branch name.
+    (service / "target").write_text("main")
+    for conflict in ("duplicate-asset", "foreign-asset"):
+        marker = service / ("setup-system-unexpected" if conflict == "foreign-asset" else conflict)
+        marker.touch()
+        rejected = publish()
+        assert rejected.returncode != 0 and (service / "draft").read_text() == "yes"
+        assert not (service / (FILENAME + ".sigstore.json")).exists()
+        marker.unlink()
+    notes = service / "notes"
+    original_notes = notes.read_text()
+    notes.write_text("{}")
+    assert publish().returncode != 0 and notes.read_text() == "{}"
+    notes.write_text(original_notes)
     (service / "attested-original").write_text(digest)
     # A runner upgrade can change the container encoding of the same signed
     # payload. Keep the original remote package and recover its original proof.
@@ -508,8 +549,12 @@ else:
     assert rebuilt_digest != digest
     (artifacts / (FILENAME + ".sha256")).write_text(f"{rebuilt_digest}  {FILENAME}\n")
     (artifacts / (FILENAME + ".sigstore.json")).write_text(rebuilt_digest)
+    for marker in ("hide-upload-readback", "show-draft-readback"):
+        (service / marker).touch()
     completed = publish()
     assert completed.returncode == 0, completed.stderr
+    assert not (service / "hide-upload-readback").exists()
+    assert not (service / "show-draft-readback").exists()
     assert (service / "draft").read_text() == "no"
     assert (service / FILENAME).read_bytes() == package.read_bytes()
     assert publish().returncode == 0

@@ -68,16 +68,40 @@ release_id() {
 }
 id=$(release_id)
 if [[ -z "$id" ]]; then
-    gh release create "$tag" --repo "$repository" --verify-tag --draft --latest=false \
-        --title "Debian package for $stable" --notes-file "$temp/notes.json"
-    id=$(release_id)
+    # The releases list can lag creation. Address the draft returned by this POST.
+    id=$(gh api -X POST "repos/$repository/releases" -f tag_name="$tag" \
+        -f target_commitish="$GITHUB_SHA" -f name="Debian package for $stable" \
+        -F body="@$temp/notes.json" -F draft=true -f make_latest=false |
+        jq -er --arg tag "$tag" 'select(.tag_name == $tag and .draft == true and .prerelease == false)
+          | .id | select(type == "number" and . > 0 and . == floor)')
 fi
-[[ "$id" =~ ^[0-9]+$ ]]
+[[ "$id" =~ ^[1-9][0-9]*$ ]]
 release() {
     gh api "repos/$repository/releases/$id" > "$temp/release.json"
-    jq -e --arg tag "$tag" '.tag_name == $tag and .prerelease == false' "$temp/release.json" >/dev/null
-    jq -e --slurpfile notes "$temp/notes.json" '(.body | fromjson) == $notes[0]' "$temp/release.json" >/dev/null
-    jq -er --arg f "$file" '([.assets[].name] - [$f, ($f + ".sha256"), ($f + ".sigstore.json")]) == []' "$temp/release.json" >/dev/null
+    jq -e --argjson id "$id" --arg tag "$tag" --arg sha "$GITHUB_SHA" --arg f "$file" \
+        --slurpfile notes "$temp/notes.json" '
+        .id == $id and .tag_name == $tag and .prerelease == false and (.draft | type == "boolean")
+        and (.target_commitish == $sha or .target_commitish == "main")
+        and (.body | fromjson) == $notes[0]
+        and (.assets | type == "array")
+        and ([.assets[].name] - [$f, ($f + ".sha256"), ($f + ".sigstore.json")]) == []
+        and ([.assets[].name] | length == (unique | length))
+        and ([.assets[].id] | length == (unique | length))
+        and all(.assets[]; .state == "uploaded" and (.id | type == "number" and . > 0 and . == floor))' \
+        "$temp/release.json" >/dev/null
+}
+wait_for_release() {
+    local published=$1 attempt
+    for attempt in 1 2 3 4 5; do
+        release
+        if jq -e --argjson published "$published" \
+            '(.assets | length == 3) and ($published == false or .draft == false)' "$temp/release.json" >/dev/null; then
+            return 0
+        fi
+        if (( attempt < 5 )); then sleep "$attempt"; fi
+    done
+    printf 'Release %s did not reflect the completed operation. Retry publication to verify it.\n' "$id" >&2
+    return 1
 }
 download_asset() {
     local name=$1 asset_id
@@ -122,10 +146,13 @@ if [[ "$(jq '.assets | length' "$temp/release.json")" != 3 ]]; then
             missing+=("$name")
         fi
     done
-    for name in "${missing[@]}"; do gh release upload "$tag" "$artifacts/$name" --repo "$repository"; done
+    for name in "${missing[@]}"; do
+        gh api -X POST "https://uploads.github.com/repos/$repository/releases/$id/assets?name=$name" \
+            -H 'Content-Type: application/octet-stream' --input "$artifacts/$name" > "$temp/upload.json"
+        jq -e --arg name "$name" '.name == $name and .state == "uploaded"' "$temp/upload.json" >/dev/null
+    done
 fi
-release
-[[ "$(jq '.assets | length' "$temp/release.json")" == 3 ]]
+wait_for_release false
 for name in "${expected[@]}"; do download_asset "$name"; done
 # An earlier successful build may have used a different dpkg revision. Its own
 # signed bytes and exact source, version and checksum are authoritative.
@@ -137,8 +164,7 @@ for name in "${expected[@]}"; do download_asset "$name"; done
     verify_bundle "$temp/$file.sigstore.json" "$temp/$file"
 )
 if jq -e '.draft' "$temp/release.json" >/dev/null; then
-    gh release edit "$tag" --repo "$repository" --draft=false --latest=false
+    gh api -X PATCH "repos/$repository/releases/$id" -F draft=false -f make_latest=false >/dev/null
 fi
-release
-jq -e '.draft == false and (.assets | length == 3)' "$temp/release.json" >/dev/null
+wait_for_release true
 [[ "$(source_commit "$(ref "$tag")")" == "$GITHUB_SHA" ]]
