@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import fcntl
 import hashlib
@@ -150,6 +151,26 @@ class Settings:
             config = home / ".config"
         config_home = config if config is not None else user_config_path()
         self.directory = config_home / "setup-system"
+        self._writer = asyncio.Lock()
+
+    async def read(self, section: Section) -> Loaded:
+        """Read one owner-checked snapshot without blocking the terminal."""
+        return await asyncio.to_thread(self.load, section)
+
+    async def publish(self, section: Section, options: Options, expected: str) -> Loaded:
+        """Keep ownership of the entire filesystem transaction until the worker returns."""
+        async with self._writer:
+            pending = asyncio.create_task(asyncio.to_thread(self.save, section, options, expected))
+            cancelled = False
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+            result = pending.result()
+            if cancelled:
+                raise asyncio.CancelledError
+            return result
 
     def _source(self, fd: int | None, section: Section) -> tuple[str, bytes | None]:
         name = f"{section}.toml"

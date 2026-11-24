@@ -344,7 +344,11 @@ def test_mode_change_after_project_preview_preserves_bytes_and_mode(
             project_tasks.execute(
                 root,
                 operation + "-apply",
-                {"settings": fields, "expected": prepared.result.model_dump()},
+                {
+                    "schema": 1,
+                    "settings": fields,
+                    "expected": prepared.result.model_dump(mode="json", exclude_unset=True),
+                },
             )
         else:
             prepared.apply()

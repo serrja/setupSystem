@@ -54,38 +54,9 @@ assert (resources / "ansible/base.yml").is_file() and (
 ).is_file()
 assert palette(resources)["green"] == "#a6e3a1"
 subprocess.run(["setup-system", "--help"], check=True)
-ui_probe = """import asyncio
-from pathlib import Path
-from setup_system.app import SetupApp
-from setup_system.runner import MakeRunner, Target
-from setup_system.file_tasks import restore
-from setup_system.infrastructure.managed_files import apply_files
-async def exercise():
-    app=SetupApp()
-    async with app.run_test(size=(110,45)) as pilot:
-        assert app.section == "base"
-        await pilot.press("ctrl+2")
-        assert app.section == "workspace"
-        await pilot.press("ctrl+1")
-        assert app.section == "base"
-asyncio.run(exercise())
-home = Path.home()
-baseline = {"schema": 1, "settings": {}, "expected": None}
-facts = MakeRunner().run(Target.BASE_INSPECT, baseline)
-assert facts["status"] in {"ready", "blocked"} and "architecture" in facts["observed"], facts
-assert not any(home.iterdir()), "Installed Inspect modified the user HOME"
-request = {"schema": 1, "settings": {"project": str(home)}, "expected": None}
-result = MakeRunner().run(Target.PROJECT_CHECK, request)
-assert result["status"] == "ready", result
-target = home / "config with spaces/example.ini"
-operation = apply_files({target:b"installed configuration"})
-assert target.read_bytes() == b"installed configuration"
-restore(operation.name, apply=True)
-assert not target.exists()
-"""
 with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
     subprocess.run(
-        [sys.executable, "-I", "-B", "-c", ui_probe],
+        [sys.executable, "-I", "-B", str(Path(__file__).with_name("installed_smoke.py"))],
         env={
             **os.environ,
             "HOME": ui_home,

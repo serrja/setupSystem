@@ -33,7 +33,9 @@
   when: "'neovim' in selected"
 - name: Include missing parser installations in the reviewed plan
   ansible.builtin.set_fact:
-    user_changes: "{{ user_changes + ['Install Tree-sitter parsers ' + (parser_changes | join(', '))] }}"
+    user_changes: >-
+      {{ user_changes + [{'kind': 'parsers', 'parsers': parser_changes,
+         'label': 'Install Tree-sitter parsers ' + (parser_changes | join(', '))}] }}
   when: parser_changes | default([]) | length > 0
 - name: Read reviewed editor plugin references
   ansible.builtin.include_tasks: git_metadata.yml
@@ -130,6 +132,7 @@
     keyboard: "{{ render_ctx.keyboard }}"
     xdg: "{{ render_ctx.xdg }}"
     fonts: "{{ render_ctx.fonts }}"
+    auth_screen: "{{ render_ctx.auth_screen }}"
     plugin_lua: "{{ '{' + (editor_catalog.plugins.keys() | map('to_json') | join(',')) + '}' }}"
     selected_lua: "{{ render_ctx.selected_lua }}"
   loop: "{{ templates }}"
@@ -144,7 +147,7 @@
 - name: Capture exact user file preconditions
   ansible.builtin.set_fact:
     files_preview: "{{ preview.stdout | from_json }}"
-    user_changes: "{{ user_changes + (preview.stdout | from_json).changes }}"
+    user_changes: "{{ user_changes + ((preview.stdout | from_json).changes | native_file_actions) }}"
   when: preview.stdout is defined
 - name: Assemble the selected editor verification inputs
   ansible.builtin.set_fact:
@@ -159,5 +162,5 @@
   when: "'neovim' in selected"
 - name: Include a new or unsuccessful editor verification in the plan
   ansible.builtin.set_fact:
-    user_changes: "{{ user_changes + ['Verify selected Neovim plugins, parsers and language services'] }}"
+    user_changes: "{{ user_changes + [{'kind': 'editor_verify', 'label': 'Verify selected Neovim plugins, parsers and language services'}] }}"
   when: editor_verified.stdout is defined and not (editor_verified.stdout | from_json)

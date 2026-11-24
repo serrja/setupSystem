@@ -9,6 +9,7 @@
       settings: "{{ intent }}"
       xdg: "{{ facts.xdg }}"
       observed: "{{ boot_facts }}"
+      actions: "{{ system_actions }}"
       apt_work: "{{ apt_work.path | default('') }}"
 
 - name: Re-simulate immediately before the system package stage
@@ -77,7 +78,7 @@
 - name: Mark the start of a confirmed system change
   ansible.builtin.set_fact:
     mutation_started: true
-  when: section == 'base' and intent.plymouth and not boot_facts.unlock_current
+  when: "'plymouth' in system_kinds"
 - name: Back up installed boot images before any selected boot package trigger
   ansible.builtin.command:
     argv: ["/usr/bin/python3", "-I", "-B", "{{ playbook_dir }}/files/system_contract.py", "boot"]
@@ -85,10 +86,10 @@
   become: true
   register: boot_apply
   changed_when: (boot_apply.stdout | from_json).changed
-  when: section == 'base' and intent.plymouth and not boot_facts.unlock_current
+  when: "'plymouth' in system_kinds"
 - name: Record the verified boot image
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + ['plymouth'] }}"
+    changed_stages: "{{ changed_stages + [{'kind': 'plymouth', 'label': 'Verified graphical boot image'}] }}"
   when: boot_apply.stdout is defined and (boot_apply.stdout | from_json).changed
 - name: Check cancellation before the next operation
   ansible.builtin.include_tasks: cancel.yml
@@ -114,7 +115,7 @@
   when: apt_changes | length > 0
 - name: Record verified package changes
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + ['Verified Debian package transaction'] }}"
+    changed_stages: "{{ changed_stages + [{'kind': 'packages_verified', 'label': 'Verified Debian package transaction'}] }}"
   when: apt_changes | length > 0
 
 - name: Check cancellation before the next operation
@@ -127,43 +128,43 @@
     stdin: "{{ handoff | to_json }}"
   become: true
   changed_when: false
-  when: "'Start the installed Happ service' in system_actions"
+  when: "'happ_start' in system_kinds"
 - name: Mark the start of the approved vendor service change
   ansible.builtin.set_fact:
     mutation_started: true
-  when: "'Start the installed Happ service' in system_actions"
+  when: "'happ_start' in system_kinds"
 - name: Start the verified vendor service after the Debian transaction
   ansible.builtin.systemd_service:
     name: happd.service
     daemon_reload: true
     state: started
   become: true
-  when: "'Start the installed Happ service' in system_actions"
+  when: "'happ_start' in system_kinds"
 - name: Check the vendor service completed its start
   ansible.builtin.command:
     argv: ["/usr/bin/systemctl", "--system", "--quiet", "is-active", "happd.service"]
   changed_when: false
-  when: "'Start the installed Happ service' in system_actions"
+  when: "'happ_start' in system_kinds"
 - name: Record the verified vendor service
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + ['Started the installed Happ service'] }}"
-  when: "'Start the installed Happ service' in system_actions"
+    changed_stages: "{{ changed_stages + [{'kind': 'happ_start', 'label': 'Started the installed Happ service'}] }}"
+  when: "'happ_start' in system_kinds"
 - name: Check cancellation before the next operation
   ansible.builtin.include_tasks: cancel.yml
 - name: Mark the start of a confirmed system change
   ansible.builtin.set_fact:
     mutation_started: true
-  when: section == 'base' and (system_actions | select('match', '^Set ') | list | length > 0)
+  when: section == 'base' and 'region' in system_kinds
 - name: Apply reviewed regional changes
   ansible.builtin.command:
     argv: ["/usr/bin/python3", "-I", "-B", "{{ playbook_dir }}/files/system_contract.py", "region"]
     stdin: "{{ handoff | to_json }}"
   become: true
   changed_when: true
-  when: section == 'base' and (system_actions | select('match', '^Set ') | list | length > 0)
+  when: section == 'base' and 'region' in system_kinds
 - name: Record completed regional changes
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + (system_actions | select('match', '^Set ') | list) }}"
+    changed_stages: "{{ changed_stages + (system_actions | selectattr('kind', 'equalto', 'region') | list) }}"
   when: section == 'base'
 
 - name: Check cancellation before the next operation
@@ -183,7 +184,7 @@
 - name: Mark the start of a confirmed system change
   ansible.builtin.set_fact:
     mutation_started: true
-  when: "'Enable greetd with a recoverable GRUB menu' in system_actions"
+  when: "'graphical_login' in system_kinds"
 - name: Apply the confirmed graphical login after verifying the user launcher
   ansible.builtin.command:
     argv: ["/usr/bin/python3", "-I", "-B", "{{ playbook_dir }}/files/system_contract.py", "login"]
@@ -191,10 +192,10 @@
   become: true
   register: login_apply
   changed_when: (login_apply.stdout | from_json).changed
-  when: "'Enable greetd with a recoverable GRUB menu' in system_actions"
+  when: "'graphical_login' in system_kinds"
 - name: Record completed login changes
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + ['Enabled greetd'] }}"
+    changed_stages: "{{ changed_stages + [{'kind': 'graphical_login', 'label': 'Enabled greetd'}] }}"
   when: login_apply.stdout is defined and (login_apply.stdout | from_json).changed
 - name: Check cancellation before the next operation
   ansible.builtin.include_tasks: cancel.yml
@@ -202,17 +203,18 @@
 - name: Mark the start of a confirmed system change
   ansible.builtin.set_fact:
     mutation_started: true
-  when: "'Apply Firefox enterprise privacy policy' in system_actions"
+  when: "'firefox_policy' in system_kinds"
 - name: Verify the selected Firefox privacy policy
   ansible.builtin.command:
     argv: ["/usr/bin/python3", "-I", "-B", "{{ playbook_dir }}/files/system_contract.py", "firefox"]
     stdin: "{{ handoff | to_json }}"
   become: true
   changed_when: true
-  when: "'Apply Firefox enterprise privacy policy' in system_actions"
+  when: "'firefox_policy' in system_kinds"
 - name: Record completed independent operations
   ansible.builtin.set_fact:
-    changed_stages: "{{ changed_stages + (['Applied Firefox enterprise privacy policy'] if 'Apply Firefox enterprise privacy policy' in
-      system_actions else []) }}"
-    notices: "{{ ['Finish sign-in or subscription setup in the selected application'] if ['chatgpt', 'happ'] | intersect(intent.apps |
-      default([])) else [] }}"
+    changed_stages: "{{ changed_stages + ([{'kind': 'firefox_policy', 'label': 'Applied Firefox enterprise privacy policy'}] if 'firefox_policy' in
+      system_kinds else []) }}"
+    notices: >-
+      {{ [{'kind': 'login_required', 'label': 'Finish sign-in or subscription setup in the selected application'}]
+         if ['chatgpt', 'happ'] | intersect(intent.apps | default([])) else [] }}

@@ -92,4 +92,4 @@ transactional package rollback.
 
 After the canonical stable release succeeds, this repository's Debian workflow builds the allocated version from the same main commit. The `deb-vX.Y.Z` companion release contains the Debian package, its SHA-256 checksum and the attestation bundle. The canonical `vX.Y.Z` release remains the default latest release. Install and update resolve that stable version once and verify the companion against its source commit and workflow identity before handing the bytes to APT.
 
-Recovery resumes the original release run. A partial draft accepts only missing matching bytes. A conflicting artifact, different tag commit or absent attestation stops publication. Verify a published companion before documenting target installation results. [Debian workflow](../.github/workflows/debian.yml).
+Recovery resumes the original release run. A partial draft accepts only missing matching bytes. A conflicting artifact, different tag commit or absent attestation stops publication. Verify a published companion before documenting target installation results. [Debian workflow](https://github.com/serrja/setupSystem/blob/main/.github/workflows/debian.yml).

@@ -4,26 +4,51 @@ set -eu
 launcher_search_path=${PATH:-/usr/bin:/bin}
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
-usage() { printf '%s\n' 'Usage: sh install.sh install|update [--release vX.Y.Z]' '       sh install.sh run'; }
+package_auth=sudo
+usage() { printf '%s\n' 'Usage: sh install.sh install|update [--release vX.Y.Z] [--auth sudo|su]' '       sh install.sh run'; }
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 check_platform() {
-    [ "$(id -u)" != 0 ] || fail 'Run delivery as a normal user. Only the package transaction uses sudo.'
+    [ "$(id -u)" != 0 ] || fail 'Run delivery as a normal user. Only the package transaction requires administrator authentication.'
     [ -r /etc/os-release ] || fail 'Cannot identify the Debian target.'
     # shellcheck disable=SC1091
     . /etc/os-release
     [ "${ID:-}:${VERSION_ID:-}:${VERSION_CODENAME:-}" = debian:13:trixie ] || fail 'A Debian 13 (trixie) target is required.'
     case "$(dpkg --print-architecture)" in amd64|arm64) ;; *) fail 'Supported architectures are amd64 and arm64.' ;; esac
 }
+run_package_transaction() {
+    program=$1
+    shift
+    case "${package_auth:-sudo}" in
+        sudo) sudo /bin/sh -ceu "$program" sh "$@" ;;
+        su) su --shell /bin/sh --command "$program" -- root sh "$@" ;;
+        *) fail 'Choose either sudo or su for package authentication.' ;;
+    esac
+}
 package_transaction() {
 # Root copies into its own staging directory and rechecks the exact authenticated bytes.
-sudo /bin/sh -ceu '
+# These two literal scripts expand only inside their respective privileged shells.
+# shellcheck disable=SC2016
+run_package_transaction '
+    set -eu
     PATH=/usr/sbin:/usr/bin:/sbin:/bin
     export PATH
+    # Derive the file reader from the real, unprivileged ancestor via procfs.
+    # su does not export the caller IDs and caller-supplied IDs are not authority.
+    caller=$7
+    case "$caller" in ""|*[!0-9]*) exit 1 ;; esac
+    pid=$$
+    while [ "$pid" != "$caller" ]; do
+        [ "$pid" -gt 1 ] || exit 1
+        pid=$(awk "/^PPid:/ {print \$2}" "/proc/$pid/status")
+    done
+    uid=$(awk "/^Uid:/ && \$2 == \$3 {print \$2}" "/proc/$caller/status")
+    gid=$(awk "/^Gid:/ && \$2 == \$3 {print \$2}" "/proc/$caller/status")
+    [ "${uid:-0}" -gt 0 ] && [ "${gid:-0}" -gt 0 ] || exit 1
     lock=/run/setup-system
     if [ ! -e "$lock" ]; then mkdir -m 0755 "$lock" || [ -d "$lock" ]; fi
     [ -d "$lock" ] && [ ! -L "$lock" ] && [ "$(stat -c "%u:%g:%a" "$lock")" = 0:0:755 ] || exit 1
-    exec flock -xn -E 75 "$lock" /bin/sh -ceu "$1" sh "$2" "$3" "$4" "$5" "$6"
-' sh '
+    exec /usr/bin/env -i PATH="$PATH" HOME=/root LANG=C flock -xn -E 75 "$lock" /bin/sh -ceu "$1" sh "$2" "$3" "$4" "$5" "$6" "$uid" "$gid"
+' '
     src=$1 digest=$2 version=$3 source=$4 action=$5
     current=$(dpkg-query -W -f="\${db:Status-Status} \${Version}" setup-system 2>/dev/null) || current=
     case "$current" in
@@ -45,8 +70,8 @@ sudo /bin/sh -ceu '
     trap '\''rm -rf -- "$stage"'\'' EXIT
     trap '\''exit 130'\'' HUP INT TERM
     file=$stage/setup-system_${version}_all.deb
-    setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups --no-new-privs \
-        head -c 134217729 -- "$src" > "$file"
+    setpriv --reuid="$6" --regid="$7" --init-groups --no-new-privs \
+        dd if="$src" iflag=nofollow,nonblock,count_bytes count=134217729 status=none > "$file"
     actual=$(sha256sum "$file")
     [ "${actual%% *}" = "$digest" ]
     [ "$(dpkg-deb -f "$file" Package)" = setup-system ]
@@ -57,9 +82,13 @@ sudo /bin/sh -ceu '
     chmod 0755 "$stage"
     apt-get --no-remove install "$file"
     [ "$(dpkg-query -W -f="\${db:Status-Status} \${Version}" setup-system)" = "installed $version" ]
-' "$1" "$2" "$3" "$4" "$5" || {
+' "$1" "$2" "$3" "$4" "$5" "$$" || {
     result=$?
-    [ "$result" != 75 ] || echo 'setup-system is busy. Retry after the current operation finishes.' >&2
+    if [ "$result" = 75 ]; then
+        echo 'setup-system is busy. Retry after the current operation finishes.' >&2
+    elif [ "${package_auth:-sudo}" = su ]; then
+        echo 'The authenticated package transaction did not complete. A locked root account requires an authorized administrator.' >&2
+    fi
     exit "$result"
 }
 if candidate=$(PATH=$launcher_search_path command -v setup-system); then
@@ -83,14 +112,23 @@ case "${1:-}" in
     *) usage >&2; exit 2 ;;
 esac
 tag=
-if [ "$#" != 0 ]; then
-    [ "$#" = 2 ] && [ "$1" = --release ] && [ -n "$2" ] || { usage >&2; exit 2; }
-    tag=$2
-fi
+auth_set=
+while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
+    case "$1" in
+        --release) [ -z "$tag" ] || fail 'Choose one stable release.'; tag=$2 ;;
+        --auth)
+            [ -z "$auth_set" ] || fail 'Choose one authentication method.'
+            case "$2" in sudo|su) package_auth=$2 ;; *) fail 'Choose sudo or su.' ;; esac
+            auth_set=1 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+    shift 2
+done
 stable_tag() { printf '%s\n' "$1" | LC_ALL=C grep -Exq 'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)' && [ "$(printf '%s' "$1" | wc -l)" = 0 ]; }
 [ -z "$tag" ] || stable_tag "$tag" || fail 'Expected a stable tag such as v1.2.3.'
 check_platform
-for tool in curl jq gh sha256sum sudo flock dpkg-deb dpkg-query; do
+for tool in curl jq gh sha256sum "$package_auth" flock dpkg-deb dpkg-query; do
     command -v "$tool" >/dev/null || fail "Missing required delivery tool: $tool"
 done
 help=$(gh attestation verify --help) || fail 'Install the official GitHub CLI with attestation support.'

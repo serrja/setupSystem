@@ -55,4 +55,4 @@ run:
 	@/bin/sh ./libexec/run
 prepare:
 	uv sync --locked --all-groups
-include mk/files.mk mk/projects.mk mk/base.mk mk/workspace.mk mk/package.mk mk/quality.mk
+include mk/files.mk mk/projects.mk mk/base.mk mk/admin.mk mk/workspace.mk mk/package.mk mk/quality.mk

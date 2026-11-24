@@ -1,0 +1,17 @@
+[Plymouth Theme]
+Name=Mocha Green
+Description=Native disk password prompt
+ModuleName=two-step
+
+[two-step]
+ImageDir=/usr/share/plymouth/themes/spinner
+DialogHorizontalAlignment=.5
+DialogVerticalAlignment=.5
+BackgroundStartColor=0x@{ base[1:] }@
+BackgroundEndColor=0x@{ mantle[1:] }@
+ProgressBarBackgroundColor=0x@{ surface0[1:] }@
+ProgressBarForegroundColor=0x@{ green[1:] }@
+
+[boot-up]
+UseFirmwareBackground=false
+UseProgressBar=true

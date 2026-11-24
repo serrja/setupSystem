@@ -9,15 +9,20 @@ import stat
 import sys
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from setup_system.application.recovery import recover
+from setup_system.domain.actions import FileAction, SystemAction
+from setup_system.domain.observations import ManagedPreview
 from setup_system.domain.receipts import FileState
 from setup_system.infrastructure import codex_profile, receipt_repository, source_attempt
 from setup_system.infrastructure.displays import preview_layout
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files, changed_files
+from setup_system.infrastructure.operation_io import read_wire
 from setup_system.infrastructure.receipt_migrations import restore_manifest
 from setup_system.infrastructure.restore_files import LocalRecoveryFiles
-from setup_system.models import WorkspaceOptions
+from setup_system.models import BaseOptions, RequestEnvelope, TaskResult, WorkspaceOptions
 from setup_system.runner import resource_root
 
 
@@ -87,8 +92,13 @@ def main() -> None:
     request = Path(os.environ["SETUP_SYSTEM_REQUEST"])
     result = Path(os.environ["SETUP_SYSTEM_RESULT"])
     (action,) = sys.argv[1:]
-    payload = json.loads(request.read_bytes())
+    envelope = RequestEnvelope.model_validate_json(read_wire(request))
+    if action not in {"preview", "publish"}:
+        envelope.for_target(action)
+    payload = envelope.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
     if action in {"preview", "publish"}:
+        TypeAdapter(BaseOptions | WorkspaceOptions).validate_python(envelope.settings)
         desired, modes = staged_files(result.parent / "files")
         merges: dict[Path, FileState | None] = {}
         if "codex" in payload["settings"].get("apps", []):
@@ -103,7 +113,21 @@ def main() -> None:
         if action == "preview":
             print(json.dumps(preview))
             return
-        if payload["expected"]["observed"]["files"] != preview:
+        if (
+            envelope.expected is None
+            or envelope.expected.status not in {"ready", "plan_ready"}
+            or envelope.expected.blockers
+            or not envelope.expected.observed.needs_user
+            or tuple(
+                action.path
+                for action in envelope.expected.actions
+                if isinstance(action, FileAction)
+            )
+            != ManagedPreview.model_validate(preview).changes
+            or envelope.expected.observed.get("files") is None
+            or ManagedPreview.model_validate(envelope.expected.observed.get("files"))
+            != ManagedPreview.model_validate(preview)
+        ):
             raise ValueError("Managed files changed since confirmation")
         expected = {
             Path.home() / key: FileState.model_validate(value) if value is not None else None
@@ -116,9 +140,13 @@ def main() -> None:
     blockers: list[str] = []
     if action == "display-preview":
         preview_layout(WorkspaceOptions.model_validate(settings).monitors)
-        result.write_text(
-            json.dumps({"status": "complete", "actions": ["Previous display layout restored"]})
+        reply = TaskResult(
+            status="complete",
+            actions=(
+                SystemAction(kind="display_restored", label="Previous display layout restored"),
+            ),
         )
+        result.write_text(reply.model_dump_json(exclude_unset=True))
         return
     if action == "project-check":
         directory = Path(settings["project"]).expanduser()
@@ -130,7 +158,11 @@ def main() -> None:
         actions = []
     elif action in {"restore-plan", "restore-apply"}:
         rows = restore(settings["backup_id"])
-        actions = [f"{status} {path}" for path, status in rows if status.startswith("would-")]
+        actions = [
+            {"kind": "restore", "path": path, "operation": status, "label": f"{status} {path}"}
+            for path, status in rows
+            if status in {"would-restore", "would-remove", "would-remove-directory"}
+        ]
         observed["needs_user"] = bool(actions)
         observed["backup_id"] = settings["backup_id"]
         blockers = [
@@ -149,12 +181,16 @@ def main() -> None:
     if action.startswith("restore-") and not actions and not blockers:
         answer["status"] = "no_changes"
     if action == "restore-apply":
-        if blockers or payload.get("expected") != answer:
+        if (
+            blockers
+            or envelope.expected is None
+            or not envelope.expected.same_plan(TaskResult.model_validate(answer))
+        ):
             raise ValueError("Restore preview changed; inspect it again")
         if actions:
             restore(settings["backup_id"], apply=True)
             answer["status"] = "complete"
-    result.write_text(json.dumps(answer))
+    result.write_text(TaskResult.model_validate(answer).model_dump_json(exclude_unset=True))
 
 
 if __name__ == "__main__":

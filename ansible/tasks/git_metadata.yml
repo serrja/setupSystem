@@ -61,4 +61,6 @@
     latest_tools: "{{ latest_tools | combine({plugin.key: {'manager': 'git', 'current': local_ref.stdout, 'version': source_commit,
       'repo': plugin.value.repo, 'path':
       git_parent + '/' + plugin.key}}) }}"
-    user_changes: "{{ user_changes + (['Update ' + plugin.key + ' to ' + source_commit] if local_ref.stdout != source_commit else []) }}"
+    user_changes: >-
+      {{ user_changes + ([{'kind': 'tool', 'name': plugin.key, 'version': source_commit, 'label': 'Update ' + plugin.key + ' to ' + source_commit}]
+         if local_ref .stdout != source_commit else []) }}

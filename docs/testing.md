@@ -14,3 +14,5 @@ Record the disposable target's identity and authorization, Debian release, CPU a
 6. For existing LUKS only, verify the supported boot layout, backup, graphical prompt, text fallback and recovery menu on that target. Record a normal and a recovery boot.
 
 Report package construction, publication, installation, graphical login and boot as separate results.
+
+On that same target keep the rescue console available while testing root-authenticated package installation and the one-time sudo grant. Exercise a wrong password, a locked root account, a repeated grant and an account changed since preview. Verify unrelated groups and the current session before opening a fresh login and testing the user's own sudo password. At the same resolution and scale, compare the greeter and lock layout, failed and successful PAM challenges, and the identity after unlock. Record normal and recovery Plymouth boots separately.

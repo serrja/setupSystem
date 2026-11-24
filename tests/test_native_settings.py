@@ -124,7 +124,9 @@ def test_plan_snapshot_freezes_inputs_and_requires_privilege_scope():
     choices = {"apps": ["neovim"]}
     result = {
         "status": "ready",
-        "actions": ["Write editor profile"],
+        "actions": [
+            {"kind": "user_file", "path": ".config/nvim/init.lua", "label": "Write editor profile"}
+        ],
         "observed": {"needs_user": True, "needs_system": False, "uid": 1234},
     }
     plan = PlanSnapshot.capture("workspace", choices, result, "workspace.toml:absent")
@@ -134,7 +136,12 @@ def test_plan_snapshot_freezes_inputs_and_requires_privilege_scope():
     assert plan.payload()["expected"]["observed"]["uid"] == 1234
     assert not plan.needs_password
     with pytest.raises(ValueError, match="scope"):
-        PlanSnapshot.capture("workspace", {}, {"status": "ready", "actions": ["Apply"]}, "absent")
+        PlanSnapshot.capture(
+            "workspace",
+            {},
+            {"status": "ready", "actions": [{"kind": "editor_verify", "label": "Verify editor"}]},
+            "absent",
+        )
     with pytest.raises(ValidationError):
         BaseOptions(hyprland="true")
     assert BaseOptions(keyboard="de,fr", locale="de_DE.UTF-8").keyboard == "de,fr"

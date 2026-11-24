@@ -11,27 +11,24 @@ import stat
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from string import Template
 
+from setup_system.domain.auth_screen import AuthScreen
 from setup_system.domain.identity import TargetUser
 from setup_system.domain.login import DesktopFile, DesktopPlan, LoginConsent
 from setup_system.domain.system_facts import EncryptionState, SystemSnapshot
 from setup_system.infrastructure.inspection import inspect_system
 from setup_system.infrastructure.login_boot import grub_fingerprints, manager_enabled
 from setup_system.infrastructure.login_files import LoginFiles
+from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
 
 XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
 
 
 def greeter_style(root: Path) -> bytes:
-    content = (root / "assets/login/greeter.css").read_text()
-    if "$" in content:
-        try:
-            content = Template(content).substitute(palette(root))
-        except KeyError as exc:
-            raise ValueError("Unknown greeter palette field") from exc
-    return content.encode()
+    return render_asset(
+        root / "assets/login/greeter.css", {"auth_screen": AuthScreen().tokens(palette(root))}
+    )
 
 
 def default_target(command: Callable[[list[str]], subprocess.CompletedProcess[str]]) -> str:

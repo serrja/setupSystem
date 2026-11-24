@@ -4,6 +4,8 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+MAX_MESSAGE_BYTES = 1 << 20
+
 
 class ContractModel(BaseModel):
     model_config = ConfigDict(

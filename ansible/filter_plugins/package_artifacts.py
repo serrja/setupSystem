@@ -3,13 +3,31 @@
 import base64
 import binascii
 import re
+from typing import TypedDict
 from urllib.parse import urlsplit
 
 from packaging.tags import sys_tags
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 
 
-def package_artifact(metadata, name, manager, version):
+class WheelFile(TypedDict):
+    filename: str
+    yanked: bool
+    packagetype: str
+    url: str
+    digests: dict[str, str]
+
+
+class RegistryMetadata(TypedDict, total=False):
+    dist: dict[str, str]
+    urls: list[WheelFile]
+    versions: dict[str, "RegistryMetadata"]
+    deprecated: str
+
+
+def package_artifact(
+    metadata: RegistryMetadata, name: str, manager: str, version: str
+) -> dict[str, str]:
     if manager == "npm":
         dist = metadata["dist"]
         filename = name.rsplit("/", 1)[-1] + "-" + version + ".tgz"
@@ -66,7 +84,7 @@ def package_artifact(metadata, name, manager, version):
     return min(matches, key=lambda item: item[:2])[2]
 
 
-def registry_release(info, name, series):
+def registry_release(info: RegistryMetadata, name: str, series: dict[str, int]) -> RegistryMetadata:
     if name not in series:
         return info
     releases = []
@@ -80,5 +98,5 @@ def registry_release(info, name, series):
 
 
 class FilterModule:
-    def filters(self):
+    def filters(self) -> dict[str, object]:
         return {"package_artifact": package_artifact, "registry_release": registry_release}
