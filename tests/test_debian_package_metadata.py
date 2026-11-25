@@ -21,7 +21,7 @@ def test_inspect_installed_state(monkeypatch, status, code, error, expected):
         assert argv[-1] == "happ" and kwargs["timeout"] == 15
         return subprocess.CompletedProcess(argv, code, status, error)
 
-    monkeypatch.setattr(subprocess, "run", query)
+    monkeypatch.setattr(happ_facts, "run_command", query)
     assert happ_facts.installed_version() == expected
 
 
@@ -30,8 +30,8 @@ def test_inspect_installed_state(monkeypatch, status, code, error, expected):
 )
 def test_query_failure_or_partial_state_cannot_mean_absent(monkeypatch, code, status):
     monkeypatch.setattr(
-        subprocess,
-        "run",
+        happ_facts,
+        "run_command",
         lambda args, **kw: subprocess.CompletedProcess(args, code, status, "database failure"),
     )
     with pytest.raises((ValueError, subprocess.CalledProcessError)):
@@ -43,7 +43,7 @@ def test_existing_connection_blocks_upgrade(monkeypatch, process):
     def running(args, **kw):
         return subprocess.CompletedProcess(args, 0 if args[-1] == process else 1)
 
-    monkeypatch.setattr(subprocess, "run", running)
+    monkeypatch.setattr(happ_facts, "run_command", running)
     with pytest.raises(ValueError, match="disconnect"):
         happ_facts.require_idle("1.0-1", "2.0", {"ActiveState": "inactive"})
     with pytest.raises(ValueError, match="active service"):

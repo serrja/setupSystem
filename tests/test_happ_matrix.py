@@ -26,7 +26,7 @@ def test_native_systemd_capability_replaces_a_version_pin(
             argv, status, f"LoadState={loaded}\nActiveState={active}\nFragmentPath={source}\n"
         )
 
-    monkeypatch.setattr(subprocess, "run", systemctl)
+    monkeypatch.setattr(happ_facts, "run_command", systemctl)
     assert happ_facts.unit_info()["ActiveState"] == active
 
 
@@ -43,7 +43,9 @@ def test_failed_or_unreviewed_manager_refuses_activation(tmp_path, monkeypatch, 
     monkeypatch.setattr(happ_facts, "UNIT_PATHS", (tmp_path / "unused",))
     monkeypatch.setattr(happ_facts, "protected", lambda path, **kwargs: None)
     monkeypatch.setattr(
-        subprocess, "run", lambda args, **kw: subprocess.CompletedProcess(args, status, properties)
+        happ_facts,
+        "run_command",
+        lambda args, **kw: subprocess.CompletedProcess(args, status, properties),
     )
     with pytest.raises(ValueError, match=r"system manager|Unexpected Happ"):
         happ_facts.unit_info()

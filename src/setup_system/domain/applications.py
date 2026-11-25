@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import Field, TypeAdapter, model_validator
 
 from setup_system.domain.contracts import ContractModel
+from setup_system.domain.intentions import BaseOptions
 
 Package = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9.+-]*$")]
 ProjectName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._-]*$")]
@@ -74,3 +75,36 @@ class DesktopPackages(StablePackages):
 class BasePackages(ContractModel):
     hyprland: DesktopPackages
     login: StablePackages
+
+    locale: StablePackages
+    keyboard: StablePackages
+    unlock_probes: dict[
+        Package, Annotated[str, Field(pattern=r"^/usr/(?:[A-Za-z0-9_.+-]+/)*[A-Za-z0-9_.+-]+$")]
+    ] = Field(min_length=1)
+
+    @property
+    def desktop(self) -> set[str]:
+        return {*self.hyprland.stable, *(p + "/trixie-backports" for p in self.hyprland.backports)}
+
+    def selected(self, intent: BaseOptions) -> set[str]:
+        """Resolve the base selection against the reviewed Debian sources."""
+        packages = set[str]()
+        if intent.hyprland:
+            packages.update(self.desktop)
+        if intent.graphical_login:
+            packages.update(self.login.stable)
+        if intent.locale:
+            packages.update(self.locale.stable)
+        if intent.keyboard:
+            packages.update(self.keyboard.stable)
+        return packages
+
+    def allowed(self) -> set[str]:
+        """Enumerate the complete base package allowlist at the privilege boundary."""
+        return {
+            *self.desktop,
+            *self.login.stable,
+            *self.locale.stable,
+            *self.keyboard.stable,
+            *self.unlock_probes,
+        }

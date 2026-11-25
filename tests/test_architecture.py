@@ -110,7 +110,7 @@ def test_imports_never_read_the_release_catalog(tmp_path: Path) -> None:
     modules = [
         ".".join(("setup_system", *path.relative_to(SOURCE).with_suffix("").parts))
         for path in sorted(SOURCE.rglob("*.py"))
-        if path.name not in {"__main__.py", "__init__.py"} and "resources" not in path.parts
+        if path.name != "__init__.py" and "resources" not in path.parts
     ]
     program = """
 import importlib, platform, sys
@@ -208,7 +208,7 @@ def test_ui_and_apply_read_the_same_settings_at_the_bound_paths(tmp_path, monkey
     from textual.widgets import Input
 
     from setup_system.app import SetupApp
-    from setup_system.settings import Settings
+    from setup_system.configuration import Settings
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))

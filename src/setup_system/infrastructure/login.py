@@ -24,6 +24,7 @@ from setup_system.infrastructure.login_files import (
 )
 from setup_system.infrastructure.login_plan import default_target, plan_login
 from setup_system.infrastructure.login_recovery import MAX_FILE, LoginRecovery
+from setup_system.infrastructure.processes import run_command
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -37,7 +38,12 @@ class DesktopSystem:
     """Apply a checked login plan with bounded backup and conflict handling."""
 
     def __init__(
-        self, root: Path, *, run: Runner, paths: DesktopPaths | None = None, owner_uid: int = 0
+        self,
+        root: Path,
+        *,
+        run: Runner = run_command,
+        paths: DesktopPaths | None = None,
+        owner_uid: int = 0,
     ) -> None:
         self.root = root
         self.run = run
@@ -50,8 +56,8 @@ class DesktopSystem:
         result = self.run(
             arguments,
             env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"},
-            text=True,
-            capture_output=True,
+            discard_output=arguments[-1] != "get-default",
+            discard_stderr=True,
             timeout=120,
             check=check,
         )

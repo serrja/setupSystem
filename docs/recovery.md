@@ -10,6 +10,9 @@ may already have changed the system. An unknown result means the runner could
 not verify the outcome. Inspect the system and its receipts before preparing a
 new plan. The app displays the recorded outcome on its next launch.
 
+
+To recover a stage preference, inspect the retained TOML backup beside the affected file under `$XDG_CONFIG_HOME/setup-system`. Keep a copy of your current edits, restore the desired settings, then use **Reload** and review a new plan. File-operation receipts use the separate state directory. [Configuration](configuration.md)
+
 ## Receipts and backups
 
 A native flock serializes package changes, Apply and Restore. Preview optional removals separately. Cleanup rechecks the native solver result and invokes dpkg on the exact approved names.

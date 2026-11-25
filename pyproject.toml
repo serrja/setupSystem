@@ -12,6 +12,7 @@ license-files = ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10,<3",
+    "pydantic-settings>=2.8.1,<3",
     "textual>=2.1,<7",
     "tomlkit>=0.13,<1",
     "platformdirs>=4,<5",
@@ -94,7 +95,7 @@ python_version = "3.12"
 strict = true
 mypy_path = ["src"]
 explicit_package_bases = true
-files = ["src/setup_system", "assets/hyprland/panel.py", "assets/login/login_session.py", "ansible", "libexec/dpkg_lock.py", "debian/build.py", "docker/coverage_report.py", "docker/verify_native.py", "docker/verify-installed.py", "docker/installed_smoke.py"]
+files = ["src/setup_system", "assets/hyprland/panel.py", "assets/login/login_session.py", "ansible", "libexec/dpkg_lock.py", "debian/build.py", "docker/coverage_report.py", "docker/release_target.py", "docker/verify_native.py", "docker/settings_reference.py", "docker/verify-installed.py", "docker/installed_smoke.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

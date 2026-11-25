@@ -17,9 +17,7 @@ from pathlib import Path
 import pexpect  # type: ignore[import-untyped]
 from pexpect.fdpexpect import fdspawn  # type: ignore[import-untyped]
 
-PROMPT_TIMEOUT = 30.0
-IDLE_TIMEOUT = 90.0
-TERMINATE_TIMEOUT = 2.0
+from setup_system.configuration import ApplicationOptions
 
 
 class Target(StrEnum):
@@ -127,10 +125,10 @@ def _signal_group(pid: int, sig: signal.Signals) -> None:
         os.killpg(pid, sig)
 
 
-async def _stop_group(pid: int, done: asyncio.Task[int]) -> None:
+async def _stop_group(pid: int, done: asyncio.Task[int], grace: float) -> None:
     _signal_group(pid, signal.SIGTERM)
     try:
-        await asyncio.wait_for(asyncio.shield(done), TERMINATE_TIMEOUT)
+        await asyncio.wait_for(asyncio.shield(done), grace)
     except TimeoutError:
         _signal_group(pid, signal.SIGKILL)
         await done
@@ -146,6 +144,7 @@ async def _plain(
     cancel: asyncio.Event,
     report: Report,
     *,
+    options: ApplicationOptions,
     mutating: bool,
     foreground: bool,
 ) -> int:
@@ -173,34 +172,61 @@ async def _plain(
         if process.stdout is not None:
             # Discard output as it arrives; command output is never a user-visible diagnostic.
             try:
-                while await asyncio.wait_for(process.stdout.read(65536), IDLE_TIMEOUT):
-                    pass
-                return await asyncio.wait_for(asyncio.shield(finished), IDLE_TIMEOUT)
+                async with asyncio.timeout(options.read_only_timeout_seconds):
+                    while await asyncio.wait_for(
+                        process.stdout.read(65536), options.idle_timeout_seconds
+                    ):
+                        pass
+                    return await asyncio.wait_for(
+                        asyncio.shield(finished), options.idle_timeout_seconds
+                    )
             except TimeoutError:
                 raise ReadinessTimeoutError(
-                    "The read-only operation stopped reporting activity"
+                    "The read-only operation exceeded its time limit"
                 ) from None
             except OSError:
                 raise TransportError("Lost the read-only command output channel") from None
         try:
-            return await asyncio.wait_for(asyncio.shield(finished), IDLE_TIMEOUT)
+            return await asyncio.wait_for(asyncio.shield(finished), options.idle_timeout_seconds)
         except TimeoutError:
             report(Phase.WAITING)
             return await finished
 
+    stopping: asyncio.Task[None] | None = None
+
+    def stop_reader_group() -> asyncio.Task[None]:
+        nonlocal stopping
+        if stopping is None:
+            stopping = asyncio.create_task(
+                _stop_group(process.pid, finished, options.termination_grace_seconds)
+            )
+        return stopping
+
     async def request_stop() -> None:
         report(Phase.CANCELLING)
         if read_only:
-            await _stop_group(process.pid, finished)
+            # Keep reading while the group exits, including when its deadline expires.
+            stop_reader_group()
         else:
             await asyncio.to_thread(_cancel_at_boundary, env)
 
     try:
-        code = await _supervise(observe(), cancel, request_stop)
+        try:
+            code = await _supervise(observe(), cancel, request_stop)
+        except ReadinessTimeoutError:
+            if read_only and cancel.is_set():
+                return 130
+            raise
         return 130 if read_only and cancel.is_set() else code
     finally:
-        if read_only and not finished.done():
-            await _stop_group(process.pid, finished)
+        if process.stdout is not None and (stopping is not None or not finished.done()):
+            shutdown = stop_reader_group()
+            try:
+                with suppress(OSError):
+                    while await process.stdout.read(65536):
+                        pass
+            finally:
+                await shutdown
         await finished
 
 
@@ -223,6 +249,7 @@ async def _authenticated(
     report: Report,
     take_password: Callable[[], bytes],
     *,
+    options: ApplicationOptions,
     root_account: bool,
 ) -> int:
     # The new session has no controlling terminal. getpass reads the private
@@ -260,7 +287,7 @@ async def _authenticated(
                 terminal_input.close()
                 await asyncio.to_thread(_cancel_at_boundary, env)
             else:
-                await _stop_group(process.pid, finished)
+                await _stop_group(process.pid, finished, options.termination_grace_seconds)
 
         async def observe() -> int:
             nonlocal authorized, reader, reached_eof
@@ -273,7 +300,7 @@ async def _authenticated(
             # Bound Pexpect's unmatched pre-authentication transcript.
             matched = await reader.expect(
                 [prompt, pexpect.EOF, re.compile(rb"(?s).{65536}")],
-                timeout=PROMPT_TIMEOUT,
+                timeout=options.prompt_timeout_seconds,
                 async_=True,
             )
             reached_eof = matched == 1
@@ -281,7 +308,9 @@ async def _authenticated(
                 return 130
             if reached_eof:
                 try:
-                    return await asyncio.wait_for(asyncio.shield(finished), PROMPT_TIMEOUT)
+                    return await asyncio.wait_for(
+                        asyncio.shield(finished), options.prompt_timeout_seconds
+                    )
                 except TimeoutError:
                     raise ReadinessTimeoutError(
                         "The authorization terminal closed before the command was ready"
@@ -304,7 +333,7 @@ async def _authenticated(
             report(Phase.RUNNING)
             # Match real output, not periodic wakeups. The reader retains at most a
             # single chunk. After a quiet period wait for output or EOF without a timer.
-            timeout: float | None = IDLE_TIMEOUT
+            timeout: float | None = options.idle_timeout_seconds
             tail = b""
             while True:
                 index = await reader.expect(
@@ -321,7 +350,7 @@ async def _authenticated(
                     report(Phase.WAITING)
                     timeout = None
                 else:
-                    timeout = IDLE_TIMEOUT
+                    timeout = options.idle_timeout_seconds
                     tail = (tail + reader.after)[-512:]
                     if tail.split(b"\n")[-1] in (
                         b"BECOME password: ",
@@ -356,7 +385,7 @@ async def _authenticated(
                         with suppress(OSError):
                             await asyncio.to_thread(_drain_output, output)
                 elif not authorized and not finished.done():
-                    await _stop_group(process.pid, finished)
+                    await _stop_group(process.pid, finished, options.termination_grace_seconds)
             finally:
                 try:
                     await finished
@@ -367,7 +396,9 @@ async def _authenticated(
                         if reader is not None and reader.isalive() and not reached_eof:
                             with suppress(OSError, pexpect.ExceptionPexpect):
                                 await reader.expect(
-                                    pexpect.EOF, timeout=TERMINATE_TIMEOUT, async_=True
+                                    pexpect.EOF,
+                                    timeout=options.termination_grace_seconds,
+                                    async_=True,
                                 )
                     finally:
                         if reader is not None:
@@ -383,6 +414,7 @@ async def execute_make(
     cancel: asyncio.Event,
     report: Report,
     *,
+    options: ApplicationOptions,
     take_password: Callable[[], bytes] | None,
 ) -> int:
     target = Target(target)
@@ -397,6 +429,7 @@ async def execute_make(
             cancel,
             report,
             take_password,
+            options=options,
             root_account=target == Target.ADMIN_APPLY,
         )
     return await _plain(
@@ -405,6 +438,7 @@ async def execute_make(
         env,
         cancel,
         report,
+        options=options,
         mutating=target.mutating,
         foreground=target in FOREGROUND,
     )

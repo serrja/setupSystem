@@ -39,8 +39,7 @@ def render(source, settings=None, info=None, **overrides):
     env.filters["quote"] = shlex.quote
     env.filters["editor_globs_lua"] = FILTERS["editor_globs_lua"]
     env.filters["to_json"] = json.dumps
-    palette = tomllib.loads((ROOT / "config/shared/palette.toml").read_text())
-    ctx = FILTERS["context"](palette, settings or {}, info or facts())
+    ctx = {"render_ctx": FILTERS["context"](str(ROOT), settings or {}, info or facts())}
     editor = tomllib.loads((ROOT / "config/workspace/editor.toml").read_text())
     ctx["editor_catalog"] = editor
     ctx["plugin_lua"] = "{" + ",".join(map(json.dumps, editor["plugins"])) + "}"

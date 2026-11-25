@@ -123,7 +123,7 @@ def test_search_exclusions_follow_the_catalog_in_both_editor_pickers(run_env):
                         "catalog_path": str(catalog),
                         "editor_catalog": lookup,
                         "plugin_lua": "{}",
-                        "selected_lua": "{}",
+                        "render_ctx": {"selected_lua": "{}"},
                     },
                     "tasks": [{"ansible.builtin.template": step}],
                 }

@@ -35,5 +35,6 @@ Choose a section, inspect the machine and review the plan before selecting **App
 
 - [Update or remove the package](docs/debian.md)
 - [Configure the workstation](docs/textual_workflow.md)
+- [Save preferences and configure suggestions](docs/configuration.md)
 - [Restore managed files](docs/recovery.md)
 - [Build and test from source](docs/development.md)

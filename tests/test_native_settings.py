@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from setup_system.configuration import Settings
 from setup_system.models import BaseOptions, PlanSnapshot, WorkspaceOptions
-from setup_system.settings import Settings
 
 
 def store(tmp_path: Path) -> Settings:

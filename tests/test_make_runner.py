@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from setup_system import make_transport as transport
+from setup_system.configuration import Settings
 from setup_system.runner import AsyncMakeRunner, BecomePassword, Command, Target
 
 
@@ -42,6 +43,7 @@ def run_transport(tmp_path, target, secret=None, *, cancel=None, phases=None):
         env,
         cancel if cancel is not None else asyncio.Event(),
         phases.append if phases is not None else lambda phase: None,
+        options=Settings.application(),
         take_password=secret.take if secret is not None else None,
     )
 
@@ -227,7 +229,7 @@ time.sleep(8)
 Path("finished").touch()
 """,
     )
-    monkeypatch.setattr(transport, "IDLE_TIMEOUT", 0.2)
+    monkeypatch.setenv("SETUP_SYSTEM_IDLE_TIMEOUT_SECONDS", "0.2")
     with pytest.raises(transport.TransportError, match="read-only"):
         asyncio.run(run_transport(tmp_path, Target.WORKSPACE_PLAN))
     assert not (tmp_path / "finished").exists()
@@ -307,7 +309,7 @@ def test_real_ansible_asks_on_the_private_terminal_without_running_become(tmp_pa
 
 def test_readiness_deadline_does_not_transmit_password(tmp_path, monkeypatch):
     fixture_make(tmp_path, "import time\ntime.sleep(10)\n")
-    monkeypatch.setattr(transport, "PROMPT_TIMEOUT", 0.15)
+    monkeypatch.setenv("SETUP_SYSTEM_PROMPT_TIMEOUT_SECONDS", "0.15")
     token = BecomePassword("test-only")
     with pytest.raises(transport.ReadinessTimeoutError, match="prompt"):
         asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, token))
@@ -343,7 +345,7 @@ time.sleep(.18)
 Path("boundary").touch()
 """,
     )
-    monkeypatch.setattr(transport, "IDLE_TIMEOUT", 0.04)
+    monkeypatch.setenv("SETUP_SYSTEM_IDLE_TIMEOUT_SECONDS", "0.04")
     phases = []
     assert (
         asyncio.run(
@@ -390,7 +392,7 @@ time.sleep(4)
 Path('changed').touch()
 """,
     )
-    monkeypatch.setattr(transport, "TERMINATE_TIMEOUT", 0.1)
+    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.1")
 
     async def exercise():
         stop = asyncio.Event()
@@ -421,7 +423,13 @@ def test_private_authorization_cancel_preserves_unused_token(tmp_path):
         env = {"SETUP_SYSTEM_CANCEL": str(tmp_path / "cancel")}
         async with asyncio.timeout(2):
             result = await transport.execute_make(
-                tmp_path, Target.ADMIN_APPLY, env, stop, notice, take_password=token.take
+                tmp_path,
+                Target.ADMIN_APPLY,
+                env,
+                stop,
+                notice,
+                options=Settings.application(),
+                take_password=token.take,
             )
         assert result == 130
         assert token.take() == b"fixture"
@@ -524,7 +532,7 @@ def test_partial_native_outcome_survives_cancellation_exit_code(tmp_path, monkey
 
 def test_premature_terminal_eof_has_a_deadline_before_authorization(tmp_path, monkeypatch):
     fixture_make(tmp_path, "import time; time.sleep(0.6)")
-    monkeypatch.setattr(transport, "PROMPT_TIMEOUT", 0.08)
+    monkeypatch.setenv("SETUP_SYSTEM_PROMPT_TIMEOUT_SECONDS", "0.08")
 
     async def early_eof(self, *args, **kwargs):
         return 1
@@ -696,7 +704,7 @@ Path("finished").touch()
 
         monkeypatch.setattr(transport.fdspawn, "expect", interrupt)
         if condition == "idle":
-            monkeypatch.setattr(transport, "IDLE_TIMEOUT", 0.06)
+            monkeypatch.setenv("SETUP_SYSTEM_IDLE_TIMEOUT_SECONDS", "0.06")
         operation = run_transport(
             tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture"), cancel=cancel
         )
@@ -706,5 +714,49 @@ Path("finished").touch()
         else:
             await operation
         assert (tmp_path / "finished").exists()
+
+    asyncio.run(exercise())
+
+
+def test_active_read_only_output_has_an_absolute_deadline(tmp_path, monkeypatch):
+    fixture_make(
+        tmp_path,
+        "import os, signal\nfrom pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path('make-pid').write_text(str(os.getppid()))\n"
+        "while True: os.write(1, b'x' * 65536)\n",
+    )
+    monkeypatch.setenv("SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS", "0.4")
+    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.1")
+
+    async def scenario():
+        async with asyncio.timeout(3):
+            with pytest.raises(transport.ReadinessTimeoutError, match="read-only"):
+                await run_transport(tmp_path, Target.WORKSPACE_PLAN)
+
+    asyncio.run(scenario())
+    pid = int((tmp_path / "make-pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_read_only_cancel_during_output_drain_survives_overlapping_deadline(tmp_path, monkeypatch):
+    fixture_make(
+        tmp_path,
+        "import os,signal\nfrom pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path('ready').touch()\nwhile True: os.write(1,b'x' * 65536)\n",
+    )
+    monkeypatch.setenv("SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS", "0.6")
+    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.8")
+
+    async def exercise():
+        stop = asyncio.Event()
+        task = asyncio.create_task(run_transport(tmp_path, Target.WORKSPACE_PLAN, cancel=stop))
+        async with asyncio.timeout(5):
+            while not (tmp_path / "ready").exists():
+                await asyncio.sleep(0.005)
+            stop.set()
+            assert await task == 130
 
     asyncio.run(exercise())

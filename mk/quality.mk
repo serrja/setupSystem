@@ -17,10 +17,11 @@ typecheck:
 test:
 	umask 022 && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR $(UV) run --locked pytest --cov --cov-report=json --cov-report=xml --cov-report=term-missing --junitxml=coverage/python/junit.xml
 native-check: lint typecheck test
+	$(UV) run --locked python docker/settings_reference.py
 	$(UV) lock --check
 	$(UV) run --locked setup-system --help
 native-build:
 	$(UV) build --no-build-isolation --wheel --sdist --out-dir coverage/native-artifacts
-native-verify:
-	$(UV) run --locked python docker/verify_native.py coverage/native-artifacts
-native-ci: native-check native-build native-verify package
+native-verify: package
+	$(UV) run --locked python docker/verify_native.py coverage/native-artifacts "$(PACKAGE_DIR)"
+native-ci: native-check native-build native-verify

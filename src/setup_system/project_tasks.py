@@ -23,6 +23,7 @@ from setup_system.domain.templates import TemplateSource
 from setup_system.infrastructure import copier_templates, git_profiles, project_layout, rtk, shell
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.operation_io import read_wire
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.user_storage import inside_home
 from setup_system.layout import resource_root
 from setup_system.machine_io import write_model
@@ -89,9 +90,7 @@ def _source(root: Path, selected: TemplateChoice) -> tuple[TemplateSource, Path]
     source = templates.load_templates(root).get(selected.template)
     if source is None:
         raise ValueError("Choose an exact template alias from this catalog")
-    cache = inside_home(
-        Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "setup-system/templates"
-    )
+    cache = inside_home(templates.template_cache())
     return source, cache
 
 
@@ -164,9 +163,9 @@ def _template(root: Path, operation: str, fields: dict[str, JsonValue]) -> Previ
         copier_templates.copier_executable()
         copier_templates.validate_destination(plan)
         if plan.operation == "update":
-            observed["before_head"] = subprocess.check_output(
-                ["git", "-C", str(destination), "rev-parse", "HEAD"], text=True
-            ).strip()
+            observed["before_head"] = run_command(
+                ["git", "-C", str(destination), "rev-parse", "HEAD"], timeout=15
+            ).stdout.strip()
         actions = [
             f"Copier {plan.operation} {destination} from {source.project} "
             f"{plan.version.tag} ({plan.version.commit})"

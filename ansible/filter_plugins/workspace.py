@@ -11,8 +11,9 @@ from typing import Annotated, Any, TypedDict
 
 from pydantic import Field
 
-from setup_system.domain.auth_screen import AuthScreen
 from setup_system.domain.contracts import ContractModel
+from setup_system.domain.intentions import Theme
+from setup_system.infrastructure.palette import desktop_style, palette
 from setup_system.infrastructure.receipt_repository import ownership
 from setup_system.infrastructure.tool_paths import personal_path
 
@@ -136,34 +137,27 @@ def editor_specs(
 
 
 def context(
-    palette: dict[str, str], settings: RenderSelection, info: RenderFacts
+    root: str, settings: RenderSelection, info: RenderFacts
 ) -> dict[
     str, str | int | float | dict[str, str | int] | list[dict[str, str | int | float]] | None
 ]:
-    selected = settings.get("theme", {})
-    colors = {
-        k: v for k, v in palette.items() if isinstance(v, str) and re.fullmatch(r"#[a-f0-9]{6}", v)
-    }
+    selected = Theme.model_validate(settings.get("theme", {}))
+    style = desktop_style(Path(root))
+    colors = palette(Path(root))
     values = dict(colors)
     for k, c in colors.items():
         values[k + "_hex"] = c[1:]
         values[k + "_rgb"] = ", ".join(str(int(c[i : i + 2], 16)) for i in (1, 3, 5))
     return dict(
         values,
-        rounding=selected.get("rounding", 12),
-        opacity=selected.get("opacity", 0.96),
-        panel_height=30 if selected.get("compact_panel") else 36,
-        effects="true" if selected.get("effects", True) else "false",
+        rounding=selected.rounding,
+        opacity=selected.opacity,
+        panel_height=style.compact_panel_height if selected.compact_panel else style.panel_height,
+        effects="true" if selected.effects else "false",
         keyboard=settings.get("keyboard"),
         monitors=settings.get("monitors", []),
-        auth_screen=AuthScreen().tokens(colors),
-        fonts={
-            "family": "JetBrains Mono",
-            "emoji_fallback": "Noto Color Emoji",
-            "ui_size": 10,
-            "terminal_size": 11,
-            "panel_size": 12,
-        },
+        auth_screen=style.auth_screen.tokens(colors),
+        fonts=style.fonts.model_dump(),
         selected_lua="{" + ",".join(json.dumps(x) for x in settings.get("languages", [])) + "}",
         xdg={k: v.replace("'", "'\"'\"'") for k, v in info["xdg"].items()},
     )

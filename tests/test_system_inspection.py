@@ -318,15 +318,13 @@ def test_native_runner_has_fixed_timeout_and_no_ambient_credentials(monkeypatch)
 
     monkeypatch.setenv("GH_TOKEN", "fixture")
     monkeypatch.setenv("HTTP_PROXY", "fixture")
-    monkeypatch.setattr(subprocess, "run", execute)
+    monkeypatch.setattr(inspection_commands, "run_command", execute)
     inspection_commands.run_inspection(
         ["/usr/bin/findmnt", "--json", "--target", "/", "--output", "SOURCE,FSTYPE"]
     )
     assert calls[0][1] == {
         "check": False,
         "stdin": subprocess.DEVNULL,
-        "capture_output": True,
-        "text": True,
         "timeout": 10,
         "env": {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"},
     }
@@ -352,7 +350,9 @@ def test_truncated_tzif_has_a_preflight_value_error(context, content) -> None:
     ],
 )
 def test_inspection_runner_rejects_any_nonquery_operation(monkeypatch, argv) -> None:
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("nonquery subprocess"))
+    monkeypatch.setattr(
+        inspection_commands, "run_command", lambda *_a, **_k: pytest.fail("nonquery subprocess")
+    )
     with pytest.raises(ValueError, match="read-only inspection query"):
         inspection_commands.run_inspection(argv)
 
@@ -393,7 +393,7 @@ def test_fscrypt_production_query_classifies_unlock_state_without_key_material(
         }
         return query(argv)
 
-    monkeypatch.setattr(subprocess, "run", execute)
+    monkeypatch.setattr(inspection_commands, "run_command", execute)
     observed = inspection.inspect_system(home, paths=paths)
     assert observed.encryption.home.state == state
     assert "fscrypt" in observed.encryption.home.layers
@@ -409,7 +409,7 @@ def test_native_missing_key_during_attribute_query_reaches_locked(context, monke
             raise OSError(errno.ENOKEY, "private key identifier")
         return query(argv)
 
-    monkeypatch.setattr(subprocess, "run", execute)
+    monkeypatch.setattr(inspection_commands, "run_command", execute)
     observed = inspection.inspect_system(home, paths=paths)
     assert observed.encryption.home.state == EncryptionState.LOCKED
     assert "private key identifier" not in repr(observed)
@@ -437,7 +437,9 @@ def test_copied_localtime_does_not_accept_a_conflicting_timezone_label(context) 
 
 def test_readonly_runner_cannot_unlock_fscrypt(monkeypatch, context) -> None:
     home, _, _ = context
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("unlock invoked"))
+    monkeypatch.setattr(
+        inspection_commands, "run_command", lambda *_a, **_k: pytest.fail("unlock invoked")
+    )
     with pytest.raises(ValueError, match="read-only inspection query"):
         inspection_commands.run_inspection(["/usr/bin/fscrypt", "unlock", str(home)])
 
@@ -471,7 +473,7 @@ def test_ecryptfs_policy_marker_requires_mounted_home_through_native_queries(
         assert options["stdin"] == subprocess.DEVNULL
         return query(argv)
 
-    monkeypatch.setattr(subprocess, "run", execute)
+    monkeypatch.setattr(inspection_commands, "run_command", execute)
     original_read = Path.open
 
     def no_marker_content(path, *arguments, **options):
@@ -521,7 +523,7 @@ def test_home_access_guard_observes_ecryptfs_unmount_again_before_each_worker(
         assert Path(argv[0]).name not in {"timedatectl", "dpkg-query"}
         return query(argv)
 
-    monkeypatch.setattr(subprocess, "run", execute)
+    monkeypatch.setattr(inspection_commands, "run_command", execute)
     before = set(home.iterdir())
     assert encryption.validate_home_access(home).state == EncryptionState.ENCRYPTED
     query.home_filesystem = "ext4"

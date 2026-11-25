@@ -11,11 +11,12 @@ from zoneinfo import ZoneInfo
 
 from setup_system.domain.system_facts import ClockSnapshot, InspectionPaths
 from setup_system.infrastructure.inspection_commands import (
-    MAX_OUTPUT,
     TIME_PROVIDERS,
     InspectionRunner,
     read_query,
 )
+
+MAX_TZIF_BYTES = 1024 * 1024
 
 
 def validate_timezone(
@@ -37,7 +38,7 @@ def validate_timezone(
         if (
             not target.is_relative_to(root)
             or not target.is_file()
-            or target.stat().st_size > MAX_OUTPUT
+            or target.stat().st_size > MAX_TZIF_BYTES
         ):
             raise ValueError
         with target.open("rb") as source:
@@ -61,7 +62,7 @@ def timezone_file(paths: InspectionPaths) -> str | None:
         if paths.localtime.is_symlink():
             return None
         details = paths.localtime.stat()
-        if not stat.S_ISREG(details.st_mode) or details.st_size > MAX_OUTPUT:
+        if not stat.S_ISREG(details.st_mode) or details.st_size > MAX_TZIF_BYTES:
             return None
         local_content = paths.localtime.read_bytes()
     except FileNotFoundError:

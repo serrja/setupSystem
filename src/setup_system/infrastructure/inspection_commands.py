@@ -8,10 +8,9 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from setup_system.infrastructure.processes import MAX_OUTPUT, run_command
+
 COMMAND_TIMEOUT = 10
-
-
-MAX_OUTPUT = 1024 * 1024
 
 
 TIME_PROVIDERS = ("chrony", "ntpsec", "openntpd", "systemd-timesyncd")
@@ -65,12 +64,10 @@ def run_inspection(argv: list[str]) -> subprocess.CompletedProcess[str]:
     """Run only fixed read-only queries with no inherited proxy or account environment."""
     if not _query_allowed(argv):
         raise ValueError("Expected a fixed read-only inspection query")
-    return subprocess.run(
+    return run_command(
         argv,
         check=False,
         stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
         timeout=COMMAND_TIMEOUT,
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"},
     )
