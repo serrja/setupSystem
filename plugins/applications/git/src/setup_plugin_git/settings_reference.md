@@ -23,27 +23,6 @@ This operation has no editable parameters.
 | `editor` | Commit editor | `"nvim"` | `{"enum": ["nvim", "vim", "nano"]}` |
 | `signing_key` | Full OpenPGP fingerprint. Leave empty for unsigned commits. | `""` | `{"pattern": "^([0-9A-Fa-f]{40}\|[0-9A-Fa-f]{64})?$"}` |
 
-## Account status
-
-| Field | Description | Default | Constraints |
-| --- | --- | --- | --- |
-| `host` | Hosting service | `"github.com"` | `{"maxLength": 253}` |
-| `account` | Local hosting account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
-
-## Sign in
-
-| Field | Description | Default | Constraints |
-| --- | --- | --- | --- |
-| `host` | Host | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
-| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
-
-## Sign out
-
-| Field | Description | Default | Constraints |
-| --- | --- | --- | --- |
-| `host` | Hosting service | `"github.com"` | `{"maxLength": 253}` |
-| `account` | Local hosting account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
-
 ## Create an SSH key
 
 | Field | Description | Default | Constraints |
@@ -113,3 +92,9 @@ This operation has no editable parameters.
 ## Remove managed local SSH keys
 
 This operation has no editable parameters.
+
+## Remove one formerly managed package
+
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `name` | Choose one package removed from this plugin's install list. | `required` | `{"maxLength": 128, "pattern": "^[a-z0-9][a-z0-9+.-]+$"}` |

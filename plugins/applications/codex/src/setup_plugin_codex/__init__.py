@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import tomllib
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -17,6 +18,7 @@ from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.user_storage import capture_receipt, checked_directory, inside_home
 from setup_system_sdk import (
     Inputs,
+    LifecycleAction,
     Outcome,
     Plan,
     PluginSettings,
@@ -27,6 +29,15 @@ from setup_system_sdk import (
 from setup_system_sdk.native import FilesBackend, command, owned_file_removal, remove_owned_file
 
 from . import client, release
+
+
+class ClientAction(StrEnum):
+    LOGIN = "login"
+    LOGOUT = "logout"
+    STATUS = "status"
+    CONFIGURE_MCP = "configure-mcp"
+    MCP = "mcp"
+    SKILLS = "skills"
 
 
 class PolicySource(Inputs):
@@ -122,26 +133,26 @@ def original(path: Path) -> bytes:
 class Plugin(FilesBackend):
     executable = "/usr/bin/codex"
     settings_model = Settings
-    file_actions = frozenset({"configure", "configure-mcp"})
+    file_actions = frozenset({LifecycleAction.CONFIGURE, ClientAction.CONFIGURE_MCP})
     inputs: ClassVar[dict[str, type[Inputs]]] = {
-        "check": Inputs,
-        "install": Inputs,
-        "update": Inputs,
-        "uninstall": Inputs,
-        "configure": Project,
-        "login": SignIn,
-        "status": Inputs,
-        "logout": Inputs,
-        "mcp": Inputs,
-        "configure-mcp": McpServer,
-        "skills": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.INSTALL: Inputs,
+        LifecycleAction.UPDATE: Inputs,
+        LifecycleAction.UNINSTALL: Inputs,
+        LifecycleAction.CONFIGURE: Project,
+        ClientAction.LOGIN: SignIn,
+        ClientAction.STATUS: Inputs,
+        ClientAction.LOGOUT: Inputs,
+        ClientAction.MCP: Inputs,
+        ClientAction.CONFIGURE_MCP: McpServer,
+        ClientAction.SKILLS: Inputs,
     }
     manual: ClassVar[dict[str, str]] = {
-        "mcp": (
+        ClientAction.MCP: (
             "Review a single server's source and permissions. Use codex mcp add in its native "
             "terminal, then verify with codex mcp list."
         ),
-        "skills": (
+        ClientAction.SKILLS: (
             "Choose the specific skill in the official client's skill manager, review its "
             "source, and enable it for the intended scope."
         ),
@@ -155,11 +166,11 @@ class Plugin(FilesBackend):
         )
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "uninstall":
+        if action_id == LifecycleAction.UNINSTALL:
             return owned_file_removal(release.binary())
-        if action_id in {"install", "update"}:
+        if action_id in {LifecycleAction.INSTALL, LifecycleAction.UPDATE}:
             return release.plan(action_id, release.resolve())
-        if action_id == "check":
+        if action_id == LifecycleAction.CHECK:
             path = program()
             if not path.is_file():
                 return Plan(outcome=Outcome.BLOCKED, summary="Codex executable unavailable")
@@ -170,7 +181,7 @@ class Plugin(FilesBackend):
                 if rc == 0 and version.strip()
                 else "Version unavailable",
             )
-        if action_id == "configure-mcp" and isinstance(inputs, McpServer):
+        if action_id == ClientAction.CONFIGURE_MCP and isinstance(inputs, McpServer):
             plan = super().prepare(action_id, settings, inputs)
             return plan.model_copy(
                 update={
@@ -180,7 +191,7 @@ class Plugin(FilesBackend):
                     ]
                 }
             )
-        if isinstance(inputs, SignIn) and action_id == "login":
+        if isinstance(inputs, SignIn) and action_id == ClientAction.LOGIN:
             selected = login_binary()
             if not selected:
                 return Plan(
@@ -201,7 +212,7 @@ class Plugin(FilesBackend):
                 summary="Sign into the verified Codex client using its system keyring",
                 warnings=["Interactive Codex sessions must select the same keyring storage mode."],
             )
-        if action_id in {"status", "logout"}:
+        if action_id in {ClientAction.STATUS, ClientAction.LOGOUT}:
             if not program().is_file():
                 return Plan(outcome=Outcome.BLOCKED, summary="Install the official CLI first")
             managed = login_binary()
@@ -216,7 +227,7 @@ class Plugin(FilesBackend):
                     outcome=Outcome.NEEDS_USER_ACTION,
                     summary="Check native CLI authentication status",
                 )
-            if action_id == "status":
+            if action_id == ClientAction.STATUS:
                 return Plan(outcome=Outcome.NO_CHANGES, summary="Native Codex login verified")
             return Plan(
                 summary="Sign out of this local Codex client",
@@ -226,7 +237,7 @@ class Plugin(FilesBackend):
 
     async def plan(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
         if (
-            action_id == "configure"
+            action_id == LifecycleAction.CONFIGURE
             and isinstance(settings, Settings)
             and (settings.model or settings.effort)
         ):
@@ -322,11 +333,11 @@ class Plugin(FilesBackend):
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
-        if action_id == "uninstall":
+        if action_id == LifecycleAction.UNINSTALL:
             return remove_owned_file(release.binary(), plan)
-        if action_id in {"install", "update"}:
+        if action_id in {LifecycleAction.INSTALL, LifecycleAction.UPDATE}:
             return release.install(action_id, plan)
-        if isinstance(inputs, SignIn) and action_id == "login":
+        if isinstance(inputs, SignIn) and action_id == ClientAction.LOGIN:
             path = login_binary()
             if not path:
                 return Result(outcome=Outcome.BLOCKED, message="Codex release identity changed")
@@ -338,7 +349,7 @@ class Plugin(FilesBackend):
                 if rc == status == 0
                 else "Check the account in the native Codex terminal",
             )
-        if action_id == "logout":
+        if action_id == ClientAction.LOGOUT:
             managed = login_binary()
             argv = keyring_command(managed, "logout") if managed else [str(program()), "logout"]
             rc, _ = command(*argv)

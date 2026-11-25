@@ -1,0 +1,5 @@
+{
+  "names": ["snapd"],
+  "removal_guard": "removal_guard.py",
+  "service": "snapd.service"
+}

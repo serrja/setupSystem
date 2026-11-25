@@ -1,6 +1,7 @@
 """Manage the current login's Zsh fragments and preserve shell history."""
 
 import asyncio
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -18,6 +19,7 @@ from setup_system.infrastructure.file_publication import observe
 from setup_system_sdk import (
     EnvironmentValue,
     Inputs,
+    LifecycleAction,
     Outcome,
     Plan,
     PluginSettings,
@@ -25,6 +27,10 @@ from setup_system_sdk import (
     Result,
 )
 from setup_system_sdk.apt import DebianPackages, apply_packages
+
+
+class PluginAction(StrEnum):
+    VERIFY_STARTUP = "verify-startup"
 
 
 class Terminal(EnvironmentValue):
@@ -49,13 +55,13 @@ class Plugin(DebianPackages):
     executable = "/usr/bin/zsh"
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
-        "verify-startup": Startup,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
+        PluginAction.VERIFY_STARTUP: Startup,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "verify-startup" and isinstance(inputs, Startup):
+        if action_id == PluginAction.VERIFY_STARTUP and isinstance(inputs, Startup):
             status = inspect_shell()
             if not status.zsh:
                 return Plan(outcome=Outcome.BLOCKED, summary="Install Zsh first")
@@ -64,7 +70,7 @@ class Plugin(DebianPackages):
             return Plan(
                 outcome=Outcome.NO_CHANGES, summary="Verified the selected native Zsh startup modes"
             )
-        if action_id != "configure":
+        if action_id != LifecycleAction.CONFIGURE:
             return super().prepare(action_id, settings, inputs)
         status = inspect_shell()
         if status.zsh is None:
@@ -106,7 +112,7 @@ class Plugin(DebianPackages):
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
-        if action_id != "configure":
+        if action_id != LifecycleAction.CONFIGURE:
             raise ValueError("Unknown user action")
         files = [r for r in plan.resources if r.kind == "file"]
         directory = next(r for r in plan.resources if r.kind == "directory")

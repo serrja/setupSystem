@@ -28,7 +28,17 @@ from setup_system.journal import Event, Journal
 from setup_system.layout import INSTALLED, verify_installation
 from setup_system.make_transport import Phase, authenticated_make, guard_refusal, make_command
 from setup_system.resource_ledger import LocalSnapshot, MissingPublicationProofError, ResourceLedger
-from setup_system_sdk import Action, ActionEvent, Inputs, Mutation, Outcome, Plan, Result, Values
+from setup_system_sdk import (
+    Action,
+    ActionEvent,
+    Inputs,
+    LifecycleAction,
+    Mutation,
+    Outcome,
+    Plan,
+    Result,
+    Values,
+)
 from setup_system_sdk.protocol import LIMIT, Reply, Request
 from setup_system_sdk.user_terminal import PERMISSION as NATIVE_TERMINAL_PERMISSION
 
@@ -285,7 +295,11 @@ class PluginManager:
     ) -> Snapshot:
         state = await self.activation(plugin_id)
         descriptor(state, action_id)
-        dependents = await self.ledger.dependents(plugin_id) if action_id == "uninstall" else []
+        dependents = (
+            await self.ledger.dependents(plugin_id)
+            if action_id == LifecycleAction.UNINSTALL
+            else []
+        )
         holdings = tuple(await self.ledger.holdings(plugin_id))
         request = Request(
             holdings=holdings,
@@ -380,7 +394,7 @@ class PluginManager:
 
         track_only = (
             item.plan.outcome is Outcome.NO_CHANGES
-            and action.id in ("install", "update")
+            and action.id in (LifecycleAction.INSTALL, LifecycleAction.UPDATE)
             and all(
                 r.effect == "ensure"
                 and r.before == r.after

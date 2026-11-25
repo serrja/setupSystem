@@ -5,8 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import setup_plugin_git as app
-from setup_plugin_git import Plugin, Settings, SignIn
+from setup_plugin_git import Plugin, Settings
 from setup_plugin_git.profiles import Profile
 
 from setup_system_sdk import Outcome
@@ -68,16 +67,3 @@ def test_reject_changed_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert result.outcome == Outcome.BLOCKED
     assert "mine" in config.read_text()
     assert not (tmp_path / ".config").exists()
-
-
-def test_account_host_is_approved(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app, "observed_login", lambda _: "different")
-    monkeypatch.setattr(app, "unlocked_store", lambda: True)
-    monkeypatch.setattr(app.user_terminal, "available", lambda: False)
-    plan = Plugin().prepare(
-        "login", Settings(), SignIn(account="fixture", host="github.com.evil.test")
-    )
-    assert plan.outcome == Outcome.BLOCKED
-    approved = Settings(enterprise_host="code.example.org")
-    plan = Plugin().prepare("login", approved, SignIn(account="fixture", host="code.example.org"))
-    assert plan.outcome in (Outcome.NEEDS_USER_ACTION, Outcome.BLOCKED)

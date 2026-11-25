@@ -4,9 +4,9 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=1,<2",
+  "sdk": ">=1.1,<2",
   "entry_point": "setup_plugin_firefox:Plugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "root"

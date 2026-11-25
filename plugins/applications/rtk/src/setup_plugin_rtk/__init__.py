@@ -8,14 +8,29 @@ from typing import ClassVar
 
 from setup_plugin_rtk.runtime import _released_binary, install_rtk, plan_rtk, release
 from setup_system.infrastructure.file_publication import observe
-from setup_system_sdk import ActionEvent, Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import (
+    ActionEvent,
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+)
 from setup_system_sdk.native import NativeBackend, owned_file_removal, remove_owned_file
 
 
 class Plugin(NativeBackend):
     executable = "/usr/bin/rtk"
     inputs: ClassVar[dict[str, type[Inputs]]] = dict.fromkeys(
-        ("install", "update", "check", "uninstall"), Inputs
+        (
+            LifecycleAction.INSTALL,
+            LifecycleAction.UPDATE,
+            LifecycleAction.CHECK,
+            LifecycleAction.UNINSTALL,
+        ),
+        Inputs,
     )
 
     async def inspect(self, settings: PluginSettings) -> Result:
@@ -23,18 +38,22 @@ class Plugin(NativeBackend):
         return Result(outcome=plan.outcome, message=plan.summary)
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "uninstall":
+        if action_id == LifecycleAction.UNINSTALL:
             return owned_file_removal(Path.home() / ".local/bin/rtk")
         selected = release()
         status, summary = plan_rtk(selected)
         target = status.path or Path.home() / ".local/bin/rtk"
-        if action_id == "check":
+        if action_id == LifecycleAction.CHECK:
             return Plan(
                 outcome=Outcome.NO_CHANGES if status.version else Outcome.BLOCKED, summary=summary
             )
         if status.path and (not status.product_matches or not target.is_relative_to(Path.home())):
             return Plan(outcome=Outcome.BLOCKED, summary="Existing RTK is externally managed")
-        if status.path and status.version != selected.version and action_id != "update":
+        if (
+            status.path
+            and status.version != selected.version
+            and action_id != LifecycleAction.UPDATE
+        ):
             return Plan(outcome=Outcome.BLOCKED, summary="Use Update for the existing executable")
         after = hashlib.sha256(_released_binary(selected)).hexdigest()
         original = observe(target)
@@ -64,7 +83,7 @@ class Plugin(NativeBackend):
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
-        if action_id == "uninstall":
+        if action_id == LifecycleAction.UNINSTALL:
             return remove_owned_file(Path.home() / ".local/bin/rtk", plan)
         (row,) = plan.resources
         target = Path(row.identity)
@@ -77,7 +96,7 @@ class Plugin(NativeBackend):
         ):
             return Result(outcome=Outcome.BLOCKED, message="Release or target changed")
         message, folder = install_rtk(
-            selected, update=action_id == "update", reviewed={target: current}
+            selected, update=action_id == LifecycleAction.UPDATE, reviewed={target: current}
         )
         return Result(
             outcome=Outcome.CHANGED,

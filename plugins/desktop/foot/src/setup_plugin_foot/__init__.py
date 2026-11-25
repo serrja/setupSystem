@@ -9,7 +9,7 @@ from pydantic import Field
 
 from setup_system.infrastructure.palette import desktop_style
 from setup_system.layout import resource_root
-from setup_system_sdk import Inputs, Plan, PluginSettings
+from setup_system_sdk import Inputs, LifecycleAction, Plan, PluginSettings
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import (
     PublishedAssets,
@@ -37,10 +37,10 @@ class Plugin(DebianPackages, PublishedAssets):
     package_folder = FOLDER
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
     }
-    file_actions = frozenset(("configure",))
+    file_actions = frozenset((LifecycleAction.CONFIGURE,))
 
     def mode(self, path: Path) -> int:
         return 0o700 if path.suffix in {".sh", ".py"} or path.name == "start-hyprland" else 0o600

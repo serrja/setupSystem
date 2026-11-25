@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system-plugin-zsh"
-version = "1.0.0"
+version = "1.0.1"
 requires-python = ">=3.12"
 description = "Maintain Zsh startup fragments and preserve the existing login shell and history."
 dependencies = ["setup-system>=0.6.0.dev0"]

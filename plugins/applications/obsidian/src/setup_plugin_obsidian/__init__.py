@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import os
 import stat
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 from urllib.parse import quote
@@ -18,9 +19,30 @@ from setup_system.infrastructure.user_storage import (
     inside_home,
     private_directory,
 )
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import (
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+)
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.native import command
+
+
+class PluginAction(StrEnum):
+    ACCOUNT_SYNC = "account-sync"
+    COMMUNITY_PLUGINS = "community-plugins"
+    CORE_FEATURE = "core-feature"
+    CREATE_VAULT = "create-vault"
+    EDITOR = "editor"
+    EDITOR_SNIPPET = "editor-snippet"
+    HOTKEYS = "hotkeys"
+    OPEN = "open"
+    READ_HOTKEY = "read-hotkey"
+    SET_THEME = "set-theme"
 
 
 class Settings(PluginSettings):
@@ -157,32 +179,32 @@ class Plugin(DebianPackages):
     package_folder = Path(__file__).parent
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "create-vault": NewVault,
-        "open": OpenVault,
-        "set-theme": Theme,
-        "core-feature": CoreFeature,
-        "editor-snippet": EditorSnippet,
-        "hotkeys": Inputs,
-        "read-hotkey": Hotkey,
-        "editor": Inputs,
-        "account-sync": Inputs,
-        "community-plugins": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        PluginAction.CREATE_VAULT: NewVault,
+        PluginAction.OPEN: OpenVault,
+        PluginAction.SET_THEME: Theme,
+        PluginAction.CORE_FEATURE: CoreFeature,
+        PluginAction.EDITOR_SNIPPET: EditorSnippet,
+        PluginAction.HOTKEYS: Inputs,
+        PluginAction.READ_HOTKEY: Hotkey,
+        PluginAction.EDITOR: Inputs,
+        PluginAction.ACCOUNT_SYNC: Inputs,
+        PluginAction.COMMUNITY_PLUGINS: Inputs,
     }
     manual: ClassVar[dict[str, str]] = {
-        "account-sync": (
+        PluginAction.ACCOUNT_SYNC: (
             "In Obsidian open Settings → General to sign in, then enable Sync and select its "
             "remote vault."
         ),
-        "community-plugins": (
+        PluginAction.COMMUNITY_PLUGINS: (
             "In Obsidian open Settings → Community plugins. Review each extension and its "
             "source before enabling it."
         ),
-        "hotkeys": (
+        PluginAction.HOTKEYS: (
             "In the selected vault open Settings → Hotkeys. Search for the command and choose "
             "its shortcut."
         ),
-        "editor": (
+        PluginAction.EDITOR: (
             "In the selected vault open Settings → Editor. Choose the editing behavior and "
             "check it within the same vault."
         ),
@@ -210,13 +232,19 @@ class Plugin(DebianPackages):
                 ],
                 warnings=["Notes and attachments in this folder are excluded from cleanup."],
             )
-        if action_id in {"open", "set-theme", "core-feature", "editor-snippet", "read-hotkey"}:
+        if action_id in {
+            PluginAction.OPEN,
+            PluginAction.SET_THEME,
+            PluginAction.CORE_FEATURE,
+            PluginAction.EDITOR_SNIPPET,
+            PluginAction.READ_HOTKEY,
+        }:
             if not isinstance(settings, Settings) or not settings.vault:
                 return Plan(outcome=Outcome.BLOCKED, summary="Select and save a vault path")
             selected = vault(settings.vault)
             if not selected.is_dir():
                 return Plan(outcome=Outcome.BLOCKED, summary="Selected vault folder is absent")
-            if action_id == "open":
+            if action_id == PluginAction.OPEN:
                 if not launcher_available():
                     return Plan(
                         outcome=Outcome.BLOCKED,

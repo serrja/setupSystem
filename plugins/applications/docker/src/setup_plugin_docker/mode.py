@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import Field, TypeAdapter
 
+from setup_plugin_docker.actions import DockerAction
 from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result
 from setup_system_sdk.managed_assets import PublishedAssets
 from setup_system_sdk.native import command
@@ -120,7 +121,7 @@ class Selection(Inputs):
 
 
 class Launcher(PublishedAssets):
-    file_actions = frozenset({"setup-mode"})
+    file_actions = frozenset({DockerAction.SETUP_MODE})
 
     def __init__(self, selection: Selection) -> None:
         self.selection = selection
@@ -216,7 +217,7 @@ def prepare(settings: Settings, selection: DaemonMode) -> Plan:
     found = inspect(settings, selection)
     if isinstance(found, Plan):
         return found
-    plan = found.prepare("setup-mode", settings, selection)
+    plan = found.prepare(DockerAction.SETUP_MODE, settings, selection)
     if plan.outcome not in (Outcome.READY, Outcome.NO_CHANGES):
         return plan
     if any(row.permissions != found.mode(Path(row.identity)) for row in plan.resources):
@@ -237,7 +238,7 @@ def mutate(settings: Settings, selection: DaemonMode, plan: Plan) -> Result:
     found = inspect(settings, selection)
     if isinstance(found, Plan) or plan.outcome != Outcome.READY:
         return Result(outcome=Outcome.BLOCKED, message="Docker service or context changed")
-    return found.mutate("setup-mode", settings, selection, plan)
+    return found.mutate(DockerAction.SETUP_MODE, settings, selection, plan)
 
 
 async def verify(settings: Settings, selection: DaemonMode, plan: Plan) -> Result:
@@ -245,7 +246,7 @@ async def verify(settings: Settings, selection: DaemonMode, plan: Plan) -> Resul
     if isinstance(found, Launcher):
         desired = {
             str(path): hashlib.sha256(content).hexdigest()
-            for path, content in found.files("setup-mode", settings, selection).items()
+            for path, content in found.files(DockerAction.SETUP_MODE, settings, selection).items()
         }
         if desired == {r.identity: r.after for r in plan.resources}:
             return await found.verify(plan, settings, selection)

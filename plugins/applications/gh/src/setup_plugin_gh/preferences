@@ -1,0 +1,11 @@
+Package: gh
+Pin: origin cli.github.com
+Pin-Priority: 990
+
+Package: gh
+Pin: version *
+Pin-Priority: -1
+
+Package: *
+Pin: origin cli.github.com
+Pin-Priority: -1

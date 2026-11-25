@@ -38,3 +38,7 @@ This operation has no editable parameters.
 | --- | --- | --- | --- |
 | `profile_id` | Launcher profile ID | `required` | `{"pattern": "^[a-z][a-z0-9_-]{0,47}$"}` |
 | `name` | Application menu label | `required` | `{"maxLength": 80, "minLength": 1}` |
+
+## Remove previously managed Debian package
+
+This operation has no editable parameters.

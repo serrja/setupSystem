@@ -7,11 +7,20 @@ from typing import ClassVar
 from pydantic import Field
 
 from setup_plugin_docker import configuration, mode, registry
+from setup_plugin_docker.actions import USER_SERVICE_TRANSITIONS, DockerAction
 from setup_plugin_docker.mode import Settings as Settings
 from setup_plugin_docker.mode import endpoint as endpoint
 from setup_plugin_docker.registry import Registry as Registry
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
-from setup_system_sdk.apt import DebianPackages, apply_packages
+from setup_system_sdk import (
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+)
+from setup_system_sdk.apt import SERVICE_TRANSITIONS, DebianPackages, ServiceAction, apply_packages
 from setup_system_sdk.native import FilesBackend, command
 
 
@@ -68,24 +77,24 @@ def context_host(name: str) -> str | None:
 
 
 class Plugin(DebianPackages, FilesBackend):
-    file_actions = frozenset({"configure"})
+    file_actions = frozenset({LifecycleAction.CONFIGURE})
     executable = "/usr/bin/docker"
     settings_model = Settings
     package_folder = Path(__file__).parent
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": configuration.Daemon,
-        "remove-owned-contexts": configuration.RemoveContexts,
-        "create-context": Context,
-        "start-service": Inputs,
-        "stop-service": Inputs,
-        "login": registry.SignIn,
-        "logout": Registry,
-        "setup-mode": mode.DaemonMode,
-        "prune": Image,
-        "start-system-service": Inputs,
-        "stop-system-service": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: configuration.Daemon,
+        DockerAction.REMOVE_OWNED_CONTEXTS: configuration.RemoveContexts,
+        DockerAction.CREATE_CONTEXT: Context,
+        DockerAction.START_SERVICE: Inputs,
+        DockerAction.STOP_SERVICE: Inputs,
+        DockerAction.LOGIN: registry.SignIn,
+        DockerAction.LOGOUT: Registry,
+        DockerAction.SETUP_MODE: mode.DaemonMode,
+        DockerAction.PRUNE: Image,
+        ServiceAction.START: Inputs,
+        ServiceAction.STOP: Inputs,
     }
 
     def files(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> dict[Path, bytes]:
@@ -110,11 +119,11 @@ class Plugin(DebianPackages, FilesBackend):
             )
         if isinstance(inputs, configuration.RemoveContexts):
             return configuration.context_cleanup(context_host)
-        if action_id in {"start-system-service", "stop-system-service"}:
+        if action_id in SERVICE_TRANSITIONS:
             if settings.mode != "rootful":
                 return Plan(outcome=Outcome.BLOCKED, summary="Select rootful daemon mode first")
             return super().prepare(action_id, settings, inputs)
-        if action_id == "create-context" and isinstance(inputs, Context):
+        if action_id == DockerAction.CREATE_CONTEXT and isinstance(inputs, Context):
             host = context_host(inputs.name)
             desired = endpoint(settings)
             if host and host != desired:
@@ -135,7 +144,7 @@ class Plugin(DebianPackages, FilesBackend):
                     )
                 ],
             )
-        if action_id in {"start-service", "stop-service"}:
+        if action_id in USER_SERVICE_TRANSITIONS:
             if settings.mode == "rootful":
                 return Plan(
                     outcome=Outcome.BLOCKED,
@@ -162,7 +171,7 @@ class Plugin(DebianPackages, FilesBackend):
                     outcome=Outcome.BLOCKED,
                     summary="Wait for the current Docker service transition",
                 )
-            desired = "active" if action_id == "start-service" else "inactive"
+            desired = USER_SERVICE_TRANSITIONS[DockerAction(action_id)][1]
             return Plan(
                 outcome=Outcome.NO_CHANGES if active == desired else Outcome.READY,
                 summary=f"Set the rootless Docker user service to {desired}",
@@ -180,7 +189,7 @@ class Plugin(DebianPackages, FilesBackend):
         if isinstance(inputs, registry.SignIn):
             return registry.login_plan(inputs)
         if isinstance(inputs, Registry):
-            if action_id == "logout":
+            if action_id == DockerAction.LOGOUT:
                 state = registry.presence(inputs)
                 if state != "manual":
                     return Plan(
@@ -196,9 +205,9 @@ class Plugin(DebianPackages, FilesBackend):
                     "account for remote tokens."
                 ),
             )
-        if action_id == "setup-mode" and isinstance(inputs, mode.DaemonMode):
+        if action_id == DockerAction.SETUP_MODE and isinstance(inputs, mode.DaemonMode):
             return mode.prepare(settings, inputs)
-        if action_id == "prune" and isinstance(inputs, Image):
+        if action_id == DockerAction.PRUNE and isinstance(inputs, Image):
             if inputs.digest not in unused_images(settings):
                 return Plan(outcome=Outcome.BLOCKED, summary="The image is no longer dangling")
             rc, containers = command(
@@ -234,13 +243,13 @@ class Plugin(DebianPackages, FilesBackend):
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
         if (
-            action_id == "setup-mode"
+            action_id == DockerAction.SETUP_MODE
             and isinstance(inputs, mode.DaemonMode)
             and isinstance(settings, Settings)
         ):
             return mode.mutate(settings, inputs, plan)
         if (
-            action_id == "create-context"
+            action_id == DockerAction.CREATE_CONTEXT
             and isinstance(inputs, Context)
             and isinstance(settings, Settings)
         ):
@@ -253,12 +262,15 @@ class Plugin(DebianPackages, FilesBackend):
                 "host=" + endpoint(settings),
             )
         elif (
-            action_id in {"start-service", "stop-service"}
+            action_id in USER_SERVICE_TRANSITIONS
             and isinstance(settings, Settings)
             and settings.mode == "rootless"
         ):
             rc, _ = command(
-                "/usr/bin/systemctl", "--user", action_id.split("-")[0], "docker.service"
+                "/usr/bin/systemctl",
+                "--user",
+                USER_SERVICE_TRANSITIONS[DockerAction(action_id)][0],
+                "docker.service",
             )
         elif isinstance(inputs, Image) and isinstance(settings, Settings):
             rc, _ = command(
@@ -270,9 +282,9 @@ class Plugin(DebianPackages, FilesBackend):
                 "--no-prune",
                 inputs.digest,
             )
-        elif isinstance(inputs, registry.SignIn) and action_id == "login":
+        elif isinstance(inputs, registry.SignIn) and action_id == DockerAction.LOGIN:
             return registry.login(inputs, plan)
-        elif isinstance(inputs, Registry) and action_id == "logout":
+        elif isinstance(inputs, Registry) and action_id == DockerAction.LOGOUT:
             rc, _ = command("/usr/bin/docker", "logout", inputs.host)
         elif isinstance(inputs, configuration.RemoveContexts):
             return configuration.remove_contexts(plan, context_host)

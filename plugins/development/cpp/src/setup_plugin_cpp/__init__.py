@@ -9,7 +9,7 @@ from pydantic import Field
 
 from setup_system.domain.managed_text import managed_block
 from setup_system.infrastructure.user_storage import capture_receipt, inside_home
-from setup_system_sdk import Inputs, Plan, PluginSettings
+from setup_system_sdk import Inputs, LifecycleAction, Plan, PluginSettings
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.native import FilesBackend
 
@@ -28,10 +28,10 @@ class Plugin(DebianPackages, FilesBackend):
     settings_model = Settings
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
     }
-    file_actions = frozenset({"configure"})
+    file_actions = frozenset({LifecycleAction.CONFIGURE})
 
     def files(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> dict[Path, bytes]:
         options = Settings.model_validate(settings.model_dump())

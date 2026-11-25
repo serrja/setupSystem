@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import tomllib
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -11,9 +12,17 @@ from pydantic import Field, field_validator
 
 from setup_plugin_neovim import extensions
 from setup_system.infrastructure.user_storage import inside_home
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result
+from setup_system_sdk import Inputs, LifecycleAction, Outcome, Plan, PluginSettings, Result
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import PublishedAssets, desktop_context, render_desktop
+
+
+class PluginAction(StrEnum):
+    INSTALL_PARSERS = "install-parsers"
+    INSTALL_PLUGINS = "install-plugins"
+    REMOVE_PARSERS = "remove-parsers"
+    VERIFY_EDITOR = "verify-editor"
+
 
 Language = Literal["python", "typescript_vue", "dart_flutter", "cpp"]
 
@@ -48,38 +57,38 @@ class Plugin(DebianPackages, PublishedAssets):
     executable = "/usr/bin/nvim"
     settings_model = Settings
     package_folder = Path(__file__).parent
-    file_actions = frozenset({"configure"})
+    file_actions = frozenset({LifecycleAction.CONFIGURE})
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
-        "install-plugins": Inputs,
-        "install-parsers": Inputs,
-        "remove-parsers": Inputs,
-        "verify-editor": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
+        PluginAction.INSTALL_PLUGINS: Inputs,
+        PluginAction.INSTALL_PARSERS: Inputs,
+        PluginAction.REMOVE_PARSERS: Inputs,
+        PluginAction.VERIFY_EDITOR: Inputs,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "remove-parsers":
+        if action_id == PluginAction.REMOVE_PARSERS:
             return extensions.parser_removal()
-        if action_id == "install-plugins":
+        if action_id == PluginAction.INSTALL_PLUGINS:
             return extensions.plan_plugins()
-        if action_id == "install-parsers" and isinstance(settings, Settings):
+        if action_id == PluginAction.INSTALL_PARSERS and isinstance(settings, Settings):
             return extensions.parser_plan(list(settings.languages))
-        if action_id == "verify-editor" and isinstance(settings, Settings):
+        if action_id == PluginAction.VERIFY_EDITOR and isinstance(settings, Settings):
             return Plan(summary="Run the offline headless editor check in a temporary project")
         return super().prepare(action_id, settings, inputs)
 
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
-        if action_id == "remove-parsers":
+        if action_id == PluginAction.REMOVE_PARSERS:
             return extensions.remove_parsers(plan)
-        if action_id == "install-plugins":
+        if action_id == PluginAction.INSTALL_PLUGINS:
             return extensions.update(plan)
-        if action_id == "install-parsers" and isinstance(settings, Settings):
+        if action_id == PluginAction.INSTALL_PARSERS and isinstance(settings, Settings):
             return extensions.install_parsers(plan, list(settings.languages))
-        if action_id == "verify-editor" and isinstance(settings, Settings):
+        if action_id == PluginAction.VERIFY_EDITOR and isinstance(settings, Settings):
             return extensions.verify_parsers(plan, list(settings.languages))
         return super().mutate(action_id, settings, inputs, plan)
 

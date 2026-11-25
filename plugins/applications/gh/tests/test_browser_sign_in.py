@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-import setup_plugin_git as app
+import setup_plugin_gh as app
 
 from setup_system_sdk import Mutation, Outcome
 
@@ -120,3 +120,18 @@ def test_stable_cli_confirms_account_and_requests_storage_review(tmp_path, monke
         asyncio.run(plugin.verify(plan, app.Settings(), selected)).outcome
         == Outcome.NEEDS_USER_ACTION
     )
+
+
+def test_account_host_is_approved(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app, "observed_login", lambda _: "different")
+    monkeypatch.setattr(app, "unlocked_store", lambda: True)
+    monkeypatch.setattr(app.user_terminal, "available", lambda: False)
+    plan = app.Plugin().prepare(
+        "login", app.Settings(), app.SignIn(account="fixture", host="github.com.evil.test")
+    )
+    assert plan.outcome == Outcome.BLOCKED
+    approved = app.Settings(enterprise_host="code.example.org")
+    plan = app.Plugin().prepare(
+        "login", approved, app.SignIn(account="fixture", host="code.example.org")
+    )
+    assert plan.outcome in (Outcome.NEEDS_USER_ACTION, Outcome.BLOCKED)
