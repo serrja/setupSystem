@@ -226,3 +226,22 @@ def test_result_status_round_trips_native_protocol(wire):
 def test_unknown_native_status_is_rejected():
     with pytest.raises(ValidationError):
         TaskResult.model_validate({"status": "unrecognized"})
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+def test_request_rejects_nonfinite_nested_json(invalid):
+    from setup_system.models import RequestEnvelope
+
+    with pytest.raises(ValidationError):
+        RequestEnvelope.model_validate(
+            {"schema": 1, "settings": {"nested": [invalid]}, "expected": None}
+        )
+
+
+def test_direct_request_bounds_utf8_byte_size():
+    from setup_system.models import RequestEnvelope
+
+    # Forty individually small strings together exceed the one MiB wire limit.
+    settings = {"nested": ["界" * 10000] * 40}
+    with pytest.raises(ValidationError):
+        RequestEnvelope.model_validate({"schema": 1, "settings": settings, "expected": None})

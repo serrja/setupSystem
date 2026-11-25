@@ -132,3 +132,12 @@ def test_package_plan_uses_declared_names_and_signed_backports_without_version_p
     assert "hyprland/trixie-backports" in expected and all("=" not in p for p in expected)
     assert packages({"graphical_login": True}, base, {}) == sorted(base["login"]["stable"])
     assert packages({}, base, {}) == []
+
+
+def test_duplicate_packages_in_a_valid_application_are_rejected():
+    with pytest.raises(AnsibleFilterError, match="package"):
+        packages(
+            {"apps": ["editor"]},
+            {},
+            {"editor": {"title": "Editor", "kind": "app", "packages": ["git", "git"]}},
+        )

@@ -120,7 +120,12 @@ def run_apt(
     assert command is not None, f"{executable} is required for the isolated APT solver regression"
     return subprocess.run(
         [command, *arguments],
-        env={"PATH": os.defpath, "APT_CONFIG": str(configuration), "LC_ALL": "C"},
+        env={
+            "PATH": os.defpath,
+            "APT_CONFIG": str(configuration),
+            "TMPDIR": str(configuration.parent),
+            "LC_ALL": "C",
+        },
         text=True,
         capture_output=True,
         timeout=30,

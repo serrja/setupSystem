@@ -491,7 +491,7 @@ def test_project_directories_restore_through_make_and_preserve_other_files(home)
     runner = AsyncMakeRunner()
 
     def invoke(target, payload):
-        result = asyncio.run(runner.run(Command.capture(target, payload)))
+        result = asyncio.run(runner.execute(Command.capture(target, payload)))
         return result.model_dump(mode="json", exclude_unset=True)
 
     req = {"schema": 1, "settings": {}, "expected": None}
@@ -512,3 +512,26 @@ def test_project_directories_restore_through_make_and_preserve_other_files(home)
     assert completed["status"] == "complete", completed
     assert foreign.read_text() == "keep" and not (folder / "pokerlost").exists()
     assert invoke(Target.RESTORE_PLAN, req)["status"] == "no_changes"
+
+
+def test_migration_preserves_backup_created_during_publication(home, monkeypatch):
+    import os
+    import stat
+
+    from setup_system.infrastructure.receipt_repository import _backup_original
+
+    original = home / "operation.json"
+    original.write_bytes(b'{"owner":"original"}')
+    backup = home / "operation.v0.json"
+    fsync = os.fsync
+
+    def concurrent_create(descriptor):
+        if stat.S_ISREG(os.fstat(descriptor).st_mode) and not backup.exists():
+            backup.write_bytes(b'{"owner":"concurrent"}')
+        fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", concurrent_create)
+    with pytest.raises(ValueError, match="Conflicting"):
+        _backup_original(original)
+    assert original.read_bytes() == b'{"owner":"original"}'
+    assert backup.read_bytes() == b'{"owner":"concurrent"}'

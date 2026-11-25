@@ -88,10 +88,16 @@ def test_catalog_archive_verification_retry_and_readback(tmp_path):
 def test_happ_upgrade_requires_confirmed_version_and_disconnected_service(
     monkeypatch, current, active, accept
 ):
-    inactive = {"ActiveState": "inactive"}
+    inactive = {
+        "ActiveState": "inactive",
+        "LoadState": "loaded",
+        "FragmentPath": "/usr/lib/systemd/system/happd.service",
+    }
     monkeypatch.setattr(happ_facts, "installed_version", lambda: current)
     monkeypatch.setattr(
-        happ_facts, "unit_info", lambda: {"ActiveState": "active"} if active else inactive
+        happ_facts,
+        "unit_info",
+        lambda: dict(inactive, ActiveState="active") if active else inactive,
     )
     monkeypatch.setattr(
         happ_facts.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 1)

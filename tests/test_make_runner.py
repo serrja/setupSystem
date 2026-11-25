@@ -66,7 +66,7 @@ Path(os.environ['SETUP_SYSTEM_RESULT']).write_text('{"status":"ready"}')
     monkeypatch.setenv("MAKEFLAGS", "--eval=bad")
     monkeypatch.setenv("ANSIBLE_LIBRARY", str(tmp_path))
     phases = []
-    result = asyncio.run(AsyncMakeRunner(tmp_path).run(request, on_event=phases.append))
+    result = asyncio.run(AsyncMakeRunner(tmp_path).execute(request, on_event=phases.append))
     assert result.status == "ready" and (tmp_path / "observed").read_text() == value
     assert phases and all(p.target == Target.WORKSPACE_PLAN for p in phases)
     assert value not in str(phases)
@@ -83,7 +83,7 @@ def test_cancel_before_spawn_discards_credentials(tmp_path):
     token = BecomePassword("sample")
     # Cancellation precedes authorizing or opening the system operation.
     cmd = command(Target.BASE_INSPECT)
-    reply = asyncio.run(AsyncMakeRunner(tmp_path).run(cmd, password=token, cancel=event))
+    reply = asyncio.run(AsyncMakeRunner(tmp_path).execute(cmd, password=token, cancel=event))
     assert reply.status == "cancelled"
     with pytest.raises(RuntimeError, match="expired"):
         token.take()
@@ -137,7 +137,7 @@ def test_two_writers_surface_the_native_lock_reason(tmp_path):
     fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        result = asyncio.run(AsyncMakeRunner(tmp_path).run(command(Target.WORKSPACE_PLAN)))
+        result = asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
         assert result.status == "blocked" and "retry" in str(result.blockers).lower()
     finally:
         os.close(fd)
@@ -251,7 +251,7 @@ Path("boundary").touch()
             "observed": {"needs_user": True, "needs_system": False},
         }
         cmd = command(Target.WORKSPACE_USER_APPLY, {"desktop_theme": True}, expected)
-        task = asyncio.create_task(AsyncMakeRunner(tmp_path).run(cmd))
+        task = asyncio.create_task(AsyncMakeRunner(tmp_path).execute(cmd))
         async with asyncio.timeout(3):
             while not (tmp_path / "writing").exists():
                 await asyncio.sleep(0.01)
@@ -435,7 +435,7 @@ def test_terminal_error_keeps_the_recorded_native_outcome(tmp_path, monkeypatch)
 
     monkeypatch.setattr(runner, "execute_make", broken)
     with pytest.raises(transport.TransportError, match="Recorded native outcome: Partial") as fail:
-        asyncio.run(AsyncMakeRunner(tmp_path).run(command(Target.WORKSPACE_PLAN)))
+        asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
     assert "Review recovery" in str(fail.value)
 
 
@@ -486,7 +486,7 @@ def test_all_private_snapshot_io_runs_off_the_ui_thread(tmp_path, monkeypatch):
     guard(runner, "read_wire")
     guard(aiofiles.threadpool, "sync_open")
     guard(aiofiles.tempfile, "syncTemporaryDirectory")
-    reply = asyncio.run(AsyncMakeRunner(tmp_path).run(command(Target.WORKSPACE_PLAN)))
+    reply = asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
     assert reply.status == "ready"
     assert seen == {"_environment", "read_wire", "sync_open", "syncTemporaryDirectory"}
 
@@ -501,7 +501,7 @@ def test_partial_native_outcome_survives_cancellation_exit_code(tmp_path, monkey
         return 130
 
     monkeypatch.setattr(runner, "execute_make", interrupted)
-    reply = asyncio.run(AsyncMakeRunner(tmp_path).run(command(Target.WORKSPACE_PLAN)))
+    reply = asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
     assert reply.status == "partial" and reply.blockers == ("Inspect recovery",)
 
 
@@ -520,7 +520,7 @@ def test_premature_terminal_eof_has_a_deadline_before_authorization(tmp_path, mo
 
 
 def test_installed_resources_require_protected_parents_and_recipes(tmp_path, monkeypatch):
-    from setup_system.infrastructure import system_paths
+    from setup_system import layout
 
     # Give the temporary ancestors the package authority, then validate real entry modes.
     root = tmp_path / "installed"
@@ -542,11 +542,64 @@ def test_installed_resources_require_protected_parents_and_recipes(tmp_path, mon
     monkeypatch.setattr(Path, "lstat", as_packaged)
     for path in (root, recipes, recipe, root / "Makefile"):
         path.chmod(0o755 if path.is_dir() else 0o644)
-    system_paths.verify_program_tree(root)
+    python_package = root / "python"
+    python_package.mkdir(mode=0o755)
+    (python_package / "layout.py").touch(mode=0o644)
+    monkeypatch.setattr(layout, "INSTALLED", root)
+    monkeypatch.setattr(layout, "PYTHON_PACKAGE", python_package)
+    registered = {root, *root.rglob("*")}
+    monkeypatch.setattr(layout, "_package_paths", lambda: registered)
+    layout.verify_installation(root)
     recipe.chmod(0o664)
     with pytest.raises(ValueError):
-        system_paths.verify_program_tree(root)
+        layout.verify_installation(root)
     recipe.chmod(0o644)
     (recipes / "alias.mk").symlink_to(recipe)
     with pytest.raises(ValueError):
-        system_paths.verify_program_tree(root)
+        layout.verify_installation(root)
+
+
+@pytest.mark.parametrize("reply", ["missing", "invalid", "unreadable"])
+def test_lost_mutation_result_requires_inspection_without_retry(tmp_path, monkeypatch, reply):
+    from setup_system import runner
+
+    calls = []
+
+    async def interrupted(_root, target, env, _stop, report, **_kwargs):
+        calls.append(target)
+        report(transport.Phase.RUNNING)
+        if reply == "invalid":
+            Path(env["SETUP_SYSTEM_RESULT"]).write_text("{")
+        if reply == "unreadable":
+            Path(env["SETUP_SYSTEM_RESULT"]).mkdir()
+        return 130
+
+    monkeypatch.setattr(runner, "execute_make", interrupted)
+    request = command(
+        Target.WORKSPACE_USER_APPLY,
+        {"desktop_theme": True},
+        expected={
+            "status": "ready",
+            "actions": [{"kind": "user_file", "path": ".config/test", "label": "theme"}],
+            "observed": {"needs_user": True, "needs_system": False},
+        },
+    )
+    outcome = asyncio.run(AsyncMakeRunner(tmp_path).execute(request))
+    assert outcome.status == "unknown" and calls == [Target.WORKSPACE_USER_APPLY]
+    assert "Inspect" in outcome.describe()
+
+
+def test_second_prompt_with_echo_enabled_is_dismissed_without_input(tmp_path):
+    fixture_make(
+        tmp_path,
+        """import getpass, signal
+from pathlib import Path
+getpass.getpass("SU password: ")
+signal.alarm(1)
+input("Verification code: ")
+Path("changed").touch()
+""",
+    )
+    with pytest.raises(transport.AuthorizationError, match="Additional native"):
+        asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture")))
+    assert not (tmp_path / "changed").exists()

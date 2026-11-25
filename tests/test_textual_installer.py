@@ -120,7 +120,7 @@ def test_confirmation_cancel_never_reaches_mutation() -> None:
 
 def test_failed_worker_keeps_diagnostics_and_navigation_available() -> None:
     class Failed(Tasks):
-        async def run(self, *args, **kwargs):
+        async def execute(self, *args, **kwargs):
             raise ValueError("Synthetic resolver failure")
 
     async def run():

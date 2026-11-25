@@ -36,7 +36,7 @@
         execute_run: "{{ setup_action not in ['inspect', 'plan', 'cleanup-plan'] }}"
     - name: Inspect local platform and user capabilities
       ansible.builtin.command:
-        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/facts.py"]
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/facts.py", "collect"]
         stdin: "{{ {'section': section, 'intent': intent, 'inspect': setup_action == 'inspect'} | to_json }}"
       register: probe
       changed_when: false
@@ -113,7 +113,7 @@
       ansible.builtin.set_fact:
         outcome:
           status: >-
-            {{ 'cancelled' if cancel_requested else ('partial' if mutation_started or changed_stages
+            {{ 'partial' if mutation_started or changed_stages else ('cancelled' if cancel_requested
                else ('failed' if (execute_run | default(false)) and plan is defined and (request.expected | native_same_plan(plan)) else 'blocked')) }}
           actions: "{{ changed_stages }}"
           blockers:

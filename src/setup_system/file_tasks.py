@@ -7,13 +7,16 @@ import json
 import os
 import stat
 import sys
+from enum import StrEnum
 from pathlib import Path
 
-from pydantic import TypeAdapter
+import typer
+from pydantic import Field, StrictBool, TypeAdapter
 
 from setup_system.application.recovery import recover
-from setup_system.domain.actions import FileAction, SystemAction
-from setup_system.domain.observations import ManagedPreview
+from setup_system.domain.actions import FileAction, RestoreAction, SystemAction
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
+from setup_system.domain.observations import ManagedPreview, NativeObservations, ProjectObservations
 from setup_system.domain.receipts import FileState
 from setup_system.infrastructure import codex_profile, receipt_repository, source_attempt
 from setup_system.infrastructure.displays import preview_layout
@@ -22,8 +25,17 @@ from setup_system.infrastructure.managed_files import apply_files, changed_files
 from setup_system.infrastructure.operation_io import read_wire
 from setup_system.infrastructure.receipt_migrations import restore_manifest
 from setup_system.infrastructure.restore_files import LocalRecoveryFiles
-from setup_system.models import BaseOptions, RequestEnvelope, Status, TaskResult, WorkspaceOptions
-from setup_system.runner import resource_root
+from setup_system.layout import resource_root
+from setup_system.machine_io import write_model
+from setup_system.models import (
+    BaseOptions,
+    ProjectDirectory,
+    RequestEnvelope,
+    RestoreOptions,
+    Status,
+    TaskResult,
+    WorkspaceOptions,
+)
 
 
 def restore(backup_id: str, *, apply: bool = False) -> list[tuple[str, str]]:
@@ -57,141 +69,163 @@ def file_preview(
     desired: dict[Path, bytes],
     modes: dict[Path, int],
     merges: dict[Path, FileState | None] | None = None,
-) -> dict[str, object]:
+) -> ManagedPreview:
     home = Path.home()
     changed = changed_files(desired, modes=modes, expected=merges)
-    before = {}
-    after = {}
-    for path, data in desired.items():
-        name = str(path.relative_to(home))
-        observed = observe(path)
-        before[name] = observed.model_dump() if observed else None
-        after[name] = [hashlib.sha256(data).hexdigest(), modes[path]]
-    return {
-        "changes": [str(p.relative_to(home)) for p in changed],
-        "before": before,
-        "after": after,
-    }
+    return ManagedPreview(
+        changes=tuple(str(path.relative_to(home)) for path in changed),
+        before={str(path.relative_to(home)): observe(path) for path in desired},
+        after={
+            str(path.relative_to(home)): (hashlib.sha256(data).hexdigest(), modes[path])
+            for path, data in desired.items()
+        },
+    )
 
 
-def main() -> None:
-    if os.getuid() == 0:
-        raise SystemExit("User files require a normal user")
-    if sys.argv[1:] == ["last-source-check"]:
-        print(source_attempt.previous())
+class FileTask(StrEnum):
+    LAST_CHECK = "last-source-check"
+    RECORD_CHECK = "record-source-check"
+    BACKUPS = "backups"
+    PREVIEW = "preview"
+    PUBLISH = "publish"
+    DISPLAY = "display-preview"
+    PROJECT_CHECK = "project-check"
+    RESTORE_PLAN = "restore-plan"
+    RESTORE_APPLY = "restore-apply"
+
+
+class SourceCheck(ContractModel):
+    ok: StrictBool
+    diagnostic: str = Field(max_length=MAX_MESSAGE_BYTES)
+
+
+def publish_files(action: FileTask, envelope: RequestEnvelope, stage: Path) -> None:
+    selection = TypeAdapter(BaseOptions | WorkspaceOptions).validate_python(envelope.settings)
+    desired, modes = staged_files(stage)
+    merges: dict[Path, FileState | None] = {}
+    if isinstance(selection, WorkspaceOptions) and "codex" in selection.apps:
+        profile, merges = codex_profile.files(resource_root() / "config")
+        if desired.keys() & profile.keys():
+            raise ValueError("Multiple profiles select the same Codex file")
+        desired.update(profile)
+        for path in profile:
+            before = merges.get(path)
+            modes[path] = before.mode if before else 0o600
+    preview = file_preview(desired, modes, merges)
+    if action == FileTask.PREVIEW:
+        write_model(preview)
         return
-    if sys.argv[1:] == ["record-source-check"]:
-        check = json.load(sys.stdin)
-        source_attempt.remember(
-            source_attempt.observe(check["ok"] is True, str(check["diagnostic"]))
+    plan = envelope.expected
+    if (
+        plan is None
+        or not plan.status.allows_confirmation
+        or plan.blockers
+        or not isinstance(plan.observed, NativeObservations)
+        or not plan.observed.needs_user
+        or tuple(item.path for item in plan.actions if isinstance(item, FileAction))
+        != preview.changes
+        or "files" not in plan.observed.model_fields_set
+        or plan.observed.files != preview
+    ):
+        raise ValueError("Managed files changed since confirmation")
+    expected = {Path.home() / name: state for name, state in preview.before.items()}
+    typer.echo(apply_files(desired, modes=modes, expected=expected).name)
+
+
+def recover_files(action: FileTask, envelope: RequestEnvelope) -> TaskResult:
+    backup_id = RestoreOptions.model_validate(envelope.settings).backup_id
+    rows = restore(backup_id)
+    actions = tuple(
+        RestoreAction.model_validate(
+            dict(kind="restore", path=path, operation=status, label=f"{status} {path}")
         )
+        for path, status in rows
+        if status in {"would-restore", "would-create", "would-remove", "would-remove-directory"}
+    )
+    blockers = tuple(
+        f"File conflict (changed after apply): {path}"
+        for path, status in rows
+        if status == "conflict"
+    )
+    if any(status == "manual-happ-restore" for _, status in rows):
+        blockers += (
+            "Restore private Happ data through Happ itself while the application is closed.",
+        )
+    reply = TaskResult(
+        status=Status.BLOCKED if blockers else Status.READY if actions else Status.NO_CHANGES,
+        actions=actions,
+        observed=ProjectObservations(
+            needs_system=False, needs_user=bool(actions), backup_id=backup_id
+        ),
+        blockers=blockers,
+    )
+    if action == FileTask.RESTORE_APPLY:
+        if blockers or envelope.expected is None or not envelope.expected.same_plan(reply):
+            raise ValueError("Restore preview changed; inspect it again")
+        if actions:
+            try:
+                restore(backup_id, apply=True)
+            except (OSError, RuntimeError, ValueError) as error:
+                return TaskResult(status=Status.PARTIAL, blockers=(str(error),))
+            return TaskResult(
+                status=Status.COMPLETE, actions=actions, observed=reply.observed, blockers=()
+            )
+    return reply
+
+
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command()
+def run(action: FileTask) -> None:
+    """Run a single file operation for the packaged play or Make recipe."""
+    if os.geteuid() == 0 or os.geteuid() != os.getuid():
+        typer.echo("User files require a normal user", err=True)
+        raise typer.Exit(2)
+    if action == FileTask.LAST_CHECK:
+        typer.echo(source_attempt.previous())
         return
-    if sys.argv[1:] == ["backups"]:
-        print(json.dumps([name for name, _ in receipt_repository.list_operations()]))
+    if action == FileTask.RECORD_CHECK:
+        raw = sys.stdin.buffer.read(MAX_MESSAGE_BYTES + 1)
+        if len(raw) > MAX_MESSAGE_BYTES:
+            raise ValueError("Source check exceeds the supported size")
+        check = SourceCheck.model_validate_json(raw)
+        source_attempt.remember(source_attempt.observe(check.ok, check.diagnostic))
+        return
+    if action == FileTask.BACKUPS:
+        typer.echo(json.dumps([name for name, _ in receipt_repository.list_operations()]))
         return
     request = Path(os.environ["SETUP_SYSTEM_REQUEST"])
     result = Path(os.environ["SETUP_SYSTEM_RESULT"])
-    (action,) = sys.argv[1:]
     envelope = RequestEnvelope.model_validate_json(read_wire(request))
-    if action not in {"preview", "publish"}:
-        envelope.for_target(action)
-    payload = envelope.model_dump(mode="json", by_alias=True, exclude_unset=True)
-
-    if action in {"preview", "publish"}:
-        TypeAdapter(BaseOptions | WorkspaceOptions).validate_python(envelope.settings)
-        desired, modes = staged_files(result.parent / "files")
-        merges: dict[Path, FileState | None] = {}
-        if "codex" in payload["settings"].get("apps", []):
-            profile, merges = codex_profile.files(resource_root() / "config")
-            if desired.keys() & profile.keys():
-                raise ValueError("Multiple profiles select the same Codex file")
-            desired.update(profile)
-            for path in profile:
-                before = merges.get(path)
-                modes[path] = before.mode if before else 0o600
-        preview = file_preview(desired, modes, merges)
-        if action == "preview":
-            print(json.dumps(preview))
-            return
-        if (
-            envelope.expected is None
-            or not envelope.expected.status.allows_confirmation
-            or envelope.expected.blockers
-            or not envelope.expected.observed.needs_user
-            or tuple(
-                action.path
-                for action in envelope.expected.actions
-                if isinstance(action, FileAction)
-            )
-            != ManagedPreview.model_validate(preview).changes
-            or envelope.expected.observed.get("files") is None
-            or ManagedPreview.model_validate(envelope.expected.observed.get("files"))
-            != ManagedPreview.model_validate(preview)
-        ):
-            raise ValueError("Managed files changed since confirmation")
-        expected = {
-            Path.home() / key: FileState.model_validate(value) if value is not None else None
-            for key, value in payload["expected"]["observed"]["files"]["before"].items()
-        }
-        print(apply_files(desired, modes=modes, expected=expected).name)
+    if action in {FileTask.PREVIEW, FileTask.PUBLISH}:
+        publish_files(action, envelope, result.parent / "files")
         return
-    settings = payload["settings"]
-    observed: dict[str, object] = {"needs_system": False, "needs_user": True}
-    blockers: list[str] = []
-    if action == "display-preview":
-        preview_layout(WorkspaceOptions.model_validate(settings).monitors)
+    envelope.for_target(action)
+    if action == FileTask.DISPLAY:
+        preview_layout(WorkspaceOptions.model_validate(envelope.settings).monitors)
         reply = TaskResult(
             status=Status.COMPLETE,
             actions=(
                 SystemAction(kind="display_restored", label="Previous display layout restored"),
             ),
         )
-        result.write_text(reply.model_dump_json(exclude_unset=True))
-        return
-    if action == "project-check":
-        directory = Path(settings["project"]).expanduser()
-        if not directory.is_absolute():
-            raise ValueError("Choose an absolute project path")
-        if not directory.is_dir():
-            blockers.append("Project directory is missing")
-        observed["directory"] = str(directory)
-        actions = []
-    elif action in {"restore-plan", "restore-apply"}:
-        rows = restore(settings["backup_id"])
-        actions = [
-            {"kind": "restore", "path": path, "operation": status, "label": f"{status} {path}"}
-            for path, status in rows
-            if status in {"would-restore", "would-remove", "would-remove-directory"}
-        ]
-        observed["needs_user"] = bool(actions)
-        observed["backup_id"] = settings["backup_id"]
-        blockers = [
-            f"File conflict (changed after apply): {path}"
-            for path, status in rows
-            if status == "conflict"
-        ]
+    elif action == FileTask.PROJECT_CHECK:
+        directory = ProjectDirectory.model_validate(envelope.settings).project
+        blockers = () if directory.is_dir() else ("Project directory is missing",)
+        reply = TaskResult(
+            status=Status.BLOCKED if blockers else Status.READY,
+            actions=(),
+            observed=ProjectObservations(
+                needs_system=False, needs_user=True, directory=str(directory)
+            ),
+            blockers=blockers,
+        )
     else:
-        raise ValueError("Unknown file operation")
-    answer = {
-        "status": Status.BLOCKED if blockers else Status.READY,
-        "actions": actions,
-        "observed": observed,
-        "blockers": blockers,
-    }
-    if action.startswith("restore-") and not actions and not blockers:
-        answer["status"] = Status.NO_CHANGES
-    if action == "restore-apply":
-        if (
-            blockers
-            or envelope.expected is None
-            or not envelope.expected.same_plan(TaskResult.model_validate(answer))
-        ):
-            raise ValueError("Restore preview changed; inspect it again")
-        if actions:
-            restore(settings["backup_id"], apply=True)
-            answer["status"] = Status.COMPLETE
-    result.write_text(TaskResult.model_validate(answer).model_dump_json(exclude_unset=True))
+        reply = recover_files(action, envelope)
+    with result.open("w") as stream:
+        write_model(reply, stream)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

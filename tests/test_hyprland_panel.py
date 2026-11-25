@@ -74,6 +74,7 @@ def waybar_template(tmp_path_factory: pytest.TempPathFactory) -> str:
             "PATH": os.defpath,
             "LANG": "C.UTF-8",
             "ANSIBLE_CONFIG": str(ROOT / "ansible.cfg"),
+            "ANSIBLE_REMOTE_TEMP": str(run / "remote"),
             "ANSIBLE_FILTER_PLUGINS": str(ROOT / "ansible/filter_plugins"),
         },
     )
@@ -378,3 +379,11 @@ while True:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=5)
+
+
+def test_boolean_workspace_id_cannot_mark_first_workspace_active(monkeypatch):
+    monkeypatch.setattr(
+        panel, "_query", lambda topic: {"id": True} if topic == "activeworkspace" else []
+    )
+    state = panel.workspace_state()
+    assert all("active" not in row["class"] for row in state.values())

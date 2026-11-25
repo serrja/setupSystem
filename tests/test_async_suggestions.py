@@ -66,3 +66,33 @@ def test_quick_edits_use_one_scan_and_return_bounded_results(tmp_path, monkeypat
         assert scans == [tmp_path]
 
     asyncio.run(scenario())
+
+
+def test_a_slow_previous_directory_does_not_delay_the_latest_query(tmp_path, monkeypatch):
+    async def scenario():
+        first, latest = tmp_path / "first", tmp_path / "latest"
+        first.mkdir()
+        latest.mkdir()
+        (latest / "answer").mkdir()
+        source = Suggestions(tmp_path, tmp_path)
+        started, release = threading.Event(), threading.Event()
+        scan = source._scan
+
+        def scan_directory(path):
+            if path == first:
+                started.set()
+                assert release.wait(4)
+            return scan(path)
+
+        monkeypatch.setattr(source, "_scan", scan_directory)
+        choices = ProjectChoices(source)
+        stale = asyncio.create_task(choices.get_suggestion(str(first) + "/"))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            fresh = choices.get_suggestion(str(latest) + "/a")
+            assert await asyncio.wait_for(fresh, 1) == str(latest / "answer")
+            assert await stale is None
+        finally:
+            release.set()
+
+    asyncio.run(scenario())

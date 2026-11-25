@@ -1,5 +1,6 @@
 """Exercise administrative onboarding without authenticating or changing a host account."""
 
+import ast
 import grp
 import hashlib
 import importlib.util
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +23,32 @@ from setup_system.domain.administration import ADMIN_REQUEST_BYTES, AdminAccount
 from setup_system.infrastructure import admin_account
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_admin_uses_public_ansible_interfaces():
+    for folder in ("src", "ansible", "libexec", "assets", "debian"):
+        for source in (ROOT / folder).rglob("*.py"):
+            for node in ast.walk(ast.parse(source.read_text())):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [f"{node.module}.{alias.name}" for alias in node.names]
+                else:
+                    continue
+                assert not any(name.startswith("ansible.modules.") for name in names), source
+
+
+def test_admin_cli_constrains_operations_and_writes_one_json_record(admin):
+    from typer.testing import CliRunner
+
+    runner = CliRunner()
+    assert runner.invoke(admin.cli, ["--help"]).exit_code == 0
+    assert runner.invoke(admin.cli, ["arbitrary-target"]).exit_code == 2
+    result = runner.invoke(admin.cli, ["account", "plan"], input='{"schema":true}\n')
+    assert result.exit_code == 0
+    assert result.stdout.count("\n") == 1 and result.stdout.endswith("\n")
+    assert json.loads(result.stdout)["status"] == "blocked"
+    assert not result.stderr
 
 
 def test_intent_rejects_non_login_names():
@@ -143,6 +171,12 @@ def test_service_shell_is_not_an_interactive_login(local_account, tmp_path, shel
         admin_account.read_account(AdminIntent(username="alice"))
 
 
+def test_service_uid_is_not_an_ordinary_login(local_account):
+    local_account["uid"] = 42
+    with pytest.raises(ValueError, match="UID range"):
+        admin_account.read_account(AdminIntent(username="alice"))
+
+
 def envelope(expected=None):
     return json.dumps({"schema": 1, "settings": {"username": "alice"}, "expected": expected})
 
@@ -167,6 +201,8 @@ def test_privileged_helper_rejects_checkout_before_writing(admin, local_account,
         "success",
         "missing",
         "uid",
+        "gid",
+        "shell",
         "home",
         "no_root",
         "policy",
@@ -183,7 +219,7 @@ def test_privileged_helper_rejects_checkout_before_writing(admin, local_account,
 def test_confirmed_append_only(admin, local_account, monkeypatch, scenario):
     writes = []
     identity = local_account
-    monkeypatch.setattr(admin, "require_packaged_source", lambda: None)
+    monkeypatch.setattr(admin, "require_installed_resource", lambda path, name: None)
     monkeypatch.setattr(admin, "current_target", lambda: ("amd64", True))
     selected = admin.run("plan", envelope())
     assert selected.status == "ready" and not writes
@@ -202,6 +238,10 @@ def test_confirmed_append_only(admin, local_account, monkeypatch, scenario):
         identity["exists"] = False
     if scenario == "uid":
         identity["uid"] += 1
+    if scenario == "gid":
+        identity["gid"] += 1
+    if scenario == "shell":
+        identity["shell"] = "/bin/bash"
     if scenario == "home":
         location = Path(identity["home"]).parent / "different"
         location.mkdir()
@@ -211,6 +251,8 @@ def test_confirmed_append_only(admin, local_account, monkeypatch, scenario):
 
     def policy():
         policy_checks.append(True)
+        if scenario == "mid_change":
+            identity["exists"] = False
         if scenario == "policy" or (scenario == "policy_drift" and len(policy_checks) > 1):
             raise ValueError("custom policy")
 
@@ -218,13 +260,9 @@ def test_confirmed_append_only(admin, local_account, monkeypatch, scenario):
         if scenario == "readback":
             raise ValueError("sudo denied")
 
-    def execute(*argv):
-        if argv == ("/usr/sbin/usermod", "--help"):
-            if scenario == "mid_change":
-                identity["exists"] = False
-            return "  -a, --append\n"
-        assert argv == ("/usr/sbin/usermod", "-a", "-G", "sudo", "alice")
-        writes.append(argv)
+    def execute(account):
+        assert account.username == "alice"
+        writes.append(account.username)
         if scenario == "denied_native":
             raise ValueError("native operation failed")
         identity["groups"].append("sudo")
@@ -234,10 +272,13 @@ def test_confirmed_append_only(admin, local_account, monkeypatch, scenario):
 
     monkeypatch.setattr(admin, "verify_policy", policy)
     monkeypatch.setattr(admin, "verify_effective_access", verify)
-    monkeypatch.setattr(admin, "checked_output", execute)
+    monkeypatch.setattr(admin, "append_sudo", execute)
     if scenario in {
         "missing",
+        "mid_change",
         "uid",
+        "gid",
+        "shell",
         "home",
         "no_root",
         "unsupported",
@@ -260,6 +301,57 @@ def test_confirmed_append_only(admin, local_account, monkeypatch, scenario):
     else:
         assert result.status == "blocked" and identity["groups"] == ["staff"]
         assert len(writes) == int(scenario == "denied_native")
+
+
+@pytest.mark.parametrize("account_exists", [True, False])
+def test_native_append_runs_only_the_existing_account_command(
+    tmp_path, admin, local_account, account_exists, monkeypatch
+):
+    account = admin_account.read_account(AdminIntent(username="alice"))
+    # Exercise the real Ansible command module with an inert account tool.
+    marker = tmp_path / "argv"
+    fake_tool = tmp_path / "usermod"
+    fake_tool.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > "
+        + shlex.quote(str(marker))
+        + ("\nexit 0\n" if account_exists else "\nexit 6\n")
+    )
+    fake_tool.chmod(0o700)
+
+    def synthetic_run(argv, **kwargs):
+        assert argv[4] == "/usr/bin/ansible"
+        assert argv[argv.index("-m") + 1] == "ansible.builtin.command"
+        args = json.loads(argv[-1])
+        assert args["argv"][0] == "/usr/sbin/usermod" and not args["expand_argument_vars"]
+        assert kwargs["cwd"] == ROOT
+        assert Path(kwargs["env"]["HOME"]).stat().st_mode & 0o777 == 0o700
+        assert "PYTHONPATH" not in kwargs["env"]
+        args["argv"][0] = str(fake_tool)
+        assert kwargs["env"]["ANSIBLE_PYTHON_INTERPRETER"] == argv[0]
+        argv[3] = str(Path(yaml.__file__).resolve().parents[1])
+        argv[4] = str(Path(sys.executable).with_name("ansible"))
+        argv[-1] = json.dumps(args)
+        # Match native extensions to this test environment. The module itself still
+        # executes through the packaged interpreter using the system Python.
+        isolated = subprocess.check_output(
+            [argv[0], "-c", "import sys; print(sys.flags.isolated, sys.flags.no_site)"]
+        )
+        assert isolated.strip() == b"1 1"
+        argv[:1] = [sys.executable, "-I", "-S", "-B"]
+        return subprocess.run(argv, **kwargs)
+
+    monkeypatch.setattr(admin, "INSTALLED", ROOT)
+    monkeypatch.setattr(admin, "require_installed_resource", lambda path, relative: None)
+    monkeypatch.setattr(admin, "TemporaryDirectory", lambda **kw: TemporaryDirectory(dir=tmp_path))
+    monkeypatch.setattr(
+        admin, "subprocess", SimpleNamespace(run=synthetic_run, DEVNULL=subprocess.DEVNULL)
+    )
+    if account_exists:
+        admin.append_sudo(account)
+    else:
+        with pytest.raises(ValueError, match="native append"):
+            admin.append_sudo(account)
+    assert marker.read_text().splitlines() == ["--append", "--groups", "sudo", "--", "alice"]
 
 
 @pytest.mark.parametrize(
@@ -316,7 +408,8 @@ def test_privileged_python_uses_only_fixed_distro_imports(tmp_path):
         for task in outer.get("block", ())
         if "ansible.builtin.raw" in task
     )
-    fixture = tmp_path / "inspect_python.py"
+    fixture = tmp_path / "ansible/files/admin.py"
+    fixture.parent.mkdir(parents=True)
     fixture.write_text(
         "import json,sys\nprint(json.dumps([sys.flags.isolated, sys.flags.no_site, "
         "sys.path, sys.argv[1:]]))\n"
@@ -327,21 +420,29 @@ def test_privileged_python_uses_only_fixed_distro_imports(tmp_path):
     (private / "sitecustomize.py").write_text(f"open({str(canary)!r}, 'w').close()\n")
     sentinel = json.dumps({"label": "$HOME; words in quotes"})
     distro = tmp_path / "distro"
-    library = distro / "setup_system/infrastructure"
+    library = distro / "setup_system"
     library.mkdir(parents=True)
-    guard = library / "system_paths.py"
-    shutil.copyfile(ROOT / "src/setup_system/infrastructure/system_paths.py", guard)
-    program = raw.replace("/usr/lib/setup-system/ansible/files/admin.py", str(fixture))
+    guard = library / "layout.py"
+    guard.write_text(
+        f"from pathlib import Path\nINSTALLED = Path({str(tmp_path)!r})\n"
+        "def require_installed_resource(source, relative):\n"
+        "    raise ValueError('expected installed resource')\n"
+    )
+    program = raw
     program = program.replace('"/usr/lib/python3/dist-packages"', f'"{distro}"')
     program = program.replace("{{ payload.wire | quote }}", shlex.quote(sentinel))
     argv = shlex.split(program)
     start = argv.index("/usr/bin/python3")
     assert argv[start + 1 : start + 5] == ["-I", "-S", "-B", "-c"]
     denied = subprocess.run(argv[start:], text=True, capture_output=True, check=False)
-    assert denied.returncode and not denied.stdout and "root-owned" in denied.stderr
+    assert (
+        denied.returncode and not denied.stdout and "expected installed resource" in denied.stderr
+    )
     # The second fixture models the successful trust check, running at this CI user's UID.
     guard.write_text(
-        "def protected(path, *, directory):\n    assert not directory and path.is_file()\n"
+        f"from pathlib import Path\nINSTALLED = Path({str(tmp_path)!r})\n"
+        "def require_installed_resource(source, relative):\n"
+        "    assert source == INSTALLED / relative and source.is_file()\n"
     )
     result = subprocess.check_output(
         argv[start:],
@@ -350,22 +451,22 @@ def test_privileged_python_uses_only_fixed_distro_imports(tmp_path):
         env={"PYTHONPATH": str(private), "PYTHONUSERBASE": str(private)},
     )
     isolated, no_site, search, arguments = json.loads(result)
-    assert isolated and no_site and arguments == ["apply", sentinel]
+    assert isolated and no_site and arguments == ["account", "apply", sentinel]
     assert search[-1] == str(distro)
     assert all(p.startswith("/usr/lib/python3") for p in search[:-1])
     assert not canary.exists()
 
 
-@pytest.mark.parametrize("variant", ["unconfirmed", "changed", "missing", "denied"])
+@pytest.mark.parametrize("variant", ["unconfirmed", "changed", "missing", "denied", "locked_root"])
 def test_administrative_play_validates_before_native_su(tmp_path, admin, local_account, variant):
     # Substitute a failing, unprivileged executable in the play under test. This
     # exercises the real become plugin without entering PAM or changing any user.
     play = tmp_path / "admin.yml"
     called = tmp_path / "su-invoked"
     su = tmp_path / "denying-su"
+    refusal = "Account validation failure" if variant == "locked_root" else "Authentication failure"
     su.write_text(
-        f"#!/bin/sh\necho called >> {shlex.quote(str(called))}\n"
-        "echo 'su: Authentication failure' >&2\nexit 1\n"
+        f"#!/bin/sh\necho called >> {shlex.quote(str(called))}\necho 'su: {refusal}' >&2\nexit 1\n"
     )
     su.chmod(0o700)
     play.write_text((ROOT / "ansible/admin.yml").read_text().replace("/usr/bin/su", str(su)))
@@ -382,6 +483,7 @@ def test_administrative_play_validates_before_native_su(tmp_path, admin, local_a
         **os.environ,
         "HOME": str(tmp_path),
         "ANSIBLE_HOME": str(tmp_path / ".ansible"),
+        "ANSIBLE_REMOTE_TEMP": str(tmp_path / "remote"),
         "ANSIBLE_CONFIG": str(ROOT / "ansible.cfg"),
         "ANSIBLE_NOCOLOR": "true",
         "SETUP_SYSTEM_REQUEST": str(request),
@@ -411,7 +513,9 @@ def test_administrative_play_validates_before_native_su(tmp_path, admin, local_a
         timeout=35,
         check=False,
     )
-    assert called.exists() == (variant == "denied"), "Invalid consent reached the su plugin"
+    assert called.exists() == (variant in {"denied", "locked_root"}), (
+        "Invalid consent reached the su plugin"
+    )
     if called.exists():
         assert called.read_text().splitlines() == ["called"], "The refused credential was retried"
     assert proc.returncode == 0, proc.stdout
@@ -475,8 +579,12 @@ def test_make_wrapper_rejects_before_ansible_can_prompt(tmp_path, issue):
     wrapper = (
         (ROOT / "libexec/play.sh")
         .read_text()
-        .replace("/usr/lib/setup-system", str(root))
-        .replace("interpreter=/usr/bin/python3", "interpreter=" + shlex.quote(sys.executable))
+        .replace(
+            '. "$(dirname -- "$0")/runtime.sh"',
+            "root=$PWD; installed_root=$PWD; interpreter=" + shlex.quote(sys.executable),
+        )
+        .replace("verify_installation(Path.cwd())", "None")
+        .replace("/usr/bin/python3 -I -B -c", shlex.quote(sys.executable) + " -I -B -c")
         .replace("playbook=/usr/bin/ansible-playbook", "playbook=" + shlex.quote(str(fake_play)))
     )
     (root / "libexec").mkdir()
@@ -510,3 +618,20 @@ def test_make_wrapper_rejects_before_ansible_can_prompt(tmp_path, issue):
     assert proc.returncode != 0 and not called.exists()
     assert json.loads(result.read_bytes())["status"] == "blocked"
     assert result.stat().st_mode & 0o777 == 0o600
+
+
+def test_admin_wire_preserves_consent_digest_and_unicode(
+    tmp_path, admin, local_account, monkeypatch
+):
+    from setup_system.infrastructure.operation_io import read_admin_request
+
+    monkeypatch.setattr(admin, "current_target", lambda: ("amd64", True))
+    selected = admin.run("plan", envelope()).model_dump(mode="json", exclude_unset=True)
+    selected["actions"][0]["label"] = "Подтвердить доступ"
+    original = json.dumps(json.loads(envelope(selected)), ensure_ascii=False, indent=2).encode()
+    path = tmp_path / "request.json"
+    path.write_bytes(original)
+    path.chmod(0o600)
+    result = read_admin_request(str(path), "apply")
+    assert result["digest"] == hashlib.sha256(original).hexdigest()
+    assert json.loads(result["wire"]) == json.loads(original)

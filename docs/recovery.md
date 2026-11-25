@@ -4,6 +4,12 @@ Cancel waits until the next safe boundary. A running dpkg transaction can finish
 and leave packages installed. If an operation fails, inspect its completed stages,
 exit status and receipts before correcting the cause and retrying.
 
+The app records the target, status and time of the last mutation in
+`$XDG_STATE_HOME/setup-system/last-operation.json`. A partial result means a stage
+may already have changed the system. An unknown result means the runner could
+not verify the outcome. Inspect the system and its receipts before preparing a
+new plan. The app displays the recorded outcome on its next launch.
+
 ## Receipts and backups
 
 A native flock serializes package changes, Apply and Restore. Preview optional removals separately. Cleanup rechecks the native solver result and invokes dpkg on the exact approved names.

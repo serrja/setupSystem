@@ -63,6 +63,7 @@ def outcomes(tmp_path_factory):
             [],
             True,
         ),
+        "cancel_before": ({"apps": ["firefox"]}, False, True, [], [], True),
         "unsupported": (
             {"desktop_theme": True},
             False,
@@ -150,7 +151,7 @@ def test_plan_never_calls_executor_or_creates_files(tmp_path, monkeypatch):
     for key in ("CONFIG", "DATA", "STATE", "CACHE"):
         monkeypatch.setenv("XDG_" + key + "_HOME", str(home / key.lower()))
     result = asyncio.run(
-        AsyncMakeRunner(ROOT).run(
+        AsyncMakeRunner(ROOT).execute(
             Command.capture(Target.WORKSPACE_PLAN, {"schema": 1, "settings": {}, "expected": None})
         )
     )
@@ -179,9 +180,14 @@ def test_unsupported_platform_blocks_apply_but_not_navigation(tmp_path, outcomes
 
 
 def test_cancel_is_observed_between_completed_stages(outcomes):
-    assert outcomes["cancel"]["status"] == "cancelled"
+    assert outcomes["cancel"]["status"] == "partial"
     assert outcomes["cancel"]["actions"] == [{"kind": "packages_verified", "label": "Packages"}]
     assert "Prepare next stage" in outcomes["cancel"]["blockers"][0]
+
+
+def test_cancel_before_mutation_has_no_partial_stages(outcomes):
+    assert outcomes["cancel_before"]["status"] == "cancelled"
+    assert outcomes["cancel_before"]["actions"] == []
 
 
 def test_partial_failure_never_reports_success(outcomes):
@@ -386,14 +392,14 @@ def test_invalid_release_record_blocks_only_privileged_operations(tmp_path, monk
             "observed": {"needs_system": True, "needs_user": False},
         }
         asyncio.run(
-            runner.run(
+            runner.execute(
                 Command.capture(
                     Target.BASE_APPLY, {"schema": 1, "settings": {}, "expected": expected}
                 )
             )
         )
     answer = asyncio.run(
-        runner.run(
+        runner.execute(
             Command.capture(
                 Target.PROJECT_CHECK,
                 {"schema": 1, "settings": {"project": str(tmp_path)}, "expected": None},

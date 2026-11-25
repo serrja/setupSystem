@@ -1,6 +1,6 @@
 """Validation defaults for immutable application contracts."""
 
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -19,12 +19,12 @@ class ContractModel(BaseModel):
 
     @field_validator("schema_version", mode="before", check_fields=False)
     @classmethod
-    def require_integer_version(cls, value: object) -> object:
+    def require_integer_version(cls, value: Any) -> int:
         if type(value) is not int:
             raise ValueError("Expected an integer schema version")
         return value
 
-    def validated(self, **updates: object) -> Self:
+    def validated(self, **updates: Any) -> Self:
         """Construct a detached and validated revision from declared fields."""
         values = self.model_dump(round_trip=True, by_alias=True)
         for key, value in updates.items():

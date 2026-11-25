@@ -6,13 +6,18 @@ import os
 import stat
 import subprocess
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
+import typer
+from pydantic import JsonValue
+
 from setup_system.domain.actions import RegionAction, SystemAction
-from setup_system.domain.contracts import MAX_MESSAGE_BYTES
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
 from setup_system.domain.identity import TargetUser
-from setup_system.domain.login import LoginConsent
+from setup_system.domain.intentions import BaseOptions, WorkspaceOptions
+from setup_system.domain.observations import HappBefore, HappUnit, SystemBefore
 from setup_system.domain.system_receipts import RegionalKind
 from setup_system.domain.system_requests import HappInspection, StageApply, SystemIntent
 from setup_system.infrastructure import firefox_policy, graphical_unlock, happ_facts, regional
@@ -20,6 +25,8 @@ from setup_system.infrastructure.identity import resolve_target, user_environmen
 from setup_system.infrastructure.login import DesktopSystem
 from setup_system.infrastructure.native_target import current_target
 from setup_system.infrastructure.system_paths import protected
+from setup_system.layout import require_installed_resource
+from setup_system.machine_io import write_model
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,75 +39,82 @@ def desktop(xdg: dict[str, str]) -> tuple[DesktopSystem, TargetUser, dict[str, s
 
 def policy_stamp(
     path: Path = Path("/etc/firefox/policies/policies.json"),
-) -> list[int | str] | Literal["root-only"] | None:
+) -> tuple[int, int, int, str] | Literal["root-only"] | None:
     try:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 1024 * 1024:
             raise ValueError("Unsafe Firefox enterprise policy")
         raw = path.read_bytes()
-        return [
+        return (
             info.st_dev,
             info.st_ino,
             stat.S_IMODE(info.st_mode),
             hashlib.sha256(raw).hexdigest(),
-        ]
+        )
     except FileNotFoundError:
         return None
     except PermissionError:
         return "root-only"
 
 
-def policy_matches(stamp: object) -> bool:
+def policy_matches(stamp: tuple[int, int, int, str] | Literal["root-only"] | None) -> bool:
     return bool(
-        isinstance(stamp, list)
+        isinstance(stamp, tuple)
         and stamp[2] == 0o644
         and stamp[3] == hashlib.sha256(firefox_policy.desired_bytes()).hexdigest()
     )
 
 
-def main() -> None:
-    op = sys.argv[1]
-    if op in {"happ-unit", "region", "login", "firefox", "boot"}:
-        if os.geteuid() != 0 or ROOT != Path("/usr/lib/setup-system") or not current_target()[1]:
+class SystemTask(StrEnum):
+    PLAN = "plan"
+    HAPP_INSPECT = "happ-inspect"
+    HAPP_UNIT = "happ-unit"
+    REGION = "region"
+    LOGIN = "login"
+    FIREFOX = "firefox"
+    BOOT = "boot"
+
+
+class SystemPlan(ContractModel):
+    actions: tuple[RegionAction | SystemAction, ...]
+    blockers: tuple[str, ...]
+    observed: SystemBefore
+
+
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command()
+def run(op: SystemTask) -> None:
+    """Inspect a system stage or apply its confirmed operation."""
+    if op not in {SystemTask.PLAN, SystemTask.HAPP_INSPECT}:
+        if os.geteuid() != 0 or not current_target()[1]:
             raise ValueError("System changes require authenticated Debian 13 system execution")
-        protected(ROOT)
-    elif op not in {"plan", "happ-inspect"}:
-        raise ValueError("Unknown system operation")
+        require_installed_resource(Path(__file__), "ansible/files/system_contract.py")
     wire = sys.stdin.read(MAX_MESSAGE_BYTES + 1)
     if len(wire.encode()) > MAX_MESSAGE_BYTES:
         raise ValueError("System intent exceeds the supported size")
-    request = json.loads(wire)
-    if op == "happ-inspect":
-        request = HappInspection.model_validate(request).model_dump(mode="json", exclude_unset=True)
-    elif op == "plan":
-        request = SystemIntent.model_validate(request).model_dump(mode="json", exclude_unset=True)
-    else:
-        stage = StageApply.model_validate(request)
-        stage.require_operation(op)
-        request = stage.model_dump(mode="json", exclude_unset=True)
-    settings = request["settings"]
-    actions: list[RegionAction | SystemAction] = []
-    reasons: list[str] = []
-    observations: dict[str, object] = {}
-    if op == "happ-inspect":
-        if "happ" not in settings.get("apps", []):
+    if op == SystemTask.HAPP_INSPECT:
+        inspection = HappInspection.model_validate_json(wire)
+        if "happ" not in inspection.settings.apps:
             raise ValueError("Choose Happ before inspecting its service")
         unit = happ_facts.unit_info()
         installed = happ_facts.installed_version()
-        if (
-            request.get("exact")
-            or installed is None
-            or installed.split("-")[0] != request["version"]
-        ):
-            happ_facts.require_idle(installed, request["version"], unit)
-        print(json.dumps({"unit": unit, "installed": installed}))
+        if inspection.exact or installed is None or installed.split("-")[0] != inspection.version:
+            happ_facts.require_idle(installed, inspection.version, unit)
+        write_model(HappBefore(unit=HappUnit.model_validate(unit), installed=installed))
         return
-    if op == "plan":
-        if request["section"] == "base":
+    if op == SystemTask.PLAN:
+        intent = SystemIntent.model_validate_json(wire)
+        settings = intent.settings
+        actions: list[RegionAction | SystemAction] = []
+        reasons: list[str] = []
+        observations: dict[str, JsonValue] = {}
+        if intent.section == "base" and isinstance(settings, BaseOptions):
             kinds: tuple[RegionalKind, ...] = ("timezone", "locale", "keyboard")
             for kind in kinds:
-                if settings.get(kind) is not None:
-                    desired = regional.validate(kind, settings[kind])
+                if (selected := getattr(settings, kind)) is not None:
+                    desired = regional.validate(kind, selected)
                     actual = regional.actual(kind)
                     observations[kind] = actual
                     if not regional.equivalent(kind, actual, desired):
@@ -112,8 +126,8 @@ def main() -> None:
                                 label=f"Set {kind} to {desired}",
                             )
                         )
-            if settings.get("graphical_login"):
-                manager, account, env = desktop(request["xdg"])
+            if settings.graphical_login and intent.xdg is not None:
+                manager, account, env = desktop(intent.xdg.model_dump())
                 plan = manager.plan(account, env)
                 observations["login"] = plan.consent.model_dump(mode="json")
                 if (
@@ -132,7 +146,7 @@ def main() -> None:
                             label="Enable greetd with a recoverable GRUB menu",
                         )
                     )
-            if settings.get("plymouth"):
+            if settings.plymouth:
                 unlock = graphical_unlock.inspect_unlock()
                 observations["unlock"] = unlock.model_dump(mode="json", exclude={"description"})
                 reasons.extend(unlock.blockers)
@@ -140,26 +154,27 @@ def main() -> None:
                     observations["unlock_current"] = graphical_unlock.is_current(ROOT)
                     if not observations["unlock_current"]:
                         actions.append(SystemAction(kind="plymouth", label=unlock.description))
-        elif "firefox" in settings.get("apps", []):
-            observations["firefox"] = policy_stamp()
-            if not policy_matches(observations["firefox"]):
+        elif isinstance(settings, WorkspaceOptions) and "firefox" in settings.apps:
+            stamp = policy_stamp()
+            observations["firefox"] = list(stamp) if isinstance(stamp, tuple) else stamp
+            if not policy_matches(stamp):
                 actions.append(
                     SystemAction(
                         kind="firefox_policy", label="Apply Firefox enterprise privacy policy"
                     )
                 )
-        print(
-            json.dumps(
-                {
-                    "actions": [a.model_dump() for a in actions],
-                    "blockers": reasons,
-                    "observed": observations,
-                }
+        write_model(
+            SystemPlan(
+                actions=tuple(actions),
+                blockers=tuple(reasons),
+                observed=SystemBefore.model_validate(observations),
             )
         )
         return
-    before = request["observed"]
-    if op == "happ-unit" and "happ" in settings.get("apps", []):
+    stage = StageApply.model_validate_json(wire)
+    stage.require_operation(op)
+    before = stage.observed
+    if op == SystemTask.HAPP_UNIT:
         info = happ_facts.unit_info()
         if (
             not any(
@@ -173,10 +188,10 @@ def main() -> None:
         ):
             raise ValueError("The verified Debian package did not provide its service")
         print(json.dumps(info))
-    elif op == "region":
+    elif op == SystemTask.REGION:
         for item in stage.actions:
             if isinstance(item, RegionAction):
-                original = before[item.field]
+                original = getattr(before, item.field)
                 if (
                     original is None
                     and item.field == "keyboard"
@@ -184,41 +199,40 @@ def main() -> None:
                 ):
                     original = "us"
                 regional.apply(item.field, item.value, original)
-    elif op == "login" and settings.get("graphical_login"):
-        manager, account, env = desktop(request["xdg"])
-        changed = manager.apply(
-            manager.revalidate(LoginConsent.model_validate(before["login"]), account, env)
-        )
+    elif op == SystemTask.LOGIN and stage.xdg is not None and before.login is not None:
+        manager, account, env = desktop(stage.xdg.model_dump())
+        changed = manager.apply(manager.revalidate(before.login, account, env))
         print(json.dumps({"changed": changed}))
-    elif op == "firefox" and "firefox" in settings.get("apps", []):
-        if before["firefox"] != "root-only" and before["firefox"] != policy_stamp():
+    elif op == SystemTask.FIREFOX:
+        if before.firefox != "root-only" and before.firefox != policy_stamp():
             raise ValueError("Firefox policy changed after confirmation")
         firefox_policy.apply(firefox_policy.inspect())
         if not policy_matches(policy_stamp()):
             raise RuntimeError("Firefox enterprise policy readback failed")
-    elif op == "boot" and settings.get("plymouth"):
-        unlock = before["unlock"]
+    elif op == SystemTask.BOOT and before.unlock is not None:
+        accepted_unlock = before.unlock
 
         def install(packages: tuple[str, ...]) -> None:
-            stage = Path(request["apt_work"])
-            if stage.parent != Path("/run/setup-system") or not stage.name.startswith(
+            apt_stage = Path(stage.apt_work)
+            if apt_stage.parent != Path("/run/setup-system") or not apt_stage.name.startswith(
                 "setup-system-apt-"
             ):
                 raise ValueError("Expected a private root APT stage")
-            protected(stage)
+            protected(apt_stage)
             subprocess.run(
                 [
                     "/usr/bin/python3",
                     "-I",
                     "-B",
                     str(ROOT / "ansible/files/apt_apply.py"),
-                    str(stage),
+                    "apply",
+                    str(apt_stage),
                 ],
                 check=True,
             )
 
         changed = graphical_unlock.apply_unlock(
-            unlock["identity"], root=ROOT, packages=unlock["packages"], install=install
+            accepted_unlock.identity, root=ROOT, packages=accepted_unlock.packages, install=install
         )
         print(json.dumps({"changed": changed}))
     else:
@@ -226,4 +240,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    cli()

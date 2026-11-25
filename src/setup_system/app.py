@@ -7,9 +7,9 @@ import json
 import os
 import sys
 from contextlib import nullcontext
-from pathlib import Path
 from typing import ClassVar, Literal
 
+from pydantic import JsonValue
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
@@ -28,9 +28,12 @@ from textual.widgets import (
 )
 
 from setup_system.domain.observations import NativeObservations, ProjectObservations
+from setup_system.infrastructure.operation_outcome import read_last_outcome
 from setup_system.infrastructure.palette import palette
+from setup_system.layout import GUIDES, INSTALLED
 from setup_system.models import (
     BaseOptions,
+    CleanupOptions,
     PlanSnapshot,
     PlanTask,
     ProjectTask,
@@ -40,7 +43,6 @@ from setup_system.models import (
 )
 from setup_system.runner import (
     FOREGROUND,
-    INSTALLED,
     AsyncMakeRunner,
     BecomePassword,
     Command,
@@ -49,7 +51,7 @@ from setup_system.runner import (
 )
 from setup_system.settings import Loaded, Settings
 from setup_system.suggestions import Catalog, Suggestions, config_root
-from setup_system.ui.dialogs import Consent, Password
+from setup_system.ui.dialogs import Consent, DiscardEdits, Password
 from setup_system.ui.forms import BaseForm, WorkspaceForm
 from setup_system.ui.help import Help
 from setup_system.ui.projects import ProjectTools, ToolChoice
@@ -101,7 +103,7 @@ class SetupApp(App[None]):
     .buttons { height: auto; }
     .buttons Button { min-width: 9; width: auto; margin-right: 1; }
     #feedback { height: auto; max-height: 9; padding: 0 1; overflow-y: auto; }
-    Consent, Password { align: center middle; }
+    Consent, Password, DiscardEdits { align: center middle; }
     #dialog { width: 90%; height: auto; max-height: 90%; padding: 1;
               border: solid $accent; background: $surface; }
     #review { height: auto; max-height: 12; }
@@ -145,6 +147,7 @@ class SetupApp(App[None]):
         self.base_form: BaseForm
         self.workspace_form: WorkspaceForm
         self.feedback: Static
+        self.feedback_updated = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -173,10 +176,24 @@ class SetupApp(App[None]):
         }
         self.run_worker(self.reload("base"), name="load-base")
         self.run_worker(self.reload("workspace"), name="load-workspace")
+        self.run_worker(self.last_outcome(), name="last-outcome")
+
+    async def last_outcome(self) -> None:
+        try:
+            outcome = await read_last_outcome()
+            if outcome is None:
+                return
+            message = outcome.describe()
+        except (OSError, ValueError):
+            message = (
+                "Could not read the previous operation record. Inspect before applying changes."
+            )
+        if not self.feedback_updated:
+            self.report(message)
 
     def action_help(self) -> None:
         root = self.catalog.config.parent
-        directory = Path("/usr/share/doc/setup-system/docs") if root == INSTALLED else root / "docs"
+        directory = GUIDES if root == INSTALLED else root / "docs"
         self.push_screen(Help(directory))
 
     def action_base(self) -> None:
@@ -197,15 +214,25 @@ class SetupApp(App[None]):
     def report(self, message: str) -> None:
         if self.view_active and self.feedback.is_attached:
             self.feedback.update(message)
+            self.feedback_updated = True
 
     async def reload(self, section: Section, *, announce: bool = False) -> None:
         if not self.view_active or section in self.reloading or section in self.saving:
             return
         self.reloading.add(section)
-        self.loaded.pop(section, None)
         form = self.base_form if section == "base" else self.workspace_form
-        form.disabled = True
         try:
+            if announce and section in self.loaded:
+                try:
+                    dirty = form.options() != self.loaded[section].options
+                except ValueError:
+                    dirty = True
+                if dirty and not await self.push_screen(
+                    DiscardEdits(section), wait_for_dismiss=True
+                ):
+                    return
+            self.loaded.pop(section, None)
+            form.disabled = True
             saved = await self.settings.read(section)
             if not self.view_active or not form.is_attached:
                 return
@@ -253,7 +280,9 @@ class SetupApp(App[None]):
         running = self.cancel_event is not None or self.reviewing is not None
         for name in RUN_BUTTONS:
             self.controls[name].disabled = running
-        self.controls["apply"].disabled = running or self.pending is None
+        apply = self.controls["apply"]
+        apply.label = f"Apply {self.pending.section} plan" if self.pending else "Apply plan"
+        apply.disabled = running or self.pending is None
         self.controls["cancel"].disabled = not running and self.pending is None
 
     @on(Button.Pressed)
@@ -305,7 +334,9 @@ class SetupApp(App[None]):
             form = self.query_one(WorkspaceForm)
             if not form.monitors:
                 raise ValueError("Set an advertised display mode first")
-            values = [item.model_dump(mode="json") for item in form.monitors.values()]
+            values: list[JsonValue] = [
+                item.model_dump(mode="json") for item in form.monitors.values()
+            ]
             self.start(name, {"monitors": values}, section, None)
             return
         if name == "project-check":
@@ -327,10 +358,12 @@ class SetupApp(App[None]):
         task: PlanTask = section
         if name == "cleanup-plan":
             task = "cleanup"
-            settings = {
-                "cleanup": self.query_one("#cleanup", SelectionList).selected,
-                "cleanup_mode": self.query_one("#cleanup-mode", Select).value,
-            }
+            settings = CleanupOptions.model_validate(
+                {
+                    "cleanup": self.query_one("#cleanup", SelectionList).selected,
+                    "cleanup_mode": self.query_one("#cleanup-mode", Select).value,
+                }
+            ).model_dump(mode="json")
         else:
             settings = self.options(section).model_dump(mode="json", exclude_none=True)
             if section == "workspace":
@@ -349,7 +382,7 @@ class SetupApp(App[None]):
 
     async def review_apply(self, plan: PlanSnapshot) -> None:
         """Keep consent and its one-use credential bound to the same preview."""
-        section: Section = "base" if plan.task in {"base", "admin"} else "workspace"
+        section = plan.section
         password = None
 
         def current() -> bool:
@@ -416,12 +449,12 @@ class SetupApp(App[None]):
     def start(
         self,
         target: str,
-        settings: dict[str, object],
+        settings: dict[str, JsonValue],
         section: Section,
         planning: tuple[PlanTask, str | None] | None,
         *,
         group: Group | None = None,
-        expected: dict[str, object] | None = None,
+        expected: dict[str, JsonValue] | None = None,
         password: BecomePassword | None = None,
     ) -> None:
         command = Command.capture(target, {"schema": 1, "settings": settings, "expected": expected})
@@ -444,7 +477,7 @@ class SetupApp(App[None]):
                 if not self.view_active:
                     return
                 with self.suspend() if command.target in FOREGROUND else nullcontext():
-                    result = await self.runner.run(
+                    result = await self.runner.execute(
                         command, password=password, cancel=cancel, on_event=progress
                     )
                 if not self.view_active:
@@ -471,7 +504,8 @@ class SetupApp(App[None]):
                     await self.suggestions.refresh(section, result.observed)
                     if not self.view_active or not self.workspace_form.is_attached:
                         return
-                    self.workspace_form.refresh_modes()
+                    self.base_form.refresh_choices()
+                    self.workspace_form.refresh_choices()
                 if (
                     planning
                     and not cancel.is_set()

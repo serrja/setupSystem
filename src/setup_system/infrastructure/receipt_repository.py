@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,13 +16,16 @@ from setup_system.domain.receipts import (
     ReceiptRecord,
     digest,
 )
+from setup_system.infrastructure.atomic_rename import rename_new
 from setup_system.infrastructure.receipt_migrations import migrate_user_files
 from setup_system.infrastructure.user_storage import (
     atomic_write,
     checked_directory,
     private_directory,
     read_object,
+    receipt_bytes,
     safe_file,
+    staged_file,
     state_root,
     target_path,
 )
@@ -42,11 +44,15 @@ def write_record(path: Path, record: ReceiptRecord) -> None:
 
 def _backup_original(path: Path) -> None:
     backup = path.with_name(path.stem + ".v0.json")
-    safe_file(backup, os.getuid())
-    data = path.read_bytes()
-    if backup.exists() and backup.read_bytes() != data:
-        raise ValueError(f"Conflicting previous migration backup: {backup}")
-    atomic_write(backup, data)
+    data = receipt_bytes(path)
+    with private_directory(path.parent, create=False) as parent:
+        with staged_file(parent, backup.name, data, 0o600) as candidate:
+            try:
+                rename_new(parent, candidate, parent, backup.name)
+            except FileExistsError:
+                if receipt_bytes(backup) != data:
+                    raise ValueError(f"Conflicting previous migration backup: {backup}") from None
+            os.fsync(parent)
 
 
 def ownership(*, migrate: bool = False) -> Ownership:
@@ -54,9 +60,7 @@ def ownership(*, migrate: bool = False) -> Ownership:
     safe_file(path, os.getuid())
     if not path.is_file():
         return Ownership()
-    data = json.loads(path.read_bytes())
-    if not isinstance(data, dict):
-        raise ValueError("Unknown ownership receipt format")
+    data = read_object(path)
     if "schema_version" in data:
         return Ownership.model_validate(data)
     # v0.4.0 tracked absolute filenames, plus an optional private backup folder.
@@ -72,7 +76,9 @@ def ownership(*, migrate: bool = False) -> Ownership:
         relative = path_key.relative_to(Path.home().resolve()).as_posix()
         if target_path(relative) != path_key:
             raise ValueError("Invalid legacy managed path")
-    index = Ownership(files=data, last_operation=Path(last).name if last else None)
+    index = Ownership.model_validate(
+        {"files": data, "last_operation": Path(last).name if last else None}
+    )
     if migrate:
         _backup_original(path)
     return index

@@ -84,7 +84,7 @@ class ReceiptAction(LabeledAction):
 class RestoreAction(LabeledAction):
     kind: Literal["restore"]
     path: AbsoluteName
-    operation: Literal["would-restore", "would-remove", "would-remove-directory"]
+    operation: Literal["would-create", "would-restore", "would-remove", "would-remove-directory"]
 
 
 class ProjectAction(LabeledAction):

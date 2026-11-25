@@ -1,5 +1,6 @@
 """Keep shipped programs visible to extension-based static checks and coverage."""
 
+import ast
 import tomllib
 from pathlib import Path
 
@@ -28,3 +29,17 @@ def test_production_scripts_are_discoverable_by_native_checks() -> None:
                 continue
             assert any(path.is_relative_to(scope) for scope in typed), path
             assert any(path.is_relative_to(scope) for scope in coverage), path
+
+            tree = ast.parse(path.read_bytes())
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    annotation = node.returns
+                elif isinstance(node, (ast.arg, ast.AnnAssign)):
+                    annotation = node.annotation
+                else:
+                    continue
+                if annotation is not None:
+                    assert not any(
+                        isinstance(item, ast.Name) and item.id == "object"
+                        for item in ast.walk(annotation)
+                    ), (path, node.lineno)

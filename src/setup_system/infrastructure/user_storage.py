@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+from pydantic import JsonValue, TypeAdapter
 
 
 def state_root() -> Path:
@@ -32,13 +33,28 @@ def inside_home(path: Path) -> Path:
     return candidate
 
 
+@contextmanager
+def staged_file(parent: int, basename: str, content: bytes, mode: int) -> Iterator[str]:
+    """Hold a synced private inode until the caller publishes it in the pinned directory."""
+    pinned = Path("/proc/self/fd") / str(parent)
+    descriptor, name = tempfile.mkstemp(prefix=f".{basename}.", dir=pinned)
+    candidate = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fchmod(stream.fileno(), mode)
+            os.fsync(stream.fileno())
+        yield candidate.name
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
 def atomic_write(
     path: Path, content: bytes, mode: int = 0o600, *, preserve_existing_mode: bool = True
 ) -> str:
     target = inside_home(path)
     with private_directory(target.parent) as parent:
-        # Anchor staging and replacement to the directory checked above.
-        pinned = Path("/proc/self/fd") / str(parent)
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
         try:
             previous = os.open(target.name, flags, dir_fd=parent)
@@ -51,7 +67,7 @@ def atomic_write(
                     raise ValueError(f"Managed target is not a regular file: {target}")
                 previous_mode = stat.S_IMODE(info.st_mode)
                 with open(previous, "rb", closefd=False) as original:
-                    if original.read() == content and (
+                    if original.read(len(content) + 1) == content and (
                         preserve_existing_mode or previous_mode == mode
                     ):
                         return "unchanged"
@@ -59,18 +75,9 @@ def atomic_write(
                     mode = previous_mode
             finally:
                 os.close(previous)
-        descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=pinned)
-        candidate = Path(name)
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fchmod(stream.fileno(), mode)
-                os.fsync(stream.fileno())
-            os.replace(candidate.name, target.name, src_dir_fd=parent, dst_dir_fd=parent)
+        with staged_file(parent, target.name, content, mode) as candidate:
+            os.replace(candidate, target.name, src_dir_fd=parent, dst_dir_fd=parent)
             os.fsync(parent)
-        finally:
-            candidate.unlink(missing_ok=True)
     return "changed"
 
 
@@ -84,6 +91,10 @@ def safe_file(path: Path, uid: int) -> None:
         info = path.lstat()
     except FileNotFoundError:
         return
+    _check_file(info, uid)
+
+
+def _check_file(info: os.stat_result, uid: int) -> None:
     if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1:
         raise ValueError("Settings must be an owned, single-link regular file")
     if info.st_mode & 0o022:
@@ -110,8 +121,8 @@ def checked_directory(path: Path) -> Path:
 
 
 @contextmanager
-def private_directory(path: Path) -> Iterator[int]:
-    """Open a verified directory and create missing components below HOME privately."""
+def private_directory(path: Path, *, create: bool = True) -> Iterator[int]:
+    """Pin an owned directory, optionally creating missing components below HOME."""
     checked_directory(path)
     home = Path.home().resolve()
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -123,7 +134,7 @@ def private_directory(path: Path) -> Iterator[int]:
             try:
                 child = os.open(part, flags, dir_fd=descriptor)
             except FileNotFoundError:
-                if current == home or not current.is_relative_to(home):
+                if not create or current == home or not current.is_relative_to(home):
                     raise
                 try:
                     os.mkdir(part, 0o700, dir_fd=descriptor)
@@ -155,11 +166,21 @@ def target_path(relative: str, *, validate_file: bool = True) -> Path:
     return result
 
 
-def read_object(path: Path) -> dict[str, object]:
-    safe_file(path, os.getuid())
-    if path.stat().st_size > 4 * 1024 * 1024:
+def receipt_bytes(path: Path) -> bytes:
+    limit = 4 * 1024 * 1024
+    with private_directory(path.parent, create=False) as parent:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        descriptor = os.open(path.name, flags, dir_fd=parent)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(descriptor)
+            _check_file(info, os.getuid())
+            if info.st_size > limit:
+                raise ValueError("File receipt exceeds the size limit")
+            data = stream.read(limit + 1)
+    if len(data) > limit:
         raise ValueError("File receipt exceeds the size limit")
-    data = json.loads(path.read_bytes())
-    if not isinstance(data, dict):
-        raise ValueError("Invalid file receipt")
     return data
+
+
+def read_object(path: Path) -> dict[str, JsonValue]:
+    return TypeAdapter(dict[str, JsonValue]).validate_json(receipt_bytes(path), strict=True)

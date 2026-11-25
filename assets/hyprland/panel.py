@@ -15,7 +15,10 @@ import tempfile
 from copy import deepcopy
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 WORKSPACES = tuple(range(1, 11))
 UPDATE_SIGNAL = 8
@@ -71,8 +74,8 @@ def hardware(sysfs: Path = Path("/sys")) -> tuple[tuple[str, ...], str | None]:
 
 
 def configuration(
-    template: dict[str, Any], state: Path, sysfs: Path = Path("/sys")
-) -> dict[str, Any]:
+    template: dict[str, JsonValue], state: Path, sysfs: Path = Path("/sys")
+) -> dict[str, JsonValue]:
     """Use Waybar's stable custom-module protocol instead of legacy dispatch strings."""
     result = deepcopy(template)
     result["modules-left"] = ["custom/launcher", *(f"custom/workspace-{n}" for n in WORKSPACES)]
@@ -90,7 +93,10 @@ def configuration(
             "escape": True,
         }
     batteries, backlight = hardware(sysfs)
-    right = [name for name in result["modules-right"] if name not in {"battery", "backlight"}]
+    modules = result["modules-right"]
+    if not isinstance(modules, list) or any(not isinstance(name, str) for name in modules):
+        raise ValueError("Expected a Waybar module list")
+    right: list[JsonValue] = [name for name in modules if name not in ("battery", "backlight")]
     for index, name in enumerate(batteries):
         module = f"battery#system-{index}"
         result[module] = {
@@ -104,39 +110,49 @@ def configuration(
         }
         right.insert(max(0, len(right) - 2), module)
     if backlight is not None:
-        result["backlight"]["device"] = backlight
+        control = result["backlight"]
+        if not isinstance(control, dict):
+            raise ValueError("Expected Waybar backlight options")
+        control["device"] = backlight
         right.insert(max(0, len(right) - 2), "backlight")
     result["modules-right"] = right
     return result
 
 
-def _query(topic: str) -> object:
+PanelRow = TypedDict("PanelRow", {"text": str, "class": list[str], "tooltip": str})
+
+
+def _query(topic: str) -> dict[str, JsonValue] | list[JsonValue]:
     result = subprocess.run(
         ["hyprctl", "-j", topic], capture_output=True, text=True, timeout=2, check=True
     )
     if len(result.stdout) > MAX_REPLY:
         raise ValueError("Hyprland IPC response exceeds its bound")
-    return json.loads(result.stdout)
+    data = json.loads(result.stdout)
+    if isinstance(data, (list, dict)):
+        return data
+    raise ValueError("Unexpected workspace response")
 
 
-def workspace_state() -> dict[int, dict[str, object]]:
+def workspace_state() -> dict[int, PanelRow]:
     """Read only current compositor state; unavailable state is never presented as active."""
     try:
         current, entries = _query("activeworkspace"), _query("workspaces")
         if not isinstance(current, dict) or not isinstance(entries, list):
             raise ValueError("Unexpected workspace response")
         active = current.get("id")
+        if type(active) is not int:
+            raise ValueError("Invalid active workspace")
         occupied = {
-            row["id"]
+            workspace
             for row in entries
             if isinstance(row, dict)
-            and type(row.get("id")) is int
-            and type(row.get("windows")) is int
-            and row["windows"] > 0
+            and type(workspace := row.get("id")) is int
+            and type(windows := row.get("windows")) is int
+            and windows > 0
         }
-        known = type(active) is int
     except (OSError, ValueError, subprocess.SubprocessError):
-        active, occupied, known = None, set(), False
+        active, occupied = None, set()
     return {
         number: {
             "text": str(number),
@@ -145,13 +161,13 @@ def workspace_state() -> dict[int, dict[str, object]]:
                 "active" if number == active else "inactive",
                 "occupied" if number in occupied else "empty",
             ],
-            "tooltip": f"Workspace {number}" + (" · status unavailable" if not known else ""),
+            "tooltip": f"Workspace {number}" + (" · status unavailable" if active is None else ""),
         }
         for number in WORKSPACES
     }
 
 
-def publish(folder: Path, rows: dict[int, dict[str, object]]) -> None:
+def publish(folder: Path, rows: dict[int, PanelRow]) -> None:
     for number, row in rows.items():
         path = folder / f"workspace-{number}.json"
         temporary = path.with_suffix(".tmp")

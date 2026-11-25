@@ -76,3 +76,41 @@ def test_play_rejects_an_unsafe_request_before_selecting_any_executable(tmp_path
         check=False,
     )
     assert response.returncode == 2 and not marker.exists() and not result.exists()
+
+
+def test_authorization_refuses_unregistered_recipe_and_wrong_package(tmp_path, monkeypatch):
+    from setup_system import layout
+
+    root = tmp_path / "payload"
+    python_package = tmp_path / "python/setup_system"
+    root.mkdir()
+    python_package.mkdir(parents=True)
+    makefile = root / "Makefile"
+    makefile.touch()
+    (root / "extra.mk").touch()
+    monkeypatch.setattr(layout, "INSTALLED", root)
+    monkeypatch.setattr(layout, "PYTHON_PACKAGE", python_package)
+    registered = {root, makefile, python_package}
+    monkeypatch.setattr(layout, "_package_paths", lambda: registered)
+    monkeypatch.setattr(layout, "protected", lambda path, *, directory=True: None)
+    with pytest.raises(ValueError, match="package inventory"):
+        layout.verify_installation(root)
+    with pytest.raises(ValueError, match="installed Debian"):
+        layout.verify_installation(tmp_path / "checkout")
+
+
+def test_package_inventory_requires_configured_unmodified_package(monkeypatch):
+    from setup_system import layout
+
+    monkeypatch.setattr(layout, "_query", lambda *args: "deinstall ok config-files")
+    with pytest.raises(ValueError, match="configured"):
+        layout._package_paths()
+
+    def modified(binary, *args):
+        if binary == "/usr/bin/dpkg":
+            return "??5??????  /usr/lib/setup-system/Makefile"
+        return "install ok installed" if "-W" in args else "/usr/lib/setup-system"
+
+    monkeypatch.setattr(layout, "_query", modified)
+    with pytest.raises(ValueError, match="integrity"):
+        layout._package_paths()

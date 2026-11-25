@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import get_args
 
+import typer
 from packaging.version import Version
 from pydantic import JsonValue
 
 from setup_system.application import templates
-from setup_system.diagnostics import PartialApplyError
+from setup_system.diagnostics import PartialApplyError, error_text
 from setup_system.domain.actions import ProjectAction
 from setup_system.domain.observations import ProjectObservations
 from setup_system.domain.receipts import FileState
@@ -24,36 +24,46 @@ from setup_system.infrastructure import copier_templates, git_profiles, project_
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.operation_io import read_wire
 from setup_system.infrastructure.user_storage import inside_home
+from setup_system.layout import resource_root
+from setup_system.machine_io import write_model
 from setup_system.models import (
     CreateProfile,
     CreateTemplate,
     Empty,
     Profile,
     ProjectChoice,
+    ProjectTask,
     Repository,
     RequestEnvelope,
     Status,
     TaskResult,
     TemplateChoice,
     TemplateDestination,
-    validate_project_settings,
 )
-from setup_system.runner import resource_root
+
+PROJECT_TARGETS = frozenset(
+    {
+        "project-list",
+        "git-inspect",
+        "project-editor",
+        "project-codex",
+        "template-versions",
+        *(f"{task}-{phase}" for task in get_args(ProjectTask) for phase in ("plan", "apply")),
+    }
+)
 
 
 @dataclass
 class Preview:
     result: TaskResult
-    apply: Callable[[], object]
+    apply: Callable[[], None]
 
 
-def _planned(actions: list[ProjectAction], observed: dict[str, object]) -> TaskResult:
-    return TaskResult.model_validate(
-        {
-            "status": Status.READY if actions else Status.NO_CHANGES,
-            "actions": tuple(actions),
-            "observed": observed,
-        }
+def _planned(actions: list[ProjectAction], observed: ProjectObservations) -> TaskResult:
+    return TaskResult(
+        status=Status.READY if actions else Status.NO_CHANGES,
+        actions=tuple(actions),
+        observed=observed,
     )
 
 
@@ -89,11 +99,11 @@ def _files(paths: list[Path]) -> dict[Path, FileState | None]:
     return {path: observe(inside_home(path)) for path in paths}
 
 
-def _before(states: dict[Path, FileState | None]) -> dict[str, object]:
-    return {str(path): state.model_dump() if state else None for path, state in states.items()}
+def _before(states: dict[Path, FileState | None]) -> dict[str, FileState | None]:
+    return {str(path): state for path, state in states.items()}
 
 
-def _template(root: Path, operation: str, fields: object) -> Preview:
+def _template(root: Path, operation: str, fields: dict[str, JsonValue]) -> Preview:
     selected = (
         TemplateChoice.model_validate(fields)
         if operation == "template-cache"
@@ -133,7 +143,7 @@ def _template(root: Path, operation: str, fields: object) -> Preview:
         offline=selected.offline,
         cache_root=cache.parents[1],
     )
-    observed: dict[str, object] = {
+    observed: dict[str, JsonValue] = {
         "version": plan.version.version,
         "tag": plan.version.tag,
         "source_commit": plan.version.commit,
@@ -148,8 +158,8 @@ def _template(root: Path, operation: str, fields: object) -> Preview:
             else [f"Cache {source.project} at {plan.version.tag}"]
         )
 
-        def run() -> object:
-            return copier_templates.prepare_cache(plan)
+        def run() -> None:
+            copier_templates.prepare_cache(plan)
     else:
         copier_templates.copier_executable()
         copier_templates.validate_destination(plan)
@@ -162,13 +172,12 @@ def _template(root: Path, operation: str, fields: object) -> Preview:
             f"{plan.version.tag} ({plan.version.commit})"
         ]
 
-        def run() -> object:
+        def run() -> None:
             result = copier_templates.execute_template(plan)
             if result.status == "conflicts":
                 raise PartialApplyError(
                     "Copier produced conflicts; inspect the preserved project working tree"
                 )
-            return result
 
     return Preview(
         _planned(
@@ -182,13 +191,13 @@ def _template(root: Path, operation: str, fields: object) -> Preview:
                 )
                 for label in actions
             ],
-            observed,
+            ProjectObservations.model_validate(observed),
         ),
         run,
     )
 
 
-def _git(operation: str, fields: object) -> Preview:
+def _git(operation: str, fields: dict[str, JsonValue]) -> Preview:
     choice = (
         CreateProfile.model_validate(fields)
         if operation == "git-configure"
@@ -197,17 +206,16 @@ def _git(operation: str, fields: object) -> Preview:
     repo = git_profiles.exact_repository(choice.repository)
     profile = git_profiles.profile_path(choice.name)
     before = _files([profile, repo / ".git/config"])
-    observed: dict[str, object] = {}
+    identity = None
     if isinstance(choice, CreateProfile):
         directories = [choice.owner_directory] if choice.owner_directory else []
         global_path = Path(os.environ.get("GIT_CONFIG_GLOBAL", Path.home() / ".gitconfig"))
         before.update(_files([global_path]))
         identity = git_profiles.identity_digest(repo)
-        observed["identity"] = identity
         _, changes = git_profiles.configure_profile(choice.name, repo, directories)
 
-        def write() -> object:
-            return git_profiles.configure_profile(
+        def write() -> None:
+            git_profiles.configure_profile(
                 choice.name,
                 repo,
                 directories,
@@ -218,10 +226,14 @@ def _git(operation: str, fields: object) -> Preview:
     else:
         _, changes = git_profiles.use_profile(choice.name, repo)
 
-        def write() -> object:
-            return git_profiles.use_profile(choice.name, repo, yes=True, reviewed=before)
+        def write() -> None:
+            git_profiles.use_profile(choice.name, repo, yes=True, reviewed=before)
 
-    observed["before"] = _before(before)
+    observed = (
+        ProjectObservations(before=_before(before), identity=identity)
+        if identity
+        else ProjectObservations(before=_before(before))
+    )
     actions = [
         ProjectAction.model_validate(
             {
@@ -237,7 +249,7 @@ def _git(operation: str, fields: object) -> Preview:
 
 
 def preview(
-    root: Path, operation: str, fields: object, accepted: TaskResult | None = None
+    root: Path, operation: str, fields: dict[str, JsonValue], accepted: TaskResult | None = None
 ) -> Preview:
     if operation in {"template-cache", "template-create", "template-update"}:
         if accepted and isinstance(fields, dict) and not fields.get("version"):
@@ -254,9 +266,13 @@ def preview(
             for path in dirs
             if not path.exists()
         )
+
+        def prepare() -> None:
+            project_layout.prepare_owner_directories(layout)
+
         return Preview(
             TaskResult(status=Status.READY if changes else Status.NO_CHANGES, actions=changes),
-            lambda: project_layout.prepare_owner_directories(layout),
+            prepare,
         )
     if operation == "shell-configure":
         status, updates = shell.plan_shell(root)
@@ -268,9 +284,13 @@ def preview(
             if state != "unchanged"
         ]
         before = _files([p for p, _ in updates])
+
+        def configure() -> None:
+            shell.apply_shell(root, reviewed=before)
+
         return Preview(
-            _planned(shell_changes, {"before": _before(before)}),
-            lambda: shell.apply_shell(root, reviewed=before),
+            _planned(shell_changes, ProjectObservations(before=_before(before))),
+            configure,
         )
     if operation == "rtk-install":
         version = accepted.observed.get("version") if accepted else None
@@ -293,23 +313,30 @@ def preview(
         }
         if changes and not target.is_relative_to(Path.home()):
             raise ValueError("Existing RTK is managed by its system package")
+
+        def install() -> None:
+            rtk.install_rtk(selected, update=True, reviewed=prior)
+
         return Preview(
             TaskResult(
                 status=Status.READY if changes else Status.NO_CHANGES,
                 actions=changes,
                 observed=ProjectObservations.model_validate(observed),
             ),
-            lambda: rtk.install_rtk(selected, update=True, reviewed=prior),
+            install,
         )
     raise ValueError("Unknown project operation")
 
 
-def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
-    if os.geteuid() == 0:
+def execute(root: Path, target: str, payload: dict[str, JsonValue] | bytes) -> TaskResult:
+    if os.geteuid() == 0 or os.geteuid() != os.getuid():
         raise ValueError("Project operations require the normal desktop user")
-    envelope = RequestEnvelope.model_validate(payload).for_target(target)
-    operation = target.removesuffix("-apply").removesuffix("-plan")
-    fields = validate_project_settings(operation, envelope.settings)
+    envelope = (
+        RequestEnvelope.model_validate_json(payload)
+        if isinstance(payload, bytes)
+        else RequestEnvelope.model_validate(payload)
+    ).for_target(target)
+    fields = envelope.settings
     if target == "project-list":
         Empty.model_validate(fields)
         return TaskResult(
@@ -367,12 +394,18 @@ def execute(root: Path, target: str, payload: dict[str, object]) -> TaskResult:
     return TaskResult(status=Status.COMPLETE, actions=accepted.actions, observed=accepted.observed)
 
 
-def main() -> None:
-    (target,) = sys.argv[1:]
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command()
+def run(target: str) -> None:
+    """Execute the confirmed project target selected by Make."""
+    if target not in PROJECT_TARGETS:
+        raise typer.BadParameter("Expected a project operation")
     request = Path(os.environ["SETUP_SYSTEM_REQUEST"])
     result = Path(os.environ["SETUP_SYSTEM_RESULT"])
     try:
-        reply = execute(resource_root(), target, json.loads(read_wire(request)))
+        reply = execute(resource_root(), target, read_wire(request))
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         status = (
             Status.PARTIAL
@@ -381,9 +414,10 @@ def main() -> None:
             if target.endswith("-apply")
             else Status.BLOCKED
         )
-        reply = TaskResult(status=status, blockers=(str(error),))
-    result.write_text(reply.model_dump_json(exclude_unset=True))
+        reply = TaskResult(status=status, blockers=(error_text(error),))
+    with result.open("w") as stream:
+        write_model(reply, stream)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

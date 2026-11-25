@@ -63,6 +63,10 @@ class Target(StrEnum):
     RTK_INSTALL_PLAN = "rtk-install-plan"
     RTK_INSTALL_APPLY = "rtk-install-apply"
 
+    @property
+    def mutating(self) -> bool:
+        return self.value.endswith("-apply") or self is Target.DISPLAY_PREVIEW
+
 
 FOREGROUND = frozenset({Target.PROJECT_EDITOR, Target.PROJECT_CODEX})
 SYSTEM = frozenset(
@@ -266,7 +270,6 @@ async def _authenticated(
         # Pexpect's asyncio transport closes its pipe at EOF. Keep the original
         # master under our ownership until the child and its transaction finish.
         reader = fdspawn(os.dup(master), timeout=None)
-        reader.delaybeforesend = None
         account = b"SU" if root_account else b"SUDO"
         prompt = re.compile(rb"(?m)^(?:BECOME|" + account + rb") password: \Z")
         report(Phase.AUTHENTICATING)
@@ -276,9 +279,10 @@ async def _authenticated(
             timeout=PROMPT_TIMEOUT,
             async_=True,
         )
+        reached_eof = matched == 1
         if cancel.is_set():
             return 130
-        if matched == 1:
+        if reached_eof:
             try:
                 return await asyncio.wait_for(asyncio.shield(finished), PROMPT_TIMEOUT)
             except TimeoutError:
@@ -293,7 +297,7 @@ async def _authenticated(
         # The native line reader can proceed only after the terminating newline.
         answer = take_password()
         try:
-            if reader.sendline(answer) != len(answer) + len(reader.linesep):
+            if os.write(master, answer + b"\n") != len(answer) + 1:
                 raise TransportError("The native terminal could not accept the complete response")
         finally:
             del answer
@@ -317,7 +321,7 @@ async def _authenticated(
                 timeout = None
             else:
                 timeout = IDLE_TIMEOUT
-                # Refuse renewed credentials. EOF dismisses a canonical hidden
+                # Refuse renewed credentials. EOF dismisses a canonical
                 # prompt without supplying another secret or signalling a writer.
                 tail = (tail + reader.after)[-512:]
                 if tail.split(b"\n")[-1] in (
@@ -326,7 +330,7 @@ async def _authenticated(
                     b"Verification code: ",
                 ):
                     terminal = termios.tcgetattr(master)
-                    if terminal[3] & termios.ICANON and not terminal[3] & termios.ECHO:
+                    if terminal[3] & termios.ICANON:
                         os.write(master, terminal[6][termios.VEOF])
                         raise AuthorizationError("Additional native authentication is unsupported")
 
@@ -344,11 +348,6 @@ async def _authenticated(
             else "The native authorization prompt was unavailable"
         )
     finally:
-        if reader is not None:
-            with suppress(OSError):
-                if reader.async_pw_transport:
-                    reader.async_pw_transport[1].close()
-                reader.close()
         try:
             if authorized and not reached_eof:
                 try:
@@ -363,7 +362,17 @@ async def _authenticated(
             try:
                 await finished
             finally:
-                os.close(master)
+                try:
+                    # After the child exits, consume hangup so Pexpect releases its
+                    # asyncio reader before the descriptor number can be reused.
+                    if reader is not None and reader.isalive() and not reached_eof:
+                        with suppress(OSError, pexpect.ExceptionPexpect):
+                            await reader.expect(pexpect.EOF, timeout=TERMINATE_TIMEOUT, async_=True)
+                finally:
+                    if reader is not None:
+                        with suppress(OSError):
+                            reader.close()
+                    os.close(master)
     raise failure
 
 
@@ -396,6 +405,6 @@ async def execute_make(
         env,
         cancel,
         report,
-        mutating=target.value.endswith("-apply") or target == Target.DISPLAY_PREVIEW,
+        mutating=target.mutating,
         foreground=target in FOREGROUND,
     )

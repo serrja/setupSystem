@@ -8,11 +8,12 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
+from textual.suggester import SuggestFromList
 from textual.widgets import Button, Checkbox, Input, Label, Select, SelectionList, Static
 
 from setup_system.domain.intentions import CleanupMode
 from setup_system.models import BaseOptions, Monitor, Theme, WorkspaceOptions
-from setup_system.suggestions import Catalog, Choices, ProjectChoices, Suggestions
+from setup_system.suggestions import Catalog, KeyboardChoices, ProjectChoices, Suggestions
 
 
 class CompletionInput(Input):
@@ -52,17 +53,22 @@ class BaseForm(VerticalScroll):
         yield Checkbox("Hyprland, sound, portals and desktop dependencies", id="hyprland")
         yield Checkbox("Graphical login", id="graphical_login")
         yield Checkbox("Plymouth graphical unlock", id="plymouth")
-        for key, choices, label in (
-            ("timezone", self.suggestions.timezones, "Timezone"),
-            ("locale", self.suggestions.locales, "Locale"),
-            ("keyboard", self.suggestions.keyboards, "Keyboard layouts"),
+        for key, label in (
+            ("timezone", "Timezone"),
+            ("locale", "Locale"),
+            ("keyboard", "Keyboard layouts"),
         ):
             yield Label(label)
-            yield CompletionInput(id=key, placeholder="Keep current", suggester=choices)
+            yield CompletionInput(id=key, placeholder="Keep current")
 
         yield Label("Local account for administrative access")
         yield Input(id="admin-account", placeholder="Existing local username")
         yield Button("Review sudo access", id="admin-plan")
+
+    def refresh_choices(self) -> None:
+        self.query_one("#timezone", Input).suggester = SuggestFromList(self.suggestions.timezones)
+        self.query_one("#locale", Input).suggester = SuggestFromList(self.suggestions.locales)
+        self.query_one("#keyboard", Input).suggester = KeyboardChoices(self.suggestions.keyboards)
 
     def populate(self, options: BaseOptions) -> None:
         for key in ("hyprland", "graphical_login", "plymouth"):
@@ -87,7 +93,6 @@ class WorkspaceForm(VerticalScroll):
         super().__init__()
         self.catalog, self.suggestions = catalog, suggestions
         self.monitors: dict[str, Monitor] = {}
-        self.mode_choices = Choices()
         self.path_choices = ProjectChoices(suggestions)
 
     def compose(self) -> ComposeResult:
@@ -99,9 +104,9 @@ class WorkspaceForm(VerticalScroll):
         yield Label("Corner radius (0-24 px)")
         yield Input("12", id="rounding")
         yield Label("Connected display")
-        yield CompletionInput(id="output", suggester=self.suggestions.outputs)
+        yield CompletionInput(id="output")
         yield Label("Advertised mode")
-        yield CompletionInput(id="mode", suggester=self.mode_choices)
+        yield CompletionInput(id="mode")
         for key, label, value in (
             ("scale", "Scale", "1"),
             ("x", "Horizontal position", "0"),
@@ -140,7 +145,7 @@ class WorkspaceForm(VerticalScroll):
         )
         yield Button("Plan cleanup", id="cleanup-plan")
         yield Label("Recovery backup")
-        yield CompletionInput(id="backup", suggester=self.suggestions.backups)
+        yield CompletionInput(id="backup")
         yield Button("Plan restore", id="restore-plan")
 
     @on(Input.Changed, "#output")
@@ -153,10 +158,16 @@ class WorkspaceForm(VerticalScroll):
             for key in ("scale", "x", "y"):
                 self.query_one("#" + key, Input).value = str(getattr(saved, key))
 
+    def refresh_choices(self) -> None:
+        self.query_one("#output", Input).suggester = SuggestFromList(self.suggestions.modes)
+        self.query_one("#backup", Input).suggester = SuggestFromList(self.suggestions.backups)
+        self.refresh_modes()
+
     def refresh_modes(self) -> None:
         output = self.query_one("#output", Input).value
-        self.mode_choices.values = self.suggestions.modes.get(output, ())
-        self.query_one("#mode", CompletionInput).action_hide_suggestion()
+        mode = self.query_one("#mode", CompletionInput)
+        mode.suggester = SuggestFromList(self.suggestions.modes.get(output, ()))
+        mode.action_hide_suggestion()
 
     def project_path(self) -> str | None:
         value = self.query_one("#project", Input).value

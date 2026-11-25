@@ -75,7 +75,13 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         target.write_bytes(content)
         target.chmod(int(mode[-3:], 8))
     base = Path(temp) / "root"
-    runtime = base / "usr/lib/setup-system"
+    metadata = (source_root / "debian/control").read_text()
+    package_name = next(
+        line.removeprefix("Package: ")
+        for line in metadata.splitlines()
+        if line.startswith("Package: ")
+    )
+    runtime = base / "usr/lib" / package_name
     control = base / "DEBIAN"
 
     def copy(src: Path, dst: Path, mode: int | None = None) -> None:
@@ -119,7 +125,6 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
     manual.chmod(0o644)
     for script in ("preinst", "prerm"):
         copy(source_root / "debian/guard.sh", control / script, 0o755)
-    metadata = (source_root / "debian/control").read_text()
     (control / "control").write_text(
         f"Version: {version}\nX-Setup-System-Source: {sha}\n{metadata}"
     )

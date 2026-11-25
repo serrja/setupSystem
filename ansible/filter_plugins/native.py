@@ -1,28 +1,27 @@
 """Pure input and result conversions for local Ansible plays."""
 
-import json
-import re
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ansible.errors import AnsibleFilterError  # type: ignore[import-untyped]
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from setup_system.diagnostics import error_text
-from setup_system.domain.applications import applications
+from setup_system.domain.applications import BasePackages, applications
 from setup_system.infrastructure.operation_io import read_admin_request, read_wire
 from setup_system.infrastructure.upstream_asset import github_deb
 from setup_system.models import BaseOptions, RequestEnvelope, TaskResult, WorkspaceOptions
 
 
 def validate_request(
-    data: object,
+    data: Any,
     section: str,
-    apps: dict[str, object],
-    cleanup: dict[str, object],
+    apps: dict[str, JsonValue],
+    cleanup: dict[str, JsonValue],
     operation: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, JsonValue]:
     if section not in {"base", "workspace"}:
         raise AnsibleFilterError("Unknown native operation section")
     envelope = RequestEnvelope.model_validate(data)
@@ -49,43 +48,32 @@ def validate_request(
     return result
 
 
-def _package_list(section: object, field: str) -> list[str]:
-    names = section.get(field) if isinstance(section, dict) else None
-    if (
-        not isinstance(names, list)
-        or not names
-        or any(
-            not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9.+-]+", name)
-            for name in names
-        )
-        or len(names) != len(set(names))
-    ):
-        raise AnsibleFilterError(f"Invalid Debian package list for {field}")
-    return names
-
-
 def package_names(
-    settings: dict[str, Any], base: dict[str, object], catalog: dict[str, dict[str, object]]
+    settings: dict[str, JsonValue], base: dict[str, JsonValue], catalog: dict[str, JsonValue]
 ) -> list[str]:
-    packages = []
-    if settings.get("hyprland"):
-        section = base.get("hyprland")
-        stable = _package_list(section, "stable")
-        backports = _package_list(section, "backports")
-        if set(stable).intersection(backports):
-            raise AnsibleFilterError("Conflicting stable and backports package selections")
-        packages += stable
-        packages += [p + "/trixie-backports" for p in backports]
-    if settings.get("graphical_login"):
-        packages += _package_list(base.get("login"), "stable")
-    if settings.get("locale"):
-        packages += ["locales"]
-    if settings.get("keyboard"):
-        packages += ["console-setup", "xkb-data"]
-    for selected in settings.get("apps", []) + settings.get("languages", []):
-        entry = catalog[selected]
-        if "packages" in entry:
-            packages += _package_list(entry, "packages")
+    intent = TypeAdapter(BaseOptions | WorkspaceOptions).validate_python(settings)
+    packages: list[str] = []
+    if isinstance(intent, BaseOptions):
+        try:
+            sources = BasePackages.model_validate(base)
+        except ValidationError as exc:
+            raise AnsibleFilterError("Invalid Debian package catalog") from exc
+        if intent.hyprland:
+            packages.extend(sources.hyprland.stable)
+            packages.extend(p + "/trixie-backports" for p in sources.hyprland.backports)
+        if intent.graphical_login:
+            packages.extend(sources.login.stable)
+        if intent.locale:
+            packages.append("locales")
+        if intent.keyboard:
+            packages.extend(("console-setup", "xkb-data"))
+    else:
+        try:
+            apps = applications(catalog)
+        except ValidationError as exc:
+            raise AnsibleFilterError("Invalid application package catalog") from exc
+        for name in (*intent.apps, *intent.languages):
+            packages.extend(apps[name].packages)
     return sorted(set(packages))
 
 
@@ -103,24 +91,39 @@ def apt_closure(output: str, cleanup: bool) -> list[str]:
     return lines
 
 
+def native_result(data: Any) -> dict[str, JsonValue]:
+    return TaskResult.model_validate(data).model_dump(mode="json", exclude_unset=True)
+
+
+def same_plan(expected: Any, fresh: Any) -> bool:
+    return expected is not None and TaskResult.model_validate(expected).same_plan(
+        TaskResult.model_validate(fresh)
+    )
+
+
+def apt_actions(records: list[str]) -> list[dict[str, str]]:
+    return [{"kind": "apt", "record": record, "label": record} for record in records]
+
+
+def file_actions(names: list[str]) -> list[dict[str, str]]:
+    return [{"kind": "user_file", "path": name, "label": name} for name in names]
+
+
+def read_request(path: str) -> dict[str, JsonValue]:
+    return RequestEnvelope.model_validate_json(read_wire(Path(path))).model_dump(
+        mode="json", by_alias=True, exclude_unset=True
+    )
+
+
 class FilterModule:
-    def filters(self) -> dict[str, Callable[..., object]]:
+    def filters(self) -> dict[str, Callable[..., Any]]:
         return dict(
-            native_result=lambda data: TaskResult.model_validate(data).model_dump(
-                mode="json", exclude_unset=True
-            ),
-            native_same_plan=lambda expected, fresh: (
-                expected is not None
-                and TaskResult.model_validate(expected).same_plan(TaskResult.model_validate(fresh))
-            ),
-            native_apt_actions=lambda records: [
-                {"kind": "apt", "record": record, "label": record} for record in records
-            ],
-            native_file_actions=lambda names: [
-                {"kind": "user_file", "path": name, "label": name} for name in names
-            ],
+            native_result=native_result,
+            native_same_plan=same_plan,
+            native_apt_actions=apt_actions,
+            native_file_actions=file_actions,
             native_admin_request=read_admin_request,
-            native_read_request=lambda path: json.loads(read_wire(Path(path))),
+            native_read_request=read_request,
             native_toml=tomllib.loads,
             native_error=error_text,
             native_request=validate_request,

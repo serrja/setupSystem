@@ -32,7 +32,7 @@
 
     - name: Inspect the selected login without privilege
       ansible.builtin.command:
-        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/admin.py", "{{ setup_action }}"]
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/admin.py", "account", "{{ setup_action }}"]
         stdin: "{{ payload.wire }}"
       register: probe
       changed_when: false
@@ -58,11 +58,11 @@
           ansible.builtin.raw: >-
             /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C HOME=/root
             /usr/bin/python3 -I -S -B
-            -c 'import runpy, sys; from pathlib import Path; sys.path.append("/usr/lib/python3/dist-packages");
-            from setup_system.infrastructure.system_paths import protected;
-            source = Path("/usr/lib/setup-system/ansible/files/admin.py"); protected(source, directory=False);
+            -c 'import runpy, sys; sys.path.append("/usr/lib/python3/dist-packages");
+            from setup_system.layout import INSTALLED, require_installed_resource;
+            relative = "ansible/files/admin.py"; source = INSTALLED / relative; require_installed_resource(source, relative);
             runpy.run_path(str(source), run_name="__main__")'
-            apply
+            account apply
             {{ payload.wire | quote }}
           become: true
           become_method: ansible.builtin.su
@@ -93,6 +93,7 @@
               status: >-
                 {{ 'blocked' if 'authentication' in (ansible_failed_result.msg | default('') | lower)
                    or 'password' in (ansible_failed_result.msg | default('') | lower)
+                   or 'waiting for become success' in (ansible_failed_result.msg | default('') | lower)
                    or 'authentication failure' in (ansible_failed_result.stderr | default('') | lower)
                    or 'authentication failure' in (ansible_failed_result.stdout | default('') | lower)
                    else 'partial' }}

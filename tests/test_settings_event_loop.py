@@ -172,6 +172,9 @@ def test_navigation_during_settings_read(tmp_path, monkeypatch, stage):
             entered, release = hold_reads(monkeypatch, app.settings)
             trigger = {"confirmed": "confirm", "authorized": "authorize"}.get(stage, stage)
             app.screen.query_one("#" + trigger, Button).press()
+            if stage == "reload":
+                await wait_until(lambda: app.screen.query("#discard-edits"))
+                app.screen.query_one("#discard-edits", Button).press()
             await navigate(entered, release)
 
             if stage == "plan":
@@ -352,12 +355,12 @@ def test_native_work_finishing_after_stop_cannot_update_or_open_a_view(
     tmp_path, monkeypatch, stage
 ):
     class ProjectTasks(Tasks):
-        async def run(self, command, **flags):
+        async def execute(self, command, **flags):
             if command.target == Target.PROJECT_LIST:
                 return TaskResult.model_validate(
                     {"status": "ready", "observed": {"projects": {"fixture": "/tmp/example"}}}
                 )
-            return await super().run(command, **flags)
+            return await super().execute(command, **flags)
 
     async def exercise():
         tasks = ProjectTasks()
@@ -370,9 +373,9 @@ def test_native_work_finishing_after_stop_cannot_update_or_open_a_view(
                 owner, method, trigger = app.suggestions, "refresh", "inspect"
             elif stage == "projects":
                 await pilot.press("ctrl+2")
-                owner, method, trigger = tasks, "run", "manage-projects"
+                owner, method, trigger = tasks, "execute", "manage-projects"
             else:
-                owner, method, trigger = tasks, "run", "inspect"
+                owner, method, trigger = tasks, "execute", "inspect"
             entered, release, returned = hold_completion_until_shutdown(
                 monkeypatch, app, owner, method, after_removal=stage == "refresh"
             )
@@ -475,3 +478,38 @@ def test_authorization_finishing_behind_help_does_not_open_another_modal(tmp_pat
             assert [call[0] for call in tasks.calls] == [Target.BASE_PLAN]
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("new_message", [True, False])
+def test_startup_shows_last_unknown_outcome_without_overwriting_new_feedback(
+    tmp_path, monkeypatch, new_message
+):
+    from datetime import UTC, datetime
+
+    from setup_system.infrastructure.operation_outcome import OperationOutcome
+    from setup_system.models import Status
+
+    async def scenario():
+        saved = OperationOutcome(
+            target=Target.ADMIN_APPLY, status=Status.UNKNOWN, recorded_at=datetime.now(UTC)
+        )
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def read():
+            started.set()
+            await release.wait()
+            return saved
+
+        monkeypatch.setattr("setup_system.app.read_last_outcome", read)
+        app = app_for(tmp_path, Tasks())
+        async with app.run_test():
+            await asyncio.wait_for(started.wait(), 2)
+            if new_message:
+                app.report("New status")
+            release.set()
+            await app.workers.wait_for_complete()
+            assert str(app.query_one("#feedback", Static).render()) == (
+                "New status" if new_message else saved.describe()
+            )
+
+    asyncio.run(scenario())

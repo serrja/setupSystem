@@ -25,7 +25,7 @@ class Tasks:
     async def check_authorization(self):
         return Path("/usr/lib/setup-system")
 
-    async def run(self, command, *, password=None, cancel=None, on_event=None):
+    async def execute(self, command, *, password=None, cancel=None, on_event=None):
         target = command.target
         payload = json.loads(command.request_json)
         return TaskResult.model_validate(
@@ -241,7 +241,7 @@ def test_completion_refresh_modes_paths_and_keyboard(tmp_path):
             form.update_layout(False)
             assert form.options().monitors[0].output == "DP-1"
             await app.suggestions.refresh("workspace", NativeObservations(outputs=()))
-            assert not app.suggestions.outputs.values
+            assert not app.suggestions.modes
             assert await app.suggestions.project_values("") == ()
             project = app.settings.home / "Архив 2"
             project.mkdir()
@@ -340,7 +340,7 @@ def test_base_user_apply_enters_real_play_without_a_become_prompt(tmp_path, monk
         "observed": {"needs_system": False, "needs_user": True},
     }
     reply = asyncio.run(
-        runner.run(
+        runner.execute(
             Command.capture(
                 Target.BASE_USER_APPLY, {"schema": 1, "settings": {}, "expected": expected}
             )
@@ -439,5 +439,49 @@ def test_settings_change_after_password_prompt_expires_the_response(tmp_path):
             with pytest.raises(RuntimeError, match="expired"):
                 answer.take()
             assert tasks.calls[-1][0] == Target.BASE_PLAN and app.pending is None
+
+    asyncio.run(scenario())
+
+
+def test_reload_requires_explicit_discard_and_cancel_preserves_invalid_edits(tmp_path):
+    async def scenario():
+        app = app_for(tmp_path, Tasks())
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            field = app.query_one("#timezone", Input)
+            field.value = "unfinished value"
+            await pilot.click("#reload")
+            assert app.screen.query("#discard-edits")
+            await pilot.press("escape")
+            assert field.value == "unfinished value"
+            await pilot.click("#reload")
+            await pilot.click("#discard-edits")
+            await app.workers.wait_for_complete()
+            assert field.value == ""
+
+    asyncio.run(scenario())
+
+
+def test_apply_from_another_tab_identifies_the_stage_and_runs_only_once(tmp_path):
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            await pilot.press("ctrl+2")
+            apply = app.query_one("#apply", Button)
+            assert "base" in str(apply.label).lower()
+            apply.press()
+            apply.press()
+            await pilot.pause()
+            assert isinstance(app.screen, Consent)
+            assert "base" in str(app.screen.query_one("Label").render()).lower()
+            await pilot.click("#confirm")
+            app.screen.query_one("#password", Input).value = "fixture"
+            await pilot.click("#authorize")
+            await idle(app, pilot)
+            assert [target for target, *_ in tasks.calls].count(Target.BASE_APPLY) == 1
 
     asyncio.run(scenario())

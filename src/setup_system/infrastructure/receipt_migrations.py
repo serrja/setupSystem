@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Literal
+
+from pydantic import Field, JsonValue, StrictBool, TypeAdapter
 
 from setup_system.domain.backup_manifest import BackupItem, BackupManifest
-from setup_system.domain.receipts import FileChange, FileState, Operation, digest
+from setup_system.domain.contracts import ContractModel
+from setup_system.domain.manifest_types import Digest
+from setup_system.domain.receipts import FileChange, FileState, Operation, RunId, digest
 from setup_system.infrastructure.user_storage import (
     checked_directory,
     inside_home,
@@ -21,84 +24,112 @@ from setup_system.infrastructure.user_storage import (
 )
 
 
-def _legacy_steps(folder: Path, data: dict[str, Any], source: Path) -> tuple[dict[str, Any], str]:
+class _Pending(ContractModel):
+    status: Literal["running"] = "running"
+    after: dict[str, Digest] = Field(min_length=1)
+    created: tuple[str, ...]
+
+
+class _Published(ContractModel):
+    status: Literal["complete", "partial"]
+    after: dict[str, Digest] = Field(min_length=1)
+    completed: dict[str, Digest]
+
+
+class _DesktopFile(ContractModel):
+    path: str
+    created: StrictBool
+    after: Digest
+
+
+class _Desktop(ContractModel):
+    profile: Literal["fonts", "hyprland"]
+    files: tuple[_DesktopFile, ...]
+    settings: tuple[JsonValue, ...]
+
+
+class _GitFile(ContractModel):
+    path: str
+    before: Digest | None
+    after: Digest
+
+
+class _Git(ContractModel):
+    application: Literal["git-profile"]
+    status: Literal["complete"]
+    files: tuple[_GitFile, ...]
+
+
+class _ShellFile(ContractModel):
+    existed: StrictBool
+    applied_sha256: Digest
+
+
+class _Shell(ContractModel):
+    backup_id: RunId
+    login_shell_before: str
+    zsh: str
+    targets: dict[str, _ShellFile]
+
+
+class _Rtk(ContractModel):
+    backup_id: RunId
+    path: str
+    installed_sha256: Digest
+    version: str
+    archive_sha256: Digest
+    source: str
+
+
+_JOURNAL = TypeAdapter(Annotated[_Pending | _Published, Field(discriminator="status")])
+
+
+def _legacy_steps(
+    folder: Path, payload: dict[str, JsonValue], source: Path
+) -> tuple[_Pending | _Published, str, dict[str, str | None]]:
+    git_before: dict[str, str | None] = {}
     if source.name == "operation.json":
-        return data, "user_files"
+        return _JOURNAL.validate_python(payload), "user_files", git_before
     if source.name == "workstation.json":
-        if set(data) != {"profile", "files", "settings"} or data["profile"] not in {
-            "fonts",
-            "hyprland",
-        }:
-            raise ValueError("Unknown legacy desktop receipt")
-        if data["settings"]:
+        desktop = _Desktop.model_validate(payload)
+        if desktop.settings:
             raise ValueError(
                 "This legacy backup also changed desktop settings; manual recovery required"
             )
-        rows = data["files"]
-        if any(
-            set(row) != {"path", "created", "after"} or type(row["created"]) is not bool
-            for row in rows
-        ):
-            raise ValueError("Invalid legacy desktop file records")
-        after = {row["path"]: row["after"] for row in rows}
-        created = [row["path"] for row in rows if row["created"]]
+        after = {row.path: row.after for row in desktop.files}
+        created = tuple(row.path for row in desktop.files if row.created)
+        if len(desktop.files) != len(after):
+            raise ValueError("Duplicate legacy desktop file records")
     elif source.name == "git-profile.json":
-        if (
-            set(data) != {"application", "files", "status"}
-            or data["application"] != "git-profile"
-            or data["status"] != "complete"
-        ):
-            raise ValueError("Incomplete legacy Git operation requires manual recovery")
-        rows = data["files"]
-        if not isinstance(rows, list) or any(
-            set(row) != {"path", "before", "after"} for row in rows
-        ):
-            raise ValueError("Invalid legacy Git file records")
-        after = {row["path"]: row["after"] for row in rows}
-        created = [row["path"] for row in rows if row["before"] is None]
+        git = _Git.model_validate(payload)
+        after = {row.path: row.after for row in git.files}
+        git_before = {row.path: row.before for row in git.files}
+        created = tuple(path for path, before in git_before.items() if before is None)
+        if len(git.files) != len(after):
+            raise ValueError("Duplicate legacy Git file records")
     elif source.parent.name == "shell-applies":
-        if (
-            set(data) != {"backup_id", "login_shell_before", "zsh", "targets"}
-            or data["backup_id"] != folder.name
-        ):
+        shell = _Shell.model_validate(payload)
+        if shell.backup_id != folder.name:
             raise ValueError("Invalid legacy shell receipt")
-        targets = data["targets"]
-        if not isinstance(targets, dict) or any(
-            set(row) != {"existed", "applied_sha256"} or type(row["existed"]) is not bool
-            for row in targets.values()
-        ):
-            raise ValueError("Invalid legacy shell file records")
-        after = {name: row["applied_sha256"] for name, row in targets.items()}
-        created = [name for name, row in targets.items() if not row["existed"]]
-    else:
-        if (
-            set(data)
-            != {"backup_id", "path", "installed_sha256", "version", "archive_sha256", "source"}
-            or data["backup_id"] != folder.name
-        ):
+        after = {name: item.applied_sha256 for name, item in shell.targets.items()}
+        created = tuple(name for name, item in shell.targets.items() if not item.existed)
+    elif source.parent.name == "rtk-installs":
+        rtk = _Rtk.model_validate(payload)
+        if rtk.backup_id != folder.name:
             raise ValueError("Invalid legacy RTK receipt")
-        after = {data["path"]: data["installed_sha256"]}
-        return {"status": "complete", "after": after, "completed": after}, "rtk"
-    if source.name in {"workstation.json", "git-profile.json"} and len(rows) != len(after):
-        raise ValueError("Duplicate legacy file records")
-    return {"status": "running", "after": after, "created": created}, source.name
+        after = {rtk.path: rtk.installed_sha256}
+        return _Published(status="complete", after=after, completed=after), "rtk", git_before
+    else:
+        raise ValueError("Unknown legacy file receipt")
+    return _Pending(after=after, created=created), source.name, git_before
 
 
-def migrate_user_files(folder: Path, payload: dict[str, Any], source: Path) -> Operation:
+def migrate_user_files(folder: Path, payload: dict[str, JsonValue], source: Path) -> Operation:
     """Reconstruct v0.4.0 before and after evidence without claiming unknown writes."""
-    data, kind = _legacy_steps(folder, payload, source)
-    status = data.get("status")
-    keys = set(data)
-    if not (
-        (keys == {"status", "created", "after"} and status == "running")
-        or (keys == {"status", "completed", "after"} and status in {"complete", "partial"})
-    ):
-        raise ValueError("Unknown file receipt schema; review the original backup")
-    after = data["after"]
-    if not isinstance(after, dict) or not after:
-        raise ValueError("Invalid v0.4.0 file list")
-    completed = data.get("completed", {})
-    if not isinstance(completed, dict) or any(after.get(k) != v for k, v in completed.items()):
+    journal, kind, git_before = _legacy_steps(folder, payload, source)
+    after = journal.after
+    completed = journal.completed if isinstance(journal, _Published) else {}
+    if any(after.get(k) != v for k, v in completed.items()):
         raise ValueError("Invalid v0.4.0 verification evidence")
     manifest_path = folder / "manifest.json"
     manifest = BackupManifest.model_validate(read_object(manifest_path))
@@ -126,16 +157,12 @@ def migrate_user_files(folder: Path, payload: dict[str, Any], source: Path) -> O
             raise ValueError("Invalid v0.4.0 backup checksum")
         originals[absolute] = entry
         if absolute == str(index):
-            owned = json.loads(content)
-            if not isinstance(owned, dict):
-                raise ValueError("Invalid previous ownership index")
-    if "created" in data and (
-        not isinstance(data["created"], list) or set(data["created"]) != set(after) - set(originals)
-    ):
+            owned = TypeAdapter(dict[str, str]).validate_json(content, strict=True)
+    if isinstance(journal, _Pending) and set(journal.created) != set(after) - set(originals):
         raise ValueError("Inconsistent v0.4.0 creation evidence")
-    if kind == "git-profile.json" and any(
-        row["before"] != (item.sha256 if (item := originals.get(row["path"])) else None)
-        for row in payload["files"]
+    if any(
+        previous != (item.sha256 if (item := originals.get(path)) else None)
+        for path, previous in git_before.items()
     ):
         raise ValueError("Git receipt does not match its original backup")
     if kind == "workstation.json":
@@ -192,7 +219,7 @@ def migrate_user_files(folder: Path, payload: dict[str, Any], source: Path) -> O
                 ),
             )
         )
-    return Operation(run_id=folder.name, status=status, files=rows)
+    return Operation(run_id=folder.name, status=journal.status, files=rows)
 
 
 def restore_manifest(folder: Path, *, apply: bool) -> list[tuple[str, str]]:
@@ -225,8 +252,8 @@ def restore_manifest(folder: Path, *, apply: bool) -> list[tuple[str, str]]:
         target = target_path(relative.as_posix())
         if Path(item.source) != target:
             raise ValueError("Backup target differs from its recorded path")
-        if item.kind == "sqliteSnapshot" and target.is_file():
-            status = "database-present; review Happ restore"
+        if manifest.application == "happ":
+            status = "manual-happ-restore"
         elif target.is_file():
             status = "unchanged" if target.read_bytes() == content else "conflict"
         else:
