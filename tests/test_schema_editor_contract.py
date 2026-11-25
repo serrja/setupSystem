@@ -212,6 +212,7 @@ def test_action_visibility_and_run_parameters_produce_only_the_confirmed_mode(
             value = next(f for f in row.fields if f.key == "value")
             value.control.value = "Notes Пример"
             assert await pilot.click(tabs.get_tab("actions"))
+            page.query_one("#preview", Button).active_effect_duration = 0
             assert await pilot.click("#preview")
             await app.workers.wait_for_complete()
             assert len(captured) == 1 and "reference" not in captured[0]
