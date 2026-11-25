@@ -10,7 +10,8 @@
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "user-files",
-    "account-status"
+    "account-status",
+    "native-terminal"
   ],
   "capabilities": [
     "project-settings",
@@ -74,11 +75,14 @@
       "id": "login",
       "label": "Sign in",
       "page": "accounts",
-      "target": null,
-      "permissions": [],
+      "target": "login",
+      "permissions": [
+        "account-status",
+        "native-terminal"
+      ],
       "supports_rollback": false,
       "read_only": false,
-      "description": ""
+      "description": "Open the official client in a separate terminal and verify the selected sign-in."
     },
     {
       "cleanup_phase": null,
@@ -269,8 +273,9 @@
     },
     "login": {
       "additionalProperties": false,
+      "description": "Verify the package-installed client before starting the interactive sign-in.",
       "properties": {},
-      "title": "Inputs",
+      "title": "SignIn",
       "type": "object"
     },
     "status": {

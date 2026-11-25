@@ -1,7 +1,9 @@
 """Manage a selected vault through Obsidian's supported filesystem and CLI interfaces."""
 
 import asyncio
+import hashlib
 import os
+import stat
 from pathlib import Path
 from typing import ClassVar, Literal
 from urllib.parse import quote
@@ -11,6 +13,7 @@ from pydantic import Field
 from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.system_paths import protected
 from setup_system.infrastructure.user_storage import (
+    FileSnapshot,
     checked_directory,
     inside_home,
     private_directory,
@@ -30,7 +33,7 @@ class NewVault(Inputs):
     path: Path = Field(title="New vault directory", json_schema_extra={"ui": {"widget": "path"}})
 
 
-LAUNCHER = Path("/usr/share/applications/obsidian.desktop")
+LAUNCHER = Path("/usr/share/applications/md.obsidian.Obsidian.desktop")
 
 
 class OpenVault(Inputs):
@@ -55,6 +58,18 @@ class Theme(Inputs):
     )
 
 
+class EditorSnippet(Inputs):
+    name: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[\w][\w .()-]*$",
+        title="Installed CSS snippet",
+        description="Choose a trusted snippet already present in the selected vault.",
+        json_schema_extra={"ui": {"choice_provider": "snippets"}},
+    )
+    enabled: bool = Field(default=True, title="Enable snippet")
+
+
 class CoreFeature(Inputs):
     feature: Literal["bookmarks", "outline", "daily-notes", "templates"] = "bookmarks"
     enabled: bool = True
@@ -71,8 +86,56 @@ def vault(path: Path) -> Path:
     return result
 
 
+def package_matches(data: bytes, member: str) -> bool:
+    # Read the file digest from dpkg's installed control data for this exact package.
+    status, rows = command(
+        "/usr/bin/dpkg-query", "--control-show", "obsidian", "md5sums", capture=True
+    )
+    digest = hashlib.md5(data, usedforsecurity=False).hexdigest()
+    return status == 0 and any(
+        row.split(maxsplit=1) == [digest, member] for row in rows.splitlines()
+    )
+
+
+def registered_cli() -> Path | None:
+    path = Path.home() / ".local/bin/obsidian"
+    try:
+        with private_directory(path.parent, create=False) as parent:
+            saved = FileSnapshot.read(parent, path.name, limit=1024 * 1024)
+    except (OSError, ValueError):
+        return None
+    if saved.mode & stat.S_IXUSR and package_matches(saved.data, "opt/Obsidian/obsidian-cli"):
+        return path
+    return None
+
+
+def launcher_available() -> bool:
+    protected(LAUNCHER.parent)
+    try:
+        fd = os.open(LAUNCHER, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except (FileNotFoundError, PermissionError):
+        return False
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        # The upstream Debian launcher is root:root 0664.
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != 0
+            or info.st_gid != 0
+            or info.st_mode & stat.S_IWOTH
+            or os.access(LAUNCHER, os.W_OK)
+            or info.st_nlink != 1
+            or info.st_size > 64 * 1024
+        ):
+            return False
+        return package_matches(stream.read(64 * 1024 + 1), str(LAUNCHER).lstrip("/"))
+
+
 def native(selected: Path, *args: str) -> str:
-    status, data = command("/usr/bin/obsidian", "vault=" + selected.name, *args, capture=True)
+    cli = registered_cli()
+    if cli is None:
+        raise ValueError("Enable the current Debian installer's CLI in Obsidian Settings → General")
+    status, data = command(str(cli), "vault=" + selected.name, *args, capture=True)
     if status or data.strip().startswith(("Error:", "Unknown command")):
         raise ValueError("The running Obsidian CLI did not confirm this request")
     return data.strip()
@@ -80,7 +143,12 @@ def native(selected: Path, *args: str) -> str:
 
 def running(selected: Path) -> bool:
     status, _ = command("/usr/bin/pgrep", "-u", str(os.getuid()), "-ix", "obsidian")
-    return status == 0 and native(selected, "vault", "info=path") == str(selected)
+    if status != 0:
+        return False
+    try:
+        return native(selected, "vault", "info=path") == str(selected)
+    except (OSError, ValueError):
+        return False
 
 
 class Plugin(DebianPackages):
@@ -94,6 +162,7 @@ class Plugin(DebianPackages):
         "open": OpenVault,
         "set-theme": Theme,
         "core-feature": CoreFeature,
+        "editor-snippet": EditorSnippet,
         "hotkeys": Inputs,
         "read-hotkey": Hotkey,
         "editor": Inputs,
@@ -141,15 +210,14 @@ class Plugin(DebianPackages):
                 ],
                 warnings=["Notes and attachments in this folder are excluded from cleanup."],
             )
-        if action_id in {"open", "set-theme", "core-feature", "read-hotkey"}:
+        if action_id in {"open", "set-theme", "core-feature", "editor-snippet", "read-hotkey"}:
             if not isinstance(settings, Settings) or not settings.vault:
                 return Plan(outcome=Outcome.BLOCKED, summary="Select and save a vault path")
             selected = vault(settings.vault)
             if not selected.is_dir():
                 return Plan(outcome=Outcome.BLOCKED, summary="Selected vault folder is absent")
             if action_id == "open":
-                protected(LAUNCHER, directory=False)
-                if not LAUNCHER.is_file():
+                if not launcher_available():
                     return Plan(
                         outcome=Outcome.BLOCKED,
                         summary="Install the official Obsidian desktop launcher first",
@@ -198,11 +266,26 @@ class Plugin(DebianPackages):
                 )
                 after = str(inputs.enabled)
                 key = "core/" + inputs.feature
+            elif isinstance(inputs, EditorSnippet):
+                if inputs.name not in native(selected, "snippets").splitlines():
+                    return Plan(
+                        outcome=Outcome.BLOCKED,
+                        summary=(
+                            "The CSS snippet is absent from this vault. "
+                            "Review Appearance → CSS snippets."
+                        ),
+                    )
+                before = str(inputs.name in native(selected, "snippets:enabled").splitlines())
+                after = str(inputs.enabled)
+                key = "snippet/" + inputs.name
             else:
                 raise ValueError("Unexpected vault request")
             return Plan(
                 outcome=Outcome.NO_CHANGES if before == after else Outcome.READY,
                 summary=f"Configure {key} in {selected}",
+                warnings=["Enabling this CSS applies the selected snippet to this vault."]
+                if isinstance(inputs, EditorSnippet) and inputs.enabled and before != after
+                else [],
                 resources=[
                     Resource(
                         kind="vault-setting",
@@ -217,7 +300,7 @@ class Plugin(DebianPackages):
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
         if (
-            provider not in {"themes", "commands"}
+            provider not in {"themes", "commands", "snippets"}
             or not isinstance(settings, Settings)
             or not settings.vault
         ):
@@ -274,13 +357,19 @@ class Plugin(DebianPackages):
         elif (
             isinstance(settings, Settings)
             and settings.vault
-            and isinstance(inputs, (Theme, CoreFeature))
+            and isinstance(inputs, (Theme, CoreFeature, EditorSnippet))
         ):
             selected = vault(settings.vault)
             if not running(selected):
                 return Result(outcome=Outcome.BLOCKED, message="Selected vault is no longer active")
             if isinstance(inputs, Theme):
                 native(selected, "theme:set", "name=" + inputs.name)
+            elif isinstance(inputs, EditorSnippet):
+                native(
+                    selected,
+                    "snippet:enable" if inputs.enabled else "snippet:disable",
+                    "name=" + inputs.name,
+                )
             else:
                 native(
                     selected,
@@ -308,10 +397,13 @@ class Plugin(DebianPackages):
             )
         if isinstance(inputs, NewVault):
             ok = await asyncio.to_thread(lambda: vault(inputs.path).is_dir())
-        elif isinstance(inputs, (Theme, CoreFeature)):
-            result = await self.plan(
-                "set-theme" if isinstance(inputs, Theme) else "core-feature", settings, inputs
-            )
+        elif isinstance(inputs, (Theme, CoreFeature, EditorSnippet)):
+            actions = {
+                Theme: "set-theme",
+                CoreFeature: "core-feature",
+                EditorSnippet: "editor-snippet",
+            }
+            result = await self.plan(actions[type(inputs)], settings, inputs)
             ok = result.outcome == Outcome.NO_CHANGES
         else:
             return await super().verify(plan, settings, inputs)

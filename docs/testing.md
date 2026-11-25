@@ -6,6 +6,8 @@ Run `make native-ci` from the repository root with the locked toolchain. [Develo
 
 Fixtures exercise validation, fixed Make goals, PTY authentication, signed-source failures, file races, recovery and package contents. Headless tests exercise the persistent tabs, preview, confirmation and cancellation.
 
+The Debian 13 UI baseline includes Textual 2.1.2, Pydantic 2.10.6 and pydantic-settings 2.8.1. Check generated manifests, field limits and plugin navigation with these library versions when changing the SDK or widgets. The Git plugin also exercises the Debian GitHub CLI account interface and the newer structured status interface.
+
 ## Disposable Debian target
 
 Record the disposable target's identity and authorization, Debian release, CPU architecture, available filesystem space, encryption layout and current boot loader. Use synthetic accounts, content and secrets.

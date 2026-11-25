@@ -30,6 +30,7 @@ from setup_system.make_transport import Phase, authenticated_make, guard_refusal
 from setup_system.resource_ledger import LocalSnapshot, MissingPublicationProofError, ResourceLedger
 from setup_system_sdk import Action, ActionEvent, Inputs, Mutation, Outcome, Plan, Result, Values
 from setup_system_sdk.protocol import LIMIT, Reply, Request
+from setup_system_sdk.user_terminal import PERMISSION as NATIVE_TERMINAL_PERMISSION
 
 _cancellation: ContextVar[asyncio.Event | None] = ContextVar("plugin_cancellation", default=None)
 
@@ -193,9 +194,11 @@ class AsyncMakeRunner:
         wire = snapshot.mutation.model_dump_json().encode()
         if not privileged:
             await asyncio.to_thread(validate_home_access, Path.home())
-            raw = await _pipe(
-                make_command(args), wire, env, root, self.options.idle_timeout_seconds
-            )
+            timeout = self.options.idle_timeout_seconds
+            if NATIVE_TERMINAL_PERMISSION in action.permissions:
+                env["SETUP_SYSTEM_NATIVE_TERMINAL"] = "1"
+                timeout = self.options.terminal_timeout_seconds
+            raw = await _pipe(make_command(args), wire, env, root, timeout)
             return Result.model_validate_json(raw)
         assert password
         with tempfile.TemporaryDirectory() as temporary:

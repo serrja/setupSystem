@@ -2,11 +2,11 @@
 
 import asyncio
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import Field
 
-from setup_plugin_git import keys, local_keys
+from setup_plugin_git import accounts, keys, local_keys
 from setup_plugin_git.profiles import (
     ImportProfile,
     Profile,
@@ -16,9 +16,11 @@ from setup_plugin_git.profiles import (
     publish,
     verified_identity,
 )
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result
+from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result, user_terminal
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.native import command
+
+GH = Path("/usr/bin/gh")
 
 
 class Settings(PluginSettings):
@@ -31,32 +33,77 @@ class Settings(PluginSettings):
     )
 
 
-class Account(Inputs):
+class Account(keys.KeyAccount):
     host: str = Field(
-        default="github.com", min_length=1, max_length=253, title="Git hosting service"
+        default="github.com",
+        max_length=253,
+        title="Hosting service",
+        json_schema_extra={"ui": {"choice_provider": "hosts"}},
     )
+    account: keys.AccountName = Field(
+        title="Local hosting account", json_schema_extra={"ui": {"choice_provider": "accounts"}}
+    )
+
+
+class SignIn(keys.KeyAccount):
+    """Read back the account selected for the native browser flow."""
+
+
+def unlocked_store() -> bool:
+    try:
+        rc, locked = command(
+            "/usr/bin/gdbus",
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.secrets",
+            "--object-path",
+            "/org/freedesktop/secrets/aliases/default",
+            "--method",
+            "org.freedesktop.DBus.Properties.Get",
+            "org.freedesktop.Secret.Collection",
+            "Locked",
+            capture=True,
+        )
+    except FileNotFoundError:
+        return False
+    return rc == 0 and locked.strip() == "(<false>,)"
+
+
+STORE_REVIEW = "Account verified. Run gh auth status to check its displayed credential source."
+
+
+def observed_login(inputs: SignIn) -> Literal["different", "review-storage", "verified"]:
+    rc, help_text = command(str(GH), "auth", "status", "--help", capture=True)
+    flags = help_text.split()
+    if rc or "--json" not in flags:
+        # The stable Debian client exposes account identity through the public user API.
+        rc, name = command(
+            str(GH), "api", "--hostname", inputs.host, "user", "--jq", ".login", capture=True
+        )
+        if not rc and name.strip().casefold() == inputs.account.casefold():
+            return "review-storage"
+        return "different"
+    probe = [str(GH), "auth", "status", "--active", "--hostname", inputs.host]
+    if "--no-refresh" in flags:
+        probe.append("--no-refresh")
+    rc, fields = command(
+        *probe,
+        "--json",
+        "hosts",
+        "--jq",
+        '.hosts[][] | select(.active and .state == "success") '
+        '| [.login, (.tokenSource == "keyring")] | @tsv',
+        capture=True,
+    )
+    account, _, secure = fields.strip().partition("\t")
+    if rc or account.casefold() != inputs.account.casefold():
+        return "different"
+    return "verified" if secure == "true" else "review-storage"
 
 
 class CleanupKeys(Inputs):
     pass
-
-
-def logins(host: str) -> list[str]:
-    rc, names = command(
-        "/usr/bin/gh",
-        "auth",
-        "status",
-        "--hostname",
-        host,
-        "--json",
-        "hosts",
-        "--jq",
-        ".hosts[][] | .login",
-        capture=True,
-    )
-    if rc:
-        raise ValueError("GitHub CLI cannot read the selected account inventory")
-    return [name.casefold() for name in names.splitlines() if name]
 
 
 class Plugin(DebianPackages):
@@ -74,8 +121,8 @@ class Plugin(DebianPackages):
         "use-profile": UseProfile,
         "check": Inputs,
         "status": Account,
-        "login": Account,
-        "logout": keys.KeyAccount,
+        "login": SignIn,
+        "logout": Account,
         "remove-owned-keys": CleanupKeys,
         "generate-key": local_keys.Generate,
         "remove-local-keys": local_keys.RemoveLocal,
@@ -96,19 +143,42 @@ class Plugin(DebianPackages):
             return keys.access(inputs) if isinstance(inputs, keys.Probe) else keys.prepare(inputs)
         if isinstance(inputs, CleanupKeys) and isinstance(settings, Settings):
             return keys.cleanup_plan({"github.com", settings.enterprise_host})
-        if (
-            isinstance(inputs, keys.KeyAccount)
-            and action_id == "logout"
-            and isinstance(settings, Settings)
-        ):
+        if isinstance(inputs, Account) and isinstance(settings, Settings):
             if inputs.host not in {"github.com", settings.enterprise_host}:
                 return Plan(outcome=Outcome.BLOCKED, summary="Approve the enterprise host first")
-            present = inputs.account.casefold() in logins(inputs.host)
+            if not GH.is_file():
+                return Plan(outcome=Outcome.BLOCKED, summary="Install the official GitHub CLI")
+            return accounts.prepare(inputs, logout=action_id == "logout")
+        if isinstance(inputs, SignIn) and isinstance(settings, Settings):
+            if inputs.host not in {"github.com", settings.enterprise_host}:
+                return Plan(outcome=Outcome.BLOCKED, summary="Approve this enterprise host first")
+            if not GH.is_file():
+                return Plan(
+                    outcome=Outcome.BLOCKED, summary="Install the official GitHub CLI first"
+                )
+            observed = observed_login(inputs)
+            if observed == "review-storage":
+                return Plan(outcome=Outcome.NEEDS_USER_ACTION, summary=STORE_REVIEW)
+            if observed == "verified":
+                return Plan(outcome=Outcome.NO_CHANGES, summary="Selected GitHub account is active")
+            if not unlocked_store():
+                return Plan(
+                    outcome=Outcome.NEEDS_USER_ACTION,
+                    summary="Unlock the default Secret Service collection before signing in.",
+                )
+            if not user_terminal.available():
+                return Plan(
+                    outcome=Outcome.NEEDS_USER_ACTION,
+                    summary=(
+                        f"Run gh auth login --web --skip-ssh-key --hostname {inputs.host} "
+                        f"in your terminal. Choose {inputs.account} in the browser."
+                    ),
+                )
             return Plan(
-                outcome=Outcome.READY if present else Outcome.NO_CHANGES,
-                summary=f"Sign out {inputs.account} on {inputs.host} in the local CLI",
+                summary=f"Sign into {inputs.host} as {inputs.account} in GitHub CLI",
                 warnings=[
-                    "Existing author profiles and remote OAuth authorizations stay available."
+                    "GitHub CLI may write its token to hosts.yml if the keyring fails during "
+                    "sign-in. The action checks the credential source when the terminal closes."
                 ],
             )
         if isinstance(inputs, (Profile, UseProfile, ImportProfile, Style)):
@@ -119,41 +189,20 @@ class Plugin(DebianPackages):
                 outcome=Outcome.READY if changed else Outcome.NO_CHANGES,
                 resources=resources,
             )
-        if isinstance(inputs, Account) and isinstance(settings, Settings):
-            if inputs.host not in {"github.com", settings.enterprise_host}:
-                return Plan(
-                    outcome=Outcome.BLOCKED,
-                    summary="Approve this enterprise host in Settings",
-                    resources=[],
-                )
-            if not Path("/usr/bin/gh").is_file():
-                return Plan(
-                    outcome=Outcome.BLOCKED,
-                    summary="Install the official GitHub CLI first",
-                    resources=[],
-                )
-            if action_id == "status":
-                rc, _ = command(
-                    "/usr/bin/gh", "auth", "status", "--active", "--hostname", inputs.host
-                )
-                return Plan(
-                    outcome=Outcome.NO_CHANGES if rc == 0 else Outcome.NEEDS_USER_ACTION,
-                    summary="Active account verified"
-                    if rc == 0
-                    else "Check network access and gh authentication",
-                    resources=[],
-                )
-            if action_id == "login":
-                return Plan(
-                    outcome=Outcome.NEEDS_USER_ACTION,
-                    resources=[],
-                    summary=(
-                        "In your terminal run gh auth login --web --skip-ssh-key "
-                        f"--hostname {inputs.host}. "
-                        "Complete browser authentication, then choose Account status."
-                    ),
-                )
         return super().prepare(action_id, settings, inputs)
+
+    async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
+        if not isinstance(settings, Settings):
+            return []
+        hosts = sorted({"github.com", settings.enterprise_host} - {""})
+        if provider == "hosts":
+            return [host for host in hosts if query.casefold() in host]
+        if provider != "accounts":
+            return []
+        names: set[str] = set()
+        for host in hosts:
+            names.update(await asyncio.to_thread(accounts.local_names, host))
+        return [name for name in sorted(names) if query.casefold() in name.casefold()][:128]
 
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
@@ -166,9 +215,30 @@ class Plugin(DebianPackages):
             return keys.mutate(inputs, plan)
         if isinstance(inputs, CleanupKeys):
             return keys.cleanup(plan)
-        if isinstance(inputs, keys.KeyAccount) and action_id == "logout":
+        if isinstance(inputs, SignIn) and action_id == "login":
+            rc = user_terminal.run_native(
+                [str(GH), "auth", "login", "--web", "--skip-ssh-key", "--hostname", inputs.host]
+            )
+            observed = observed_login(inputs)
+            if observed == "review-storage":
+                return Result(outcome=Outcome.NEEDS_USER_ACTION, message=STORE_REVIEW)
+            active = observed == "verified"
+            return Result(
+                outcome=Outcome.CHANGED if rc == 0 and active else Outcome.NEEDS_USER_ACTION,
+                message=(
+                    "Selected GitHub account is active"
+                    if rc == 0 and active
+                    else "Check gh auth status for the selected account and its credential source"
+                ),
+            )
+        if isinstance(inputs, Account) and action_id == "logout":
+            selected = accounts.selected_name(accounts.local_names(inputs.host), inputs)
+            if not selected or not accounts.selector_supported():
+                return Result(
+                    outcome=Outcome.BLOCKED, message="The selected account or CLI changed"
+                )
             rc, _ = command(
-                "/usr/bin/gh", "auth", "logout", "--hostname", inputs.host, "--user", inputs.account
+                str(GH), "auth", "logout", "--hostname", inputs.host, "--user", selected
             )
             return Result(
                 outcome=Outcome.UNKNOWN_OUTCOME if rc else Outcome.CHANGED,
@@ -201,14 +271,19 @@ class Plugin(DebianPackages):
             return await asyncio.to_thread(keys.verify, inputs, plan)
         if isinstance(inputs, CleanupKeys):
             return await asyncio.to_thread(keys.cleanup, plan, readback=True)
-        if isinstance(inputs, keys.KeyAccount):
-            accounts = await asyncio.to_thread(logins, inputs.host)
+        if isinstance(inputs, SignIn):
+            observed = await asyncio.to_thread(observed_login, inputs)
+            if observed == "review-storage":
+                return Result(outcome=Outcome.NEEDS_USER_ACTION, message=STORE_REVIEW)
+            active = observed == "verified"
             return Result(
-                outcome=Outcome.PARTIAL
-                if inputs.account.casefold() in accounts
-                else Outcome.COMPLETE,
-                message="Checked the selected GitHub CLI account after logout",
+                outcome=Outcome.COMPLETE if active else Outcome.NEEDS_USER_ACTION,
+                message="Selected GitHub account is active"
+                if active
+                else "Check the active account",
             )
+        if isinstance(inputs, Account):
+            return await asyncio.to_thread(accounts.verify_logout, inputs)
         if not isinstance(inputs, (Profile, UseProfile, ImportProfile, Style)):
             return await super().verify(plan, settings, inputs)
         current = [edit.resource() for edit in await asyncio.to_thread(prepare, inputs)]

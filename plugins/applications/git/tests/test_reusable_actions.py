@@ -7,7 +7,7 @@ import runpy
 import sys
 
 import pytest
-from setup_plugin_git import Plugin, Settings, Style, keys
+from setup_plugin_git import Account, Plugin, Settings, Style
 from setup_plugin_git.ui import GitPanel
 from textual.app import App, ComposeResult
 
@@ -29,9 +29,14 @@ def test_local_logout_account_and_styles(monkeypatch, tmp_path):
         return 0, "\n".join(accounts)
 
     monkeypatch.setattr(git, "command", cli)
+    monkeypatch.setattr(git.accounts, "local_names", lambda _: sorted(accounts))
+    monkeypatch.setattr(git.accounts, "observed_names", lambda _: sorted(accounts))
+    monkeypatch.setattr(git.accounts, "authenticated", lambda _: True)
+    monkeypatch.setattr(git.accounts, "online", lambda *_: True)
+    monkeypatch.setattr(git.accounts, "selector_supported", lambda: True)
     settings = Settings()
     plugin = Plugin()
-    data = keys.KeyAccount(account="b")
+    data = Account(account="b")
     plan = plugin.prepare("logout", settings, data)
     assert plan.outcome == Outcome.READY
     assert plugin.mutate("logout", settings, data, plan).outcome == Outcome.CHANGED

@@ -11,6 +11,7 @@ Each plugin ships a generated `settings_reference.md` beside its manifest and He
 | `SETUP_SYSTEM_SUGGESTION_RESULTS` | integer, min 1, max 512 | `128` |
 | `SETUP_SYSTEM_PROMPT_TIMEOUT_SECONDS` | number, min 0.01, max 300 | `30.0` |
 | `SETUP_SYSTEM_IDLE_TIMEOUT_SECONDS` | number, min 0.01, max 3600 | `90.0` |
+| `SETUP_SYSTEM_TERMINAL_TIMEOUT_SECONDS` | number, min 1, max 3600 | `600.0` |
 | `SETUP_SYSTEM_TERMINATION_GRACE_SECONDS` | number, min 0.01, max 30 | `2.0` |
 | `SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS` | number, min 0.01, max 86400 | `900.0` |
 

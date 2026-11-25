@@ -71,7 +71,7 @@ def test_profile_preview_then_cancel_and_explicit_apply(tmp_path, monkeypatch):
                 if not approve:
                     assert not seen
             assert [values["title"] for values in seen] == ["Studio Окно", "Example"]
-            assert "beta · complete" in str(app.query_one("#feedback", Static).content)
+            assert "beta · complete" in str(app.query_one("#feedback", Static).render())
 
     asyncio.run(exercise())
 
@@ -109,12 +109,12 @@ def test_offline_help_and_history_use_the_selected_scope(tmp_path, monkeypatch):
             page = await select(app, pilot, "alpha")
             tabs = page.query_one(TabbedContent)
             await click(pilot, tabs.get_tab("help"))
-            assert "# Fixture guide" in str(page.query_one("#article", Static).content)
+            assert "# Fixture guide" in str(page.query_one("#article", Static).render())
             await click(pilot, "#field-reference")
-            assert "Generated settings reference" in str(page.reference.content)
+            assert "Generated settings reference" in str(page.reference.render())
             await click(pilot, tabs.get_tab("history"))
             await click(pilot, "#refresh-history")
-            text = str(page.query_one("#events", Static).content)
+            text = str(page.query_one("#events", Static).render())
             assert "observe-alpha" in text and "observe-beta" not in text
             await click(pilot, "#global-history")
             assert isinstance(app.screen, Confirm)
@@ -171,7 +171,7 @@ def test_external_preview_and_refused_digest_do_not_activate(tmp_path, monkeypat
                 await pilot.pause()
                 if answer != url:
                     await app.workers.wait_for_complete()
-                    assert "allowed origin" in str(app.query_one("#feedback", Static).content)
+                    assert "allowed origin" in str(app.query_one("#feedback", Static).render())
                     assert "alpha" in app.entries
                     continue
                 assert isinstance(app.screen, Confirm)
@@ -190,7 +190,7 @@ def test_external_preview_and_refused_digest_do_not_activate(tmp_path, monkeypat
                 await app.workers.wait_for_complete()
                 assert not installs and not seen
                 assert not app.manager.env_root.exists()
-            assert "allowed origin" in str(app.query_one("#feedback", Static).content)
+            assert "allowed origin" in str(app.query_one("#feedback", Static).render())
 
     asyncio.run(exercise())
 

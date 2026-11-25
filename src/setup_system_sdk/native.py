@@ -60,7 +60,7 @@ def command(*argv: str, capture: bool = False) -> tuple[int, str]:
         env.update(
             {
                 name: session[name]
-                for name in ("DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY")
+                for name in ("DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY", "CODEX_HOME")
                 if name in session
             }
         )

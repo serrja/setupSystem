@@ -7,7 +7,7 @@ Generated from the plugin's Pydantic settings and action inputs.
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `compact` | Compact top panel | `true` | `—` |
-| `opacity` | Panel opacity | `0.96` | `{"maximum": 1, "minimum": 0.75}` |
+| `opacity` | Panel opacity | `0.96` | `{"maximum": 1.0, "minimum": 0.75}` |
 | `rounding` | Panel corner radius | `12` | `{"maximum": 24, "minimum": 0}` |
 
 ## Check program

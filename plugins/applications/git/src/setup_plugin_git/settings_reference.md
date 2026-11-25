@@ -27,20 +27,22 @@ This operation has no editable parameters.
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
-| `host` | Git hosting service | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
+| `host` | Hosting service | `"github.com"` | `{"maxLength": 253}` |
+| `account` | Local hosting account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
 
 ## Sign in
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
-| `host` | Git hosting service | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
+| `host` | Host | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
+| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
 
 ## Sign out
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
-| `host` | Host | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
-| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"}` |
+| `host` | Hosting service | `"github.com"` | `{"maxLength": 253}` |
+| `account` | Local hosting account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
 
 ## Create an SSH key
 
@@ -65,7 +67,7 @@ This operation has no editable parameters.
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `host` | Host | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
-| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"}` |
+| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
 | `public_key` | OpenSSH public key | `required` | `{"format": "path"}` |
 | `title` | Title | `required` | `{"maxLength": 80, "minLength": 1}` |
 
@@ -74,7 +76,7 @@ This operation has no editable parameters.
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `host` | Host | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
-| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"}` |
+| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
 | `key_id` | Remote key ID | `required` | `—` |
 
 ## Import repository identity
@@ -104,7 +106,7 @@ This operation has no editable parameters.
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `host` | Host | `"github.com"` | `{"maxLength": 253, "minLength": 1}` |
-| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"}` |
+| `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"}` |
 | `public_key` | OpenSSH public key | `required` | `{"format": "path"}` |
 | `login` | SSH transport user | `"git"` | `{"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"}` |
 

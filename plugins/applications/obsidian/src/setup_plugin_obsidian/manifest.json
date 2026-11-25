@@ -16,7 +16,8 @@
   "capabilities": [
     "vaults",
     "core-features",
-    "themes"
+    "themes",
+    "editor-snippets"
   ],
   "dependencies": [],
   "actions": [
@@ -106,6 +107,19 @@
       "supports_rollback": false,
       "read_only": false,
       "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "editor-snippet",
+      "label": "Configure an installed CSS snippet",
+      "page": "actions",
+      "target": "editor-snippet",
+      "permissions": [
+        "vault-settings"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": "Enable or disable a reviewed editor style in the selected open vault."
     },
     {
       "cleanup_phase": null,
@@ -291,6 +305,32 @@
         }
       },
       "title": "CoreFeature",
+      "type": "object"
+    },
+    "editor-snippet": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Choose a trusted snippet already present in the selected vault.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[\\w][\\w .()-]*$",
+          "title": "Installed CSS snippet",
+          "type": "string",
+          "ui": {
+            "choice_provider": "snippets"
+          }
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enable snippet",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "EditorSnippet",
       "type": "object"
     },
     "hotkeys": {

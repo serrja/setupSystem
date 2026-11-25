@@ -90,7 +90,7 @@
       },
       "opacity": {
         "default": 0.96,
-        "maximum": 1,
+        "maximum": 1.0,
         "minimum": 0.75,
         "title": "Panel opacity",
         "type": "number"

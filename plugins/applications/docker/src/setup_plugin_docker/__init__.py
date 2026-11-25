@@ -1,28 +1,18 @@
 """Manage Docker client contexts and the explicitly selected user service."""
 
 import asyncio
-import os
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 from pydantic import Field
 
-from setup_plugin_docker import configuration, registry
+from setup_plugin_docker import configuration, mode, registry
+from setup_plugin_docker.mode import Settings as Settings
+from setup_plugin_docker.mode import endpoint as endpoint
 from setup_plugin_docker.registry import Registry as Registry
 from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.native import FilesBackend, command
-
-
-class Settings(PluginSettings):
-    mode: Literal["rootless", "rootful"] = Field(
-        default="rootless",
-        title="Daemon mode",
-        description=(
-            "Rootful socket access grants root-equivalent control. Group membership is never "
-            "changed."
-        ),
-    )
 
 
 class Context(Inputs):
@@ -55,14 +45,6 @@ def unused_images(settings: Settings) -> list[str]:
     if rc:
         raise ValueError("Cannot inspect unused images on the selected Docker daemon")
     return sorted(set(images.splitlines()))
-
-
-def endpoint(settings: Settings) -> str:
-    return (
-        f"unix:///run/user/{os.getuid()}/docker.sock"
-        if settings.mode == "rootless"
-        else "unix:///var/run/docker.sock"
-    )
 
 
 def context_host(name: str) -> str | None:
@@ -98,9 +80,9 @@ class Plugin(DebianPackages, FilesBackend):
         "create-context": Context,
         "start-service": Inputs,
         "stop-service": Inputs,
-        "login": Registry,
+        "login": registry.SignIn,
         "logout": Registry,
-        "setup-mode": Inputs,
+        "setup-mode": mode.DaemonMode,
         "prune": Image,
         "start-system-service": Inputs,
         "stop-system-service": Inputs,
@@ -195,6 +177,8 @@ class Plugin(DebianPackages, FilesBackend):
                 ],
                 warnings=["Starting or stopping this daemon affects its workloads."],
             )
+        if isinstance(inputs, registry.SignIn):
+            return registry.login_plan(inputs)
         if isinstance(inputs, Registry):
             if action_id == "logout":
                 state = registry.presence(inputs)
@@ -212,19 +196,8 @@ class Plugin(DebianPackages, FilesBackend):
                     "account for remote tokens."
                 ),
             )
-        if action_id == "setup-mode":
-            return Plan(
-                outcome=Outcome.NEEDS_USER_ACTION,
-                summary=(
-                    "Verify subuid, subgid and newuidmap prerequisites, then run "
-                    "dockerd-rootless-setuptool.sh install as your user."
-                    if settings.mode == "rootless"
-                    else (
-                        "Review the rootful docker.service with your administrator before "
-                        "starting it. Group membership stays unchanged."
-                    )
-                ),
-            )
+        if action_id == "setup-mode" and isinstance(inputs, mode.DaemonMode):
+            return mode.prepare(settings, inputs)
         if action_id == "prune" and isinstance(inputs, Image):
             if inputs.digest not in unused_images(settings):
                 return Plan(outcome=Outcome.BLOCKED, summary="The image is no longer dangling")
@@ -261,6 +234,12 @@ class Plugin(DebianPackages, FilesBackend):
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
         if (
+            action_id == "setup-mode"
+            and isinstance(inputs, mode.DaemonMode)
+            and isinstance(settings, Settings)
+        ):
+            return mode.mutate(settings, inputs, plan)
+        if (
             action_id == "create-context"
             and isinstance(inputs, Context)
             and isinstance(settings, Settings)
@@ -291,6 +270,8 @@ class Plugin(DebianPackages, FilesBackend):
                 "--no-prune",
                 inputs.digest,
             )
+        elif isinstance(inputs, registry.SignIn) and action_id == "login":
+            return registry.login(inputs, plan)
         elif isinstance(inputs, Registry) and action_id == "logout":
             rc, _ = command("/usr/bin/docker", "logout", inputs.host)
         elif isinstance(inputs, configuration.RemoveContexts):
@@ -306,6 +287,8 @@ class Plugin(DebianPackages, FilesBackend):
         )
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
+        if provider == "mode_contexts" and isinstance(settings, Settings):
+            return await asyncio.to_thread(mode.contexts, settings, query)
         if provider == "unused_images" and isinstance(settings, Settings):
             return [
                 i for i in await asyncio.to_thread(unused_images, settings) if i.startswith(query)
@@ -313,6 +296,14 @@ class Plugin(DebianPackages, FilesBackend):
         return []
 
     async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
+        if isinstance(inputs, mode.DaemonMode) and isinstance(settings, Settings):
+            return await mode.verify(settings, inputs, plan)
+        if isinstance(inputs, registry.SignIn):
+            current = await asyncio.to_thread(registry.presence, inputs)
+            return Result(
+                outcome=Outcome.COMPLETE if current == "present" else Outcome.NEEDS_USER_ACTION,
+                message="Checked local credential presence for the selected registry",
+            )
         if isinstance(inputs, Registry):
             current = await asyncio.to_thread(registry.presence, inputs)
             return Result(

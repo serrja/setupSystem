@@ -33,7 +33,7 @@ class Display(Inputs):
     )
     x: int = Field(ge=-65535, le=65535, default=0)
     y: int = Field(ge=-65535, le=65535, default=0)
-    scale: float = Field(ge=0.25, le=8, allow_inf_nan=False, default=1)
+    scale: float = Field(ge=0.25, le=8.0, allow_inf_nan=False, default=1.0)
 
 
 FOLDER = Path(__file__).parent

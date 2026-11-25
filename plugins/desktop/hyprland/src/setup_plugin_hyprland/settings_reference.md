@@ -38,7 +38,7 @@ This operation has no editable parameters.
 | `mode` | Mode | `required` | `{"pattern": "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}@[0-9]{1,4}(\\.[0-9]{1,5})?$"}` |
 | `x` | X | `0` | `{"maximum": 65535, "minimum": -65535}` |
 | `y` | Y | `0` | `{"maximum": 65535, "minimum": -65535}` |
-| `scale` | Scale | `1` | `{"maximum": 8, "minimum": 0.25}` |
+| `scale` | Scale | `1.0` | `{"maximum": 8.0, "minimum": 0.25}` |
 
 ## Test monitor temporarily
 
@@ -48,4 +48,4 @@ This operation has no editable parameters.
 | `mode` | Mode | `required` | `{"pattern": "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}@[0-9]{1,4}(\\.[0-9]{1,5})?$"}` |
 | `x` | X | `0` | `{"maximum": 65535, "minimum": -65535}` |
 | `y` | Y | `0` | `{"maximum": 65535, "minimum": -65535}` |
-| `scale` | Scale | `1` | `{"maximum": 8, "minimum": 0.25}` |
+| `scale` | Scale | `1.0` | `{"maximum": 8.0, "minimum": 0.25}` |

@@ -23,7 +23,9 @@ FOLDER = Path(__file__).parent
 
 class Settings(PluginSettings):
     compact: bool = Field(default=True, title="Compact top panel")
-    opacity: float = Field(default=0.96, ge=0.75, le=1, allow_inf_nan=False, title="Panel opacity")
+    opacity: float = Field(
+        default=0.96, ge=0.75, le=1.0, allow_inf_nan=False, title="Panel opacity"
+    )
     rounding: int = Field(default=12, ge=0, le=24, title="Panel corner radius")
 
 

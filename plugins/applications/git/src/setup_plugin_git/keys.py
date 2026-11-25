@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_ssh_public_key
@@ -17,10 +18,13 @@ from setup_system.infrastructure.user_storage import capture_receipt, inside_hom
 from setup_system_sdk import Inputs, Outcome, Plan, Resource, Result, owned_resources
 from setup_system_sdk.native import command
 
+ACCOUNT_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$"
+AccountName = Annotated[str, Field(min_length=1, max_length=100, pattern=ACCOUNT_PATTERN)]
+
 
 class KeyAccount(Inputs):
     host: str = Field(default="github.com", min_length=1, max_length=253)
-    account: str = Field(min_length=1, max_length=100, pattern="^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+    account: AccountName
 
 
 class PublicKey(KeyAccount):

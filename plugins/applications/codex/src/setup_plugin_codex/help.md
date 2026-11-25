@@ -10,7 +10,7 @@ Choose user settings or an explicit Git checkout. Account-visible models and eff
 
 ## 🔐 Accounts
 
-Sign in through the native client. Its authentication files and keyring records remain under the client's control. [Authentication](https://learn.chatgpt.com/docs/auth).
+Choose Sign in for the official binary installed by this plugin. The action verifies its installed file digest before opening the native terminal and checks the client’s login status afterwards. For a separately installed binary or a session without a supported local terminal, follow the displayed command in your trusted terminal. The managed client passes the documented `cli_auth_credentials_store="keyring"` override to login, status and logout. For subsequent interactive sessions, select the same keyring mode in your Codex configuration. Setup System leaves this persistent choice to you. [Authentication](https://learn.chatgpt.com/docs/auth).
 
 ## 🧩 MCP and skills
 

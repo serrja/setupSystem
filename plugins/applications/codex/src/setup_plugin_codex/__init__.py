@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import os
+import shlex
 import shutil
 import tomllib
 from pathlib import Path
@@ -14,7 +15,15 @@ from pydantic import AnyHttpUrl, Field, field_validator
 from setup_system.domain.managed_text import managed_block
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.user_storage import capture_receipt, checked_directory, inside_home
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result
+from setup_system_sdk import (
+    Inputs,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Result,
+    owned_resources,
+    user_terminal,
+)
 from setup_system_sdk.native import FilesBackend, command, owned_file_removal, remove_owned_file
 
 from . import client, release
@@ -45,6 +54,28 @@ class Settings(PluginSettings):
         json_schema_extra={"ui": {"choice_provider": "efforts"}},
     )
     instructions: bool = Field(default=False, title="Include the pinned engineering instructions")
+
+
+class SignIn(Inputs):
+    """Verify the package-installed client before starting the interactive sign-in."""
+
+
+def keyring_command(path: Path, *arguments: str) -> list[str]:
+    return [str(path), "-c", 'cli_auth_credentials_store="keyring"', *arguments]
+
+
+def login_binary() -> Path | None:
+    path = release.binary()
+    state = observe(path)
+    if state and any(
+        row.kind == "file"
+        and row.identity == str(path)
+        and row.after == state.sha256
+        and row.permissions == state.mode == 0o700
+        for row in owned_resources()
+    ):
+        return path
+    return None
 
 
 class Project(Inputs):
@@ -98,7 +129,7 @@ class Plugin(FilesBackend):
         "update": Inputs,
         "uninstall": Inputs,
         "configure": Project,
-        "login": Inputs,
+        "login": SignIn,
         "status": Inputs,
         "logout": Inputs,
         "mcp": Inputs,
@@ -106,10 +137,6 @@ class Plugin(FilesBackend):
         "skills": Inputs,
     }
     manual: ClassVar[dict[str, str]] = {
-        "login": (
-            "Run codex login in the native terminal and complete its sign-in flow, then "
-            "choose Account status."
-        ),
         "mcp": (
             "Review a single server's source and permissions. Use codex mcp add in its native "
             "terminal, then verify with codex mcp list."
@@ -153,10 +180,37 @@ class Plugin(FilesBackend):
                     ]
                 }
             )
+        if isinstance(inputs, SignIn) and action_id == "login":
+            selected = login_binary()
+            if not selected:
+                return Plan(
+                    outcome=Outcome.NEEDS_USER_ACTION,
+                    summary="Install the verified official release here or run codex login "
+                    "in the terminal of your separately trusted installation.",
+                )
+            rc, _ = command(*keyring_command(selected, "login", "status"))
+            if rc == 0:
+                return Plan(outcome=Outcome.NO_CHANGES, summary="Native Codex sign-in is active")
+            if not user_terminal.available():
+                native_login = shlex.join(keyring_command(selected, "login"))
+                return Plan(
+                    outcome=Outcome.NEEDS_USER_ACTION,
+                    summary=f"Run {native_login} in a terminal. Then choose Account status.",
+                )
+            return Plan(
+                summary="Sign into the verified Codex client using its system keyring",
+                warnings=["Interactive Codex sessions must select the same keyring storage mode."],
+            )
         if action_id in {"status", "logout"}:
             if not program().is_file():
                 return Plan(outcome=Outcome.BLOCKED, summary="Install the official CLI first")
-            rc, _ = command(str(program()), "login", "status")
+            managed = login_binary()
+            argv = (
+                keyring_command(managed, "login", "status")
+                if managed
+                else [str(program()), "login", "status"]
+            )
+            rc, _ = command(*argv)
             if rc:
                 return Plan(
                     outcome=Outcome.NEEDS_USER_ACTION,
@@ -272,8 +326,22 @@ class Plugin(FilesBackend):
             return remove_owned_file(release.binary(), plan)
         if action_id in {"install", "update"}:
             return release.install(action_id, plan)
+        if isinstance(inputs, SignIn) and action_id == "login":
+            path = login_binary()
+            if not path:
+                return Result(outcome=Outcome.BLOCKED, message="Codex release identity changed")
+            rc = user_terminal.run_native(keyring_command(path, "login"))
+            status, _ = command(*keyring_command(path, "login", "status"))
+            return Result(
+                outcome=Outcome.CHANGED if rc == status == 0 else Outcome.NEEDS_USER_ACTION,
+                message="Native Codex account verified"
+                if rc == status == 0
+                else "Check the account in the native Codex terminal",
+            )
         if action_id == "logout":
-            rc, _ = command(str(program()), "logout")
+            managed = login_binary()
+            argv = keyring_command(managed, "logout") if managed else [str(program()), "logout"]
+            rc, _ = command(*argv)
             return Result(
                 outcome=Outcome.UNKNOWN_OUTCOME if rc else Outcome.CHANGED,
                 message="Check native Codex authentication after local logout",
@@ -281,6 +349,15 @@ class Plugin(FilesBackend):
         return super().mutate(action_id, settings, inputs, plan)
 
     async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
+        if isinstance(inputs, SignIn):
+            path = await asyncio.to_thread(login_binary)
+            if not path:
+                return Result(outcome=Outcome.BLOCKED, message="Codex release identity changed")
+            rc, _ = await asyncio.to_thread(command, *keyring_command(path, "login", "status"))
+            return Result(
+                outcome=Outcome.COMPLETE if rc == 0 else Outcome.NEEDS_USER_ACTION,
+                message="Native Codex account verified" if rc == 0 else "Check native sign-in",
+            )
         if not plan.resources:
             return Result(
                 outcome=Outcome.NEEDS_USER_ACTION,

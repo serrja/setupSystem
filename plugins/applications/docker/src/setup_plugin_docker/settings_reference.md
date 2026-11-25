@@ -6,7 +6,7 @@ Generated from the plugin's Pydantic settings and action inputs.
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
-| `mode` | Rootful socket access grants root-equivalent control. Group membership is never changed. | `"rootless"` | `{"enum": ["rootless", "rootful"]}` |
+| `mode` | Rootful socket access grants root-equivalent control. Review the mode action to select an Engine. Saving this preference does not start a daemon or grant access. | `"rootless"` | `{"enum": ["rootless", "rootful"]}` |
 
 ## Install
 
@@ -24,9 +24,11 @@ This operation has no editable parameters.
 
 This operation has no editable parameters.
 
-## Prepare daemon mode
+## Select local daemon context
 
-This operation has no editable parameters.
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `context` | Use the rootless or default context when unselected. | `null` | `—` |
 
 ## Create context
 

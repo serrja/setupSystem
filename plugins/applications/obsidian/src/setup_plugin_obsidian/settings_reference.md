@@ -40,6 +40,13 @@ This operation has no editable parameters.
 | --- | --- | --- | --- |
 | `name` | Installed theme | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[\\w .()-]+$"}` |
 
+## Configure an installed CSS snippet
+
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `name` | Choose a trusted snippet already present in the selected vault. | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[\\w][\\w .()-]*$"}` |
+| `enabled` | Enable snippet | `true` | `—` |
+
 ## Change core feature
 
 | Field | Description | Default | Constraints |

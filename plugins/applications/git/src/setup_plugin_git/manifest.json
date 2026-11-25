@@ -13,7 +13,8 @@
     "account-status",
     "root",
     "account-keys",
-    "ui-code"
+    "ui-code",
+    "native-terminal"
   ],
   "capabilities": [
     "author-profiles",
@@ -63,11 +64,14 @@
       "id": "login",
       "label": "Sign in",
       "page": "accounts",
-      "target": null,
-      "permissions": [],
+      "target": "login",
+      "permissions": [
+        "account-status",
+        "native-terminal"
+      ],
       "supports_rollback": false,
       "read_only": false,
-      "description": ""
+      "description": "Open the official client in a separate terminal and verify the selected sign-in."
     },
     {
       "cleanup_phase": null,
@@ -285,7 +289,7 @@
         "account": {
           "maxLength": 100,
           "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
           "title": "Account",
           "type": "string"
         },
@@ -325,7 +329,7 @@
         "account": {
           "maxLength": 100,
           "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
           "title": "Account",
           "type": "string"
         },
@@ -364,7 +368,7 @@
         "account": {
           "maxLength": 100,
           "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
           "title": "Account",
           "type": "string"
         },
@@ -512,30 +516,32 @@
         "host": {
           "default": "github.com",
           "maxLength": 253,
+          "title": "Hosting service",
+          "type": "string",
+          "ui": {
+            "choice_provider": "hosts"
+          }
+        },
+        "account": {
+          "maxLength": 100,
           "minLength": 1,
-          "title": "Git hosting service",
-          "type": "string"
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Local hosting account",
+          "type": "string",
+          "ui": {
+            "choice_provider": "accounts"
+          }
         }
       },
+      "required": [
+        "account"
+      ],
       "title": "Account",
       "type": "object"
     },
     "login": {
       "additionalProperties": false,
-      "properties": {
-        "host": {
-          "default": "github.com",
-          "maxLength": 253,
-          "minLength": 1,
-          "title": "Git hosting service",
-          "type": "string"
-        }
-      },
-      "title": "Account",
-      "type": "object"
-    },
-    "logout": {
-      "additionalProperties": false,
+      "description": "Read back the account selected for the native browser flow.",
       "properties": {
         "host": {
           "default": "github.com",
@@ -547,7 +553,7 @@
         "account": {
           "maxLength": 100,
           "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
           "title": "Account",
           "type": "string"
         }
@@ -555,7 +561,36 @@
       "required": [
         "account"
       ],
-      "title": "KeyAccount",
+      "title": "SignIn",
+      "type": "object"
+    },
+    "logout": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "maxLength": 253,
+          "title": "Hosting service",
+          "type": "string",
+          "ui": {
+            "choice_provider": "hosts"
+          }
+        },
+        "account": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Local hosting account",
+          "type": "string",
+          "ui": {
+            "choice_provider": "accounts"
+          }
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "title": "Account",
       "type": "object"
     },
     "remove-owned-keys": {

@@ -13,7 +13,9 @@
     "user-service",
     "client-context",
     "remove-selected",
-    "user-files"
+    "user-files",
+    "native-terminal",
+    "account-status"
   ],
   "capabilities": [
     "rootless",
@@ -75,13 +77,16 @@
     {
       "cleanup_phase": null,
       "id": "setup-mode",
-      "label": "Prepare daemon mode",
+      "label": "Select local daemon context",
       "page": "actions",
-      "target": null,
-      "permissions": [],
-      "supports_rollback": false,
+      "target": "setup-mode",
+      "permissions": [
+        "client-context",
+        "user-files"
+      ],
+      "supports_rollback": true,
       "read_only": false,
-      "description": ""
+      "description": "Select the reviewed local Docker daemon context for the current user."
     },
     {
       "cleanup_phase": null,
@@ -127,11 +132,14 @@
       "id": "login",
       "label": "Registry login",
       "page": "accounts",
-      "target": null,
-      "permissions": [],
+      "target": "login",
+      "permissions": [
+        "account-status",
+        "native-terminal"
+      ],
       "supports_rollback": false,
       "read_only": false,
-      "description": ""
+      "description": "Open the official client in a separate terminal and verify the selected sign-in."
     },
     {
       "cleanup_phase": null,
@@ -216,7 +224,7 @@
     "properties": {
       "mode": {
         "default": "rootless",
-        "description": "Rootful socket access grants root-equivalent control. Group membership is never changed.",
+        "description": "Rootful socket access grants root-equivalent control. Review the mode action to select an Engine. Saving this preference does not start a daemon or grant access.",
         "enum": [
           "rootless",
           "rootful"
@@ -324,6 +332,7 @@
     },
     "login": {
       "additionalProperties": false,
+      "description": "Read back the credential helper for the server selected at confirmation.",
       "properties": {
         "host": {
           "default": "docker.io",
@@ -333,7 +342,7 @@
           "type": "string"
         }
       },
-      "title": "Registry",
+      "title": "SignIn",
       "type": "object"
     },
     "logout": {
@@ -352,8 +361,26 @@
     },
     "setup-mode": {
       "additionalProperties": false,
-      "properties": {},
-      "title": "Inputs",
+      "properties": {
+        "context": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Use the rootless or default context when unselected.",
+          "title": "Existing local Docker context",
+          "ui": {
+            "choice_provider": "mode_contexts"
+          }
+        }
+      },
+      "title": "DaemonMode",
       "type": "object"
     },
     "prune": {
