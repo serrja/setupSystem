@@ -4,9 +4,9 @@
   "author": "serrja",
   "category": "desktop",
   "kind": "system",
-  "sdk": ">=1,<2",
+  "sdk": ">=1.1,<2",
   "entry_point": "setup_plugin_hyprlock:Plugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "root",

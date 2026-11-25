@@ -17,7 +17,7 @@ async def main() -> None:
     async with app.run_test(size=(110, 45)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
-        assert "git" in app.entries and "plymouth" in app.entries
+        assert {"gh", "git", "snap", "telegram", "plymouth"} <= app.entries.keys()
         assert not any(item.reason for item in app.entries.values())
         await pilot.press("ctrl+f")
         search = app.query_one("#search", Input)
@@ -25,9 +25,10 @@ async def main() -> None:
         search.value = "git"
         await pilot.pause()
         catalog = app.query_one("#catalog", OptionList)
-        assert catalog.option_count == 1
+        visible = {catalog.get_option_at_index(i).id for i in range(catalog.option_count)}
+        assert {"git", "gh"} <= visible and "plymouth" not in visible
         catalog.focus()
-        catalog.highlighted = 0
+        catalog.highlighted = catalog.get_option_index("git")
         await pilot.press("enter")
         await pilot.pause()
         assert "git" in app.opened

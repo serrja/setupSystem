@@ -1,6 +1,7 @@
 """Clone the official stable Flutter commit without touching existing SDKs or projects."""
 
 import re
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -10,6 +11,11 @@ from setup_system.infrastructure.downloads import DownloadPolicy, read_https
 from setup_system_sdk import Inputs, Plan, PluginSettings
 from setup_system_sdk.apt import apply_packages
 from setup_system_sdk.toolchain import Toolchain, execute
+
+
+class PluginAction(StrEnum):
+    DOCTOR = "doctor"
+
 
 REPOSITORY = "https://github.com/flutter/flutter.git"
 
@@ -45,12 +51,12 @@ class Plugin(Toolchain):
         "dart": "checkout/bin/dart",
     }
     manual: ClassVar[dict[str, str]] = {
-        "doctor": (
+        PluginAction.DOCTOR: (
             "Run flutter doctor to inspect optional platform SDKs. "
             "Review the suggested components and licenses."
         )
     }
-    inputs: ClassVar[dict[str, type[Inputs]]] = {**Toolchain.inputs, "doctor": Inputs}
+    inputs: ClassVar[dict[str, type[Inputs]]] = {**Toolchain.inputs, PluginAction.DOCTOR: Inputs}
 
     def commands(self, settings: PluginSettings) -> dict[str, str]:
         return (

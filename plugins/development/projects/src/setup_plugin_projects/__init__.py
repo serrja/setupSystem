@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -14,6 +15,18 @@ from setup_plugin_projects.template_models import TemplatePlan
 from setup_system.infrastructure.user_storage import inside_home
 from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
 from setup_system_sdk.native import NativeBackend
+
+
+class PluginAction(StrEnum):
+    INSPECT_PROJECTS = "inspect-projects"
+    OPEN_CODEX = "open-codex"
+    OPEN_EDITOR = "open-editor"
+    PREPARE_DIRECTORIES = "prepare-directories"
+    TEMPLATE_CACHE = "template-cache"
+    TEMPLATE_CREATE = "template-create"
+    TEMPLATE_UPDATE = "template-update"
+    TEMPLATE_VERSIONS = "template-versions"
+
 
 FOLDER = Path(__file__).parent
 
@@ -76,7 +89,7 @@ def template_plan(action: str, selected: Template, settings: Settings) -> Templa
         cache,
         selected.version or None,
         destination,
-        update=action == "template-update",
+        update=action == PluginAction.TEMPLATE_UPDATE,
         offline=settings.offline,
     )
     args: dict[str, JsonValue] = {}
@@ -93,12 +106,12 @@ def template_plan(action: str, selected: Template, settings: Settings) -> Templa
         template=selected.template,
         version=selected_source.metadata.recommended_version,
         destination=destination,
-        operation="update" if action == "template-update" else "create",
+        operation="update" if action == PluginAction.TEMPLATE_UPDATE else "create",
         offline=settings.offline,
         defaults=True,
         data=args,
     )
-    if action != "template-cache":
+    if action != PluginAction.TEMPLATE_CACHE:
         copier_templates.validate_destination(plan)
         copier_templates.copier_executable()
     return plan
@@ -117,14 +130,14 @@ def prepare_template(action: str, t: TemplatePlan) -> Plan:
             ownership="preexisting" if cached else "created",
         )
     ]
-    unchanged = action == "template-cache" and cached
-    if action != "template-cache":
-        if action == "template-update":
+    unchanged = action == PluginAction.TEMPLATE_CACHE and cached
+    if action != PluginAction.TEMPLATE_CACHE:
+        if action == PluginAction.TEMPLATE_UPDATE:
             remembered = copier_templates._read_answers(t.destination).get("_commit")
             unchanged = remembered in (t.version.tag, t.version.commit)
         before = (
             copier_templates._git(t.destination, "rev-parse", "HEAD")
-            if action == "template-update"
+            if action == PluginAction.TEMPLATE_UPDATE
             else None
         )
         rows.append(
@@ -148,14 +161,14 @@ class Plugin(NativeBackend):
     executable = "/usr/bin/git"
     settings_model = Settings
     inputs: ClassVar[dict[str, type[Inputs]]] = {
-        "inspect-projects": Inputs,
-        "open-editor": Project,
-        "open-codex": Project,
-        "template-versions": CatalogTemplate,
-        "prepare-directories": Inputs,
-        "template-cache": Template,
-        "template-create": Creation,
-        "template-update": Destination,
+        PluginAction.INSPECT_PROJECTS: Inputs,
+        PluginAction.OPEN_EDITOR: Project,
+        PluginAction.OPEN_CODEX: Project,
+        PluginAction.TEMPLATE_VERSIONS: CatalogTemplate,
+        PluginAction.PREPARE_DIRECTORIES: Inputs,
+        PluginAction.TEMPLATE_CACHE: Template,
+        PluginAction.TEMPLATE_CREATE: Creation,
+        PluginAction.TEMPLATE_UPDATE: Destination,
     }
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
@@ -171,7 +184,7 @@ class Plugin(NativeBackend):
         if action_id in sessions.PROGRAMS and isinstance(inputs, Project):
             return sessions.session_plan(action_id, inputs.project)
         if (
-            action_id == "template-versions"
+            action_id == PluginAction.TEMPLATE_VERSIONS
             and isinstance(inputs, CatalogTemplate)
             and isinstance(settings, Settings)
         ):
@@ -186,7 +199,7 @@ class Plugin(NativeBackend):
                 summary="\n".join(r.tag + " " + r.commit for r in versions[:64])
                 or "No annotated releases available.",
             )
-        if action_id == "inspect-projects":
+        if action_id == PluginAction.INSPECT_PROJECTS:
             layout = project_layout.load_layout(FOLDER)
             active = project_layout.active_projects(layout)
             return Plan(
@@ -196,7 +209,7 @@ class Plugin(NativeBackend):
                     for project in layout.projects
                 ),
             )
-        if action_id == "prepare-directories":
+        if action_id == PluginAction.PREPARE_DIRECTORIES:
             layout = project_layout.load_layout(FOLDER)
             dirs = project_layout.owner_directories(layout)
             return Plan(
@@ -227,13 +240,13 @@ class Plugin(NativeBackend):
                     outcome=Outcome.BLOCKED, message="Project session changed. Preview again."
                 )
             sessions.start(plan)
-        elif action_id == "prepare-directories":
+        elif action_id == PluginAction.PREPARE_DIRECTORIES:
             project_layout.prepare_owner_directories(project_layout.load_layout(FOLDER))
         elif isinstance(inputs, Template) and isinstance(settings, Settings):
             native = template_plan(action_id, inputs, settings)
             if prepare_template(action_id, native) != plan:
                 raise ValueError("Template or project changed since confirmation.")
-            if action_id == "template-cache":
+            if action_id == PluginAction.TEMPLATE_CACHE:
                 copier_templates.prepare_cache(native)
             else:
                 result = copier_templates.execute_template(native)

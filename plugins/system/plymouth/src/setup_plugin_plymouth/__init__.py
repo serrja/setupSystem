@@ -9,7 +9,16 @@ from typing import ClassVar, Literal
 
 from setup_system.infrastructure.inspection import observations
 from setup_system.infrastructure.native_target import current_target
-from setup_system_sdk import Backend, Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import (
+    Backend,
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+)
 from setup_system_sdk.apt import Approval, package_plan
 from setup_system_sdk.native_play import run_native_play
 
@@ -19,12 +28,17 @@ FOLDER = Path(__file__).parent
 
 
 class Confirmation(Inputs):
-    action: Literal["install", "update", "configure"]
+    action: Literal[LifecycleAction.INSTALL, LifecycleAction.UPDATE, LifecycleAction.CONFIGURE]
     plan: Plan
 
 
 def prepare(action: str) -> Plan:
-    if action not in {"install", "update", "configure", "check"}:
+    if action not in {
+        LifecycleAction.INSTALL,
+        LifecycleAction.UPDATE,
+        LifecycleAction.CONFIGURE,
+        LifecycleAction.CHECK,
+    }:
         raise ValueError("Unsupported Plymouth action.")
     if not current_target()[1]:
         return Plan(summary="Plymouth requires Debian 13.", outcome=Outcome.BLOCKED)
@@ -40,17 +54,21 @@ def prepare(action: str) -> Plan:
             outcome=Outcome.BLOCKED,
         )
     ready = boot.is_current(None)
-    if action == "check":
+    if action == LifecycleAction.CHECK:
         return Plan(
             summary="Boot files inspected. Confirm password and fallback after a test boot.",
             outcome=Outcome.NO_CHANGES if ready else Outcome.NEEDS_USER_ACTION,
         )
-    if facts.packages and action == "configure":
+    if facts.packages and action == LifecycleAction.CONFIGURE:
         return Plan(
             summary="Select Install to include backup before Debian's package triggers.",
             outcome=Outcome.BLOCKED,
         )
-    packages = package_plan(FOLDER) if action in ("install", "update") else None
+    packages = (
+        package_plan(FOLDER)
+        if action in (LifecycleAction.INSTALL, LifecycleAction.UPDATE)
+        else None
+    )
     if packages and packages.outcome not in (Outcome.NO_CHANGES, Outcome.READY):
         return packages
     files = boot._desired(None)
@@ -96,7 +114,13 @@ def prepare(action: str) -> Plan:
 
 class Plugin(Backend):
     inputs: ClassVar[dict[str, type[Inputs]]] = dict.fromkeys(
-        ("install", "update", "configure", "check"), Inputs
+        (
+            LifecycleAction.INSTALL,
+            LifecycleAction.UPDATE,
+            LifecycleAction.CONFIGURE,
+            LifecycleAction.CHECK,
+        ),
+        Inputs,
     )
 
     async def inspect(self, settings: PluginSettings) -> Result:
@@ -119,7 +143,11 @@ class Plugin(Backend):
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    if action_id not in ("install", "update", "configure"):
+    if action_id not in (
+        LifecycleAction.INSTALL,
+        LifecycleAction.UPDATE,
+        LifecycleAction.CONFIGURE,
+    ):
         raise ValueError("Unexpected Plymouth operation.")
     confirmation = Confirmation.model_validate({"action": action_id, "plan": plan})
     run_native_play("plymouth", "configure.yml", confirmation.model_dump(mode="json"), "sudo")
@@ -131,13 +159,17 @@ def apply_boot(change: Confirmation) -> None:
     if prepare(change.action) != change.plan or change.plan.outcome != Outcome.READY:
         raise ValueError("Boot topology, package versions or recovery destinations changed.")
     observed = boot.inspect_unlock()
-    packages = package_plan(FOLDER) if change.action in {"install", "update"} else None
+    packages = (
+        package_plan(FOLDER)
+        if change.action in {LifecycleAction.INSTALL, LifecycleAction.UPDATE}
+        else None
+    )
     if observed.identity != change.plan.resources[0].identity or (
         packages and packages.resources != [r for r in change.plan.resources if r.kind == "package"]
     ):
         raise ValueError("Boot identity or package closure changed after confirmation.")
     if packages and packages.outcome == Outcome.READY:
-        if change.action == "configure":
+        if change.action == LifecycleAction.CONFIGURE:
             raise ValueError("Install requires its own confirmation.")
         approval = Approval(plugin_id="plymouth", action_id=change.action, plan=packages)
         boot.apply_unlock(

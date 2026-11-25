@@ -1,14 +1,21 @@
 """Manage LibreOffice through its supported Debian package and native interface."""
 
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
 from pydantic import Field
 
-from setup_system_sdk import Inputs, Plan, PluginSettings
+from setup_system_sdk import Inputs, LifecycleAction, Plan, PluginSettings
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import PublishedAssets
 from setup_system_sdk.native import LauncherProfile, launcher_file
+
+
+class PluginAction(StrEnum):
+    CONFIGURE_LAUNCHER = "configure-launcher"
+    PREFERENCES = "preferences"
+    RECOVERY = "recovery"
 
 
 class Settings(PluginSettings):
@@ -19,19 +26,19 @@ class Settings(PluginSettings):
 
 class Plugin(DebianPackages, PublishedAssets):
     settings_model = Settings
-    file_actions = frozenset({"configure-launcher"})
+    file_actions = frozenset({PluginAction.CONFIGURE_LAUNCHER})
     executable = "/usr/bin/libreoffice"
     package_folder = Path(__file__).parent
     manual: ClassVar[dict[str, str]] = {
-        "preferences": "Open Tools → Options to edit the active LibreOffice user profile.",
-        "recovery": (
+        PluginAction.PREFERENCES: "Edit the active LibreOffice profile under Tools → Options.",
+        PluginAction.RECOVERY: (
             "Open Tools → Options → Load/Save → General to review AutoRecovery and backup settings."
         ),
     }
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure-launcher": LauncherProfile,
+        LifecycleAction.CHECK: Inputs,
+        PluginAction.CONFIGURE_LAUNCHER: LauncherProfile,
         **dict.fromkeys(manual, Inputs),
     }
 

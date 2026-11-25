@@ -1,13 +1,12 @@
 """Check GitHub CLI account selection on Debian stable and JSON-capable clients."""
 
 import asyncio
-from contextlib import contextmanager
 
 import httpx
 import pytest
-import setup_plugin_git as app
+import setup_plugin_gh as app
 import yaml
-from setup_plugin_git import accounts
+from setup_plugin_gh import accounts
 
 from setup_system_sdk import Mutation, Outcome
 
@@ -64,16 +63,15 @@ def test_verified_scoped_logout_and_offline_readback(config, monkeypatch, modern
         write_config(config, names)
         return 0, ""
 
-    @contextmanager
     def account_api(data):
         scoped_checks.append(data.account)
         if not online[0] or data.account not in names:
             raise ValueError("Account unavailable")
-        yield None
+        return True
 
     monkeypatch.setattr(app, "command", cli)
     monkeypatch.setattr(accounts, "command", cli)
-    monkeypatch.setattr(accounts.keys, "account_api", account_api)
+    monkeypatch.setattr(accounts, "named_account", account_api)
     plugin = app.Plugin()
     settings = app.Settings(enterprise_host="enterprise.test")
     data = app.Account(account=selected)

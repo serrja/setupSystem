@@ -4,19 +4,32 @@ import os
 import re
 import stat
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 import yaml
+from pydantic import BaseModel, Field
 from yaml.events import AliasEvent, CollectionEndEvent, CollectionStartEvent
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
-from setup_plugin_git import keys
 from setup_system.infrastructure.user_storage import inside_home, private_directory
-from setup_system_sdk import Outcome, Plan, Result
+from setup_system_sdk import Inputs, Outcome, Plan, Result
 from setup_system_sdk.native import command
 
 GH = "/usr/bin/gh"
-NAME = re.compile(keys.ACCOUNT_PATTERN)
+NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$")
+AccountName = Annotated[str, Field(min_length=1, max_length=100, pattern=NAME.pattern)]
+
+
+class Selection(Inputs):
+    host: str = Field(default="github.com", min_length=1, max_length=253)
+    account: AccountName
+
+
+class Identity(BaseModel):
+    login: AccountName
+
+
 MAX_BYTES = 256 * 1024
 
 
@@ -121,7 +134,30 @@ def selector_supported() -> bool:
     return rc == 0 and {"--hostname", "--user"} <= set(text.split())
 
 
-def authenticated(inputs: keys.KeyAccount) -> bool:
+def named_account(inputs: Selection) -> bool:
+    rc, token = command(
+        GH, "auth", "token", "--hostname", inputs.host, "--user", inputs.account, capture=True
+    )
+    if rc or not token.strip() or not token.strip().isascii():
+        return False
+    root = (
+        "https://api.github.com" if inputs.host == "github.com" else f"https://{inputs.host}/api/v3"
+    )
+    with httpx.Client(trust_env=False, follow_redirects=False, timeout=10) as api:
+        with api.stream(
+            "GET", root + "/user", headers={"Authorization": "Bearer " + token.strip()}
+        ) as response:
+            if response.status_code != 200:
+                return False
+            content = bytearray()
+            for chunk in response.iter_bytes():
+                if len(content) + len(chunk) > 65536:
+                    return False
+                content.extend(chunk)
+    return Identity.model_validate_json(content).login.casefold() == inputs.account.casefold()
+
+
+def authenticated(inputs: Selection) -> bool:
     try:
         rc, active = command(
             GH, "api", "--hostname", inputs.host, "user", "--jq", ".login", capture=True
@@ -129,8 +165,7 @@ def authenticated(inputs: keys.KeyAccount) -> bool:
         if rc == 0 and active.strip().casefold() == inputs.account.casefold():
             return True
         # Obtain the inactive account through the CLI without switching the active user.
-        with keys.account_api(inputs):
-            return True
+        return named_account(inputs)
     except (ValueError, OSError, httpx.HTTPError):
         return False
 
@@ -149,11 +184,11 @@ def online(host: str, names: list[str]) -> bool:
         return False
 
 
-def selected_name(names: list[str], inputs: keys.KeyAccount) -> str | None:
+def selected_name(names: list[str], inputs: Selection) -> str | None:
     return next((name for name in names if name.casefold() == inputs.account.casefold()), None)
 
 
-def prepare(inputs: keys.KeyAccount, *, logout: bool) -> Plan:
+def prepare(inputs: Selection, *, logout: bool) -> Plan:
     names = observed_names(inputs.host)
     if names is None:
         return Plan(
@@ -188,7 +223,7 @@ def prepare(inputs: keys.KeyAccount, *, logout: bool) -> Plan:
     )
 
 
-def verify_logout(inputs: keys.KeyAccount) -> Result:
+def verify_logout(inputs: Selection) -> Result:
     names = observed_names(inputs.host)
     if names is None:
         return Result(

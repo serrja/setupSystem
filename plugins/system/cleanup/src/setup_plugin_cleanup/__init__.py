@@ -42,20 +42,10 @@ class PurgeCandidates(Candidates):
     """Require absence of package configuration during purge readback."""
 
 
-def mode(action: str) -> native.Mode:
-    if action == "remove":
-        return "remove"
-    if action == "purge":
-        return "purge"
-    if action == "autoremove":
-        return "autoremove"
-    raise ValueError("Unsupported cleanup operation.")
-
-
 def selection(action: str, inputs: Inputs) -> tuple[list[native.Package], list[str]]:
     if not isinstance(inputs, Candidates):
         raise ValueError("Select reviewed cleanup candidates.")
-    packages = native.preview(mode(action), inputs.packages, os.getuid(), user_config_path())
+    packages = native.preview(native.Mode(action), inputs.packages, os.getuid(), user_config_path())
     return packages, inputs.packages
 
 
@@ -86,9 +76,9 @@ def prepare(action: str, inputs: Inputs) -> Plan:
 
 class Plugin(Backend):
     inputs: ClassVar[dict[str, type[Inputs]]] = {
-        "remove": Candidates,
-        "purge": PurgeCandidates,
-        "autoremove": Candidates,
+        native.Mode.REMOVE: Candidates,
+        native.Mode.PURGE: PurgeCandidates,
+        native.Mode.AUTOREMOVE: Candidates,
     }
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
@@ -104,7 +94,7 @@ class Plugin(Backend):
                 return Result(
                     outcome=Outcome.BLOCKED, message="Package cleanup requires Debian 13."
                 )
-            statuses = native.inventory(list(native.catalog()), "remove", arch)
+            statuses = native.inventory(list(native.catalog()), native.Mode.REMOVE, arch)
             return Result(
                 outcome=Outcome.READY,
                 message="Installed optional packages: " + ", ".join(p.name for p in statuses),
@@ -121,7 +111,7 @@ class Plugin(Backend):
         actual = await asyncio.to_thread(
             native.inventory,
             inputs.packages,
-            "purge" if isinstance(inputs, PurgeCandidates) else "remove",
+            native.Mode.PURGE if isinstance(inputs, PurgeCandidates) else native.Mode.REMOVE,
             native.current_target()[0],
         )
         if actual:
@@ -144,7 +134,7 @@ def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan:
     ):
         raise ValueError("The package closure changed.")
     payload = native.Confirmation(
-        mode=mode(action_id),
+        mode=native.Mode(action_id),
         selected=selected,
         caller_uid=os.getuid(),
         config_home=str(user_config_path()),

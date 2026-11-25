@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
@@ -14,6 +15,11 @@ from setup_system_sdk import Backend, Inputs, Outcome, Plan, PluginSettings, Res
 from . import grant as native
 from .account import read_account
 from .models import AdminIntent
+
+
+class PluginAction(StrEnum):
+    GRANT_SUDO = "grant-sudo"
+    VERIFY_SUDO = "verify-sudo"
 
 
 class Login(Inputs):
@@ -88,7 +94,10 @@ def grant_plan(login: Login, *, check: bool = False) -> Plan:
 
 class Plugin(Backend):
     settings_model = PluginSettings
-    inputs: ClassVar[dict[str, type[Inputs]]] = {"grant-sudo": Login, "verify-sudo": Login}
+    inputs: ClassVar[dict[str, type[Inputs]]] = {
+        PluginAction.GRANT_SUDO: Login,
+        PluginAction.VERIFY_SUDO: Login,
+    }
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
         if provider != "accounts":
@@ -105,9 +114,13 @@ class Plugin(Backend):
         )
 
     async def plan(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id not in ("grant-sudo", "verify-sudo") or not isinstance(inputs, Login):
+        if action_id not in (PluginAction.GRANT_SUDO, PluginAction.VERIFY_SUDO) or not isinstance(
+            inputs, Login
+        ):
             raise ValueError("Choose an existing login for the sudo grant.")
-        return await asyncio.to_thread(grant_plan, inputs, check=action_id == "verify-sudo")
+        return await asyncio.to_thread(
+            grant_plan, inputs, check=action_id == PluginAction.VERIFY_SUDO
+        )
 
     async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
         if not isinstance(inputs, Login):
@@ -138,12 +151,14 @@ def apply_native(
 ) -> Result | None:
     from setup_system_sdk.native_play import run_native_play
 
-    if action_id not in ("grant-sudo", "verify-sudo") or not isinstance(inputs, Login):
+    if action_id not in (PluginAction.GRANT_SUDO, PluginAction.VERIFY_SUDO) or not isinstance(
+        inputs, Login
+    ):
         raise ValueError("Unknown administrative action.")
     resource = plan.resources[0]
     run_native_play(
         "administration",
-        "verify.yml" if action_id == "verify-sudo" else "grant.yml",
+        "verify.yml" if action_id == PluginAction.VERIFY_SUDO else "grant.yml",
         {
             "username": inputs.username,
             "before_digest": resource.before,
@@ -151,7 +166,7 @@ def apply_native(
         },
         "su",
     )
-    if action_id == "verify-sudo":
+    if action_id == PluginAction.VERIFY_SUDO:
         account = native.observe(inputs.username)
         if not account.member or native.fingerprint(account) != resource.after:
             return Result(outcome=Outcome.PARTIAL, message="The verified login identity changed.")
