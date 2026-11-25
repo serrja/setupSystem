@@ -22,13 +22,13 @@ from setup_system.ui.dialogs import Password
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def native_main(name, monkeypatch, action, data, **fixtures):
-    main = runpy.run_path(str(ROOT / "ansible/files" / (name + ".py")))["main"]
+def system_task(monkeypatch, action, data, **fixtures):
+    scope = runpy.run_path(str(ROOT / "ansible/files/system_contract.py"))
+    command = scope["run"]
     for key, value in fixtures.items():
-        monkeypatch.setitem(main.__globals__, key, value)
-    monkeypatch.setattr(sys, "argv", [name, action])
+        monkeypatch.setitem(command.__globals__, key, value)
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(data)))
-    return main()
+    return command(scope["SystemTask"](action))
 
 
 @pytest.fixture(scope="module")
@@ -107,7 +107,7 @@ def outcomes(tmp_path_factory):
                     "ansible.builtin.copy": {
                         "dest": str(run / key),
                         "mode": "0600",
-                        "content": "{{ outcome | native_result | to_json }}",
+                        "content": "{{ outcome | to_json | native_result | to_json }}",
                     }
                 },
             ]
@@ -236,8 +236,7 @@ def test_region_changes_have_independent_operations_without_desktop(monkeypatch,
     from setup_system.infrastructure import regional
 
     monkeypatch.setattr(regional, "actual", lambda kind: None)
-    native_main(
-        "system_contract",
+    system_task(
         monkeypatch,
         "plan",
         {
@@ -345,8 +344,7 @@ def test_confirmed_happ_upgrade_passes_the_observed_package_version(monkeypatch,
     monkeypatch.setattr(
         happ_facts, "require_idle", lambda old, new, facts: calls.append((old, new, facts))
     )
-    native_main(
-        "system_contract",
+    system_task(
         monkeypatch,
         "happ-inspect",
         {"settings": {"apps": ["happ"]}, "version": "5.0"},
@@ -449,7 +447,7 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
         "settings": {"hyprland": True, "graphical_login": True},
         "xdg": user_xdg,
     }
-    native_main("system_contract", monkeypatch, "plan", request, desktop=desktop)
+    system_task(monkeypatch, "plan", request, desktop=desktop)
     plan = json.loads(capsys.readouterr().out)
     assert "login" in plan["observed"] and plan["actions"]
     inspecting = False
@@ -462,21 +460,19 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
         system.paths.display_manager.symlink_to(system.paths.vendor_unit)
     elif change == "readable_grub_input":
         system.paths.grub_default.write_text("GRUB_TIMEOUT=15\n")
-    installed = Path("/usr/lib/setup-system")
 
-    def guard(path):
-        assert path == installed
+    def guard(path, relative):
+        assert path == ROOT / relative
+        assert relative == "ansible/files/system_contract.py"
         assert system.paths.boundary.is_relative_to(tmp_path)
 
     def apply():
-        native_main(
-            "system_contract",
+        system_task(
             monkeypatch,
             "login",
             request | {"observed": plan["observed"], "actions": plan["actions"]},
             desktop=desktop,
-            protected=guard,
-            ROOT=installed,
+            require_installed_resource=guard,
             current_target=lambda: ("amd64", True),
             os=SimpleNamespace(geteuid=lambda: 0),
         )

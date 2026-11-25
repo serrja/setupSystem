@@ -1,6 +1,7 @@
 """Exercise native catalog resolution, Debian archive identity and safe Codex merges."""
 
 import hashlib
+import json
 import runpy
 import subprocess
 import tomllib
@@ -21,18 +22,21 @@ def test_every_component_round_trips_through_selection() -> None:
     config = ROOT / "config"
     picker = Catalog(config)
     entries = tomllib.loads((config / "workspace/applications.toml").read_text())
+    cleanup = tomllib.loads((config / "workspace/optional_cleanup.toml").read_text())["candidates"]
     validate = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["validate_request"]
     for name, entry in entries.items():
         field = "languages" if entry["kind"] == "language" else "apps"
         assert getattr(picker, field)[name] == entry["title"]
         request = {"schema": 1, "settings": {field: [name]}, "expected": None}
-        assert validate(request, "workspace", entries, picker.cleanup)[field] == [name]
+        assert validate(json.dumps(request), "workspace", json.dumps(entries), json.dumps(cleanup))[
+            field
+        ] == [name]
     with pytest.raises(AnsibleFilterError, match="catalog"):
         validate(
-            {"schema": 1, "settings": {"apps": ["unknown"]}, "expected": None},
+            json.dumps({"schema": 1, "settings": {"apps": ["unknown"]}, "expected": None}),
             "workspace",
-            entries,
-            picker.cleanup,
+            json.dumps(entries),
+            json.dumps(cleanup),
         )
 
 

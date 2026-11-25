@@ -406,7 +406,7 @@ def test_privileged_python_uses_only_fixed_distro_imports(tmp_path):
         task["ansible.builtin.raw"]
         for outer in play["tasks"]
         for task in outer.get("block", ())
-        if "ansible.builtin.raw" in task
+        if task.get("register") == "grant"
     )
     fixture = tmp_path / "ansible/files/admin.py"
     fixture.parent.mkdir(parents=True)
@@ -457,25 +457,73 @@ def test_privileged_python_uses_only_fixed_distro_imports(tmp_path):
     assert not canary.exists()
 
 
-@pytest.mark.parametrize("variant", ["unconfirmed", "changed", "missing", "denied", "locked_root"])
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "unconfirmed",
+        "changed",
+        "missing",
+        "denied",
+        "locked_root",
+        "lost_reply",
+        "wrong_reply",
+        "stale_reply",
+        "verified",
+        "partial",
+    ],
+)
 def test_administrative_play_validates_before_native_su(tmp_path, admin, local_account, variant):
-    # Substitute a failing, unprivileged executable in the play under test. This
-    # exercises the real become plugin without entering PAM or changing any user.
+    # Run the real become plugin against an unprivileged substitute. A synthetic
+    # grant leaves a marker before losing its reply, including misleading PAM text.
     play = tmp_path / "admin.yml"
     called = tmp_path / "su-invoked"
-    su = tmp_path / "denying-su"
-    refusal = "Account validation failure" if variant == "locked_root" else "Authentication failure"
-    su.write_text(
-        f"#!/bin/sh\necho called >> {shlex.quote(str(called))}\necho 'su: {refusal}' >&2\nexit 1\n"
-    )
-    su.chmod(0o700)
-    play.write_text((ROOT / "ansible/admin.yml").read_text().replace("/usr/bin/su", str(su)))
-    shutil.copytree(ROOT / "ansible/filter_plugins", tmp_path / "filter_plugins")
-    request = tmp_path / "request.json"
+    writes = tmp_path / "grant-attempt"
+    su = tmp_path / "synthetic-su"
     account = admin_account.read_account(AdminIntent(username="alice"))
     expected = admin.plan(account, admin_account.current_boot_identity()).model_dump(
         mode="json", exclude_unset=True
     )
+    terminal = {
+        "lost_reply": "unknown",
+        "wrong_reply": "unknown",
+        "stale_reply": "unknown",
+        "verified": "requires_user_login",
+        "partial": "partial",
+    }
+    source = yaml.safe_load((ROOT / "ansible/admin.yml").read_text())
+    if variant in terminal:
+        raw_grant = next(
+            task
+            for outer in source[0]["tasks"]
+            for task in outer.get("block", ())
+            if task.get("register") == "grant"
+        )
+        if variant == "lost_reply":
+            reply = "echo 'Authentication failure' >&2; exit 75"
+        else:
+            answer = {"status": "complete"}
+            if variant == "partial":
+                answer = {"status": "partial", "blockers": ["unverified policy"]}
+            if variant in {"verified", "stale_reply"}:
+                answer = admin.plan(
+                    account.validated(member=True), expected["observed"]["boot_identity"]
+                ).model_dump(mode="json", exclude_unset=True)
+                answer.update(status="requires_user_login", actions=expected["actions"])
+                if variant == "stale_reply":
+                    answer["observed"]["account"]["gid"] += 1
+            reply = "printf '%s\\n' " + shlex.quote(json.dumps(answer))
+        raw_grant["ansible.builtin.raw"] = f"echo grant >> {shlex.quote(str(writes))}; {reply}"
+        native = 'for cmd do :; done; exec /bin/sh -c "$cmd"'
+    else:
+        refusal = (
+            "Account validation failure" if variant == "locked_root" else "Authentication failure"
+        )
+        native = f"echo 'su: {refusal}' >&2; exit 1"
+    su.write_text(f"#!/bin/sh\necho called >> {shlex.quote(str(called))}\n{native}\n")
+    su.chmod(0o700)
+    play.write_text(yaml.safe_dump(source))
+    shutil.copytree(ROOT / "ansible/filter_plugins", tmp_path / "filter_plugins")
+    request = tmp_path / "request.json"
     request.write_text(envelope(expected if variant != "unconfirmed" else None))
     request.chmod(0o600)
     result = tmp_path / "result.json"
@@ -513,12 +561,15 @@ def test_administrative_play_validates_before_native_su(tmp_path, admin, local_a
         timeout=35,
         check=False,
     )
-    assert called.exists() == (variant in {"denied", "locked_root"}), (
-        "Invalid consent reached the su plugin"
-    )
+    assert proc.returncode == 0, proc.stdout
+    if variant in terminal:
+        assert writes.read_text().splitlines() == ["grant"]
+        assert json.loads(result.read_bytes())["status"] == terminal[variant]
+        return
+    assert not writes.exists()
+    assert called.exists() == (variant in {"denied", "locked_root"})
     if called.exists():
         assert called.read_text().splitlines() == ["called"], "The refused credential was retried"
-    assert proc.returncode == 0, proc.stdout
     assert json.loads(result.read_bytes())["status"] == "blocked"
 
 

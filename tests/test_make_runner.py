@@ -47,7 +47,7 @@ def run_transport(tmp_path, target, secret=None, *, cancel=None, phases=None):
 
 
 def test_request_is_detached_data_and_host_make_overrides_are_absent(tmp_path, monkeypatch):
-    value = '/tmp/a $() " with spaces 資料'
+    value = "/tmp/-Проект 'данные' $(shell ...) 資料"
     fields = {"project": value}
     request = command(Target.WORKSPACE_PLAN, fields)
     fields["project"] = "/tmp/other"
@@ -57,14 +57,26 @@ def test_request_is_detached_data_and_host_make_overrides_are_absent(tmp_path, m
 from pathlib import Path
 p=Path(os.environ['SETUP_SYSTEM_REQUEST'])
 assert stat.S_IMODE(p.stat().st_mode)==0o600
-assert 'ANSIBLE_LIBRARY' not in os.environ and 'eval' not in os.getenv('MAKEFLAGS','')
+assert not {'ANSIBLE_LIBRARY','ANSIBLE_CONFIG','ANSIBLE_FILTER_PLUGINS','BASH_ENV','ENV',
+            'PYTHONPATH','MAKEFILES'} & os.environ.keys()
+assert 'eval' not in os.getenv('MAKEFLAGS','') and 'caller-override' not in os.getenv('MFLAGS','')
 assert not os.isatty(0) and not os.isatty(1)
 Path('observed').write_text(json.loads(p.read_bytes())['settings']['project'])
 Path(os.environ['SETUP_SYSTEM_RESULT']).write_text('{"status":"ready"}')
 """,
     )
     monkeypatch.setenv("MAKEFLAGS", "--eval=bad")
-    monkeypatch.setenv("ANSIBLE_LIBRARY", str(tmp_path))
+    for name in (
+        "ANSIBLE_LIBRARY",
+        "ANSIBLE_CONFIG",
+        "ANSIBLE_FILTER_PLUGINS",
+        "BASH_ENV",
+        "ENV",
+        "PYTHONPATH",
+        "MAKEFILES",
+        "MFLAGS",
+    ):
+        monkeypatch.setenv(name, "caller-override")
     phases = []
     result = asyncio.run(AsyncMakeRunner(tmp_path).execute(request, on_event=phases.append))
     assert result.status == "ready" and (tmp_path / "observed").read_text() == value
@@ -559,7 +571,7 @@ def test_installed_resources_require_protected_parents_and_recipes(tmp_path, mon
         layout.verify_installation(root)
 
 
-@pytest.mark.parametrize("reply", ["missing", "invalid", "unreadable"])
+@pytest.mark.parametrize("reply", ["missing", "invalid", "unreadable", "preview"])
 def test_lost_mutation_result_requires_inspection_without_retry(tmp_path, monkeypatch, reply):
     from setup_system import runner
 
@@ -572,6 +584,9 @@ def test_lost_mutation_result_requires_inspection_without_retry(tmp_path, monkey
             Path(env["SETUP_SYSTEM_RESULT"]).write_text("{")
         if reply == "unreadable":
             Path(env["SETUP_SYSTEM_RESULT"]).mkdir()
+        if reply == "preview":
+            Path(env["SETUP_SYSTEM_RESULT"]).write_text('{"status":"plan_ready"}')
+            return 0
         return 130
 
     monkeypatch.setattr(runner, "execute_make", interrupted)
@@ -603,3 +618,25 @@ Path("changed").touch()
     with pytest.raises(transport.AuthorizationError, match="Additional native"):
         asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture")))
     assert not (tmp_path / "changed").exists()
+
+
+def test_second_raw_prompt_receives_hangup_without_another_secret(tmp_path):
+    fixture_make(
+        tmp_path,
+        """import errno, getpass, os, signal, tty
+from pathlib import Path
+getpass.getpass("SU password: ")
+tty.setraw(0)
+signal.alarm(2)
+os.write(1, b"Verification code: ")
+try:
+    received = os.read(0, 1024)
+except OSError as exc:
+    assert exc.errno == errno.EIO
+    received = b""
+Path("unexpected-input" if received else "dismissed").touch()
+""",
+    )
+    with pytest.raises(transport.AuthorizationError, match="Additional native"):
+        asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture")))
+    assert (tmp_path / "dismissed").exists() and not (tmp_path / "unexpected-input").exists()

@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_untrusted_settings_rejected_before_source_or_package_side_effects(tmp_path, settings):
     validate = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["validate_request"]
     with pytest.raises((ValueError, AnsibleFilterError)):
-        validate({"schema": 1, "settings": settings, "expected": None}, "workspace", {}, {})
+        validate(
+            json.dumps({"schema": 1, "settings": settings, "expected": None}),
+            "workspace",
+            "{}",
+            "{}",
+        )
     assert not list(tmp_path.iterdir())
 
 

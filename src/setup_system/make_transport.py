@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import os
 import re
 import select
@@ -11,7 +10,7 @@ import signal
 import sys
 import termios
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from enum import StrEnum
 from pathlib import Path
 
@@ -205,7 +204,7 @@ async def _plain(
         await finished
 
 
-def _drain_master(fd: int) -> None:
+def _drain_output(fd: int) -> None:
     """Keep servicing a live transaction if its Pexpect reader is lost."""
     while True:
         try:
@@ -214,10 +213,6 @@ def _drain_master(fd: int) -> None:
                 return
         except BlockingIOError:
             continue
-        except OSError as exc:
-            if exc.errno == errno.EIO:  # Linux PTY hangup
-                return
-            raise
 
 
 async def _authenticated(
@@ -230,150 +225,152 @@ async def _authenticated(
     *,
     root_account: bool,
 ) -> int:
-    # A separate session cannot open the caller's /dev/tty. Native getpass uses
-    # its private terminal stdin/stderr and must disable echo before we reply.
-    try:
-        master, slave = os.openpty()
-    except OSError:
-        raise TransportError("Could not allocate a private authorization terminal") from None
-    try:
+    # The new session has no controlling terminal. getpass reads the private
+    # terminal on stdin and reports its prompt on stderr. Keeping output on a
+    # pipe lets us hang up input without disrupting a package writer.
+    with ExitStack() as descriptors:
         try:
-            process = await asyncio.create_subprocess_exec(
-                "/usr/bin/make",
-                *args,
-                cwd=root,
-                env=env,
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
-                start_new_session=True,
-            )
-        finally:
-            os.close(slave)
-    except OSError:
-        os.close(master)
-        raise TransportError("Could not open the native authorization terminal") from None
-    reader = None
-    authorized = False
-    reached_eof = False
-    finished = asyncio.create_task(process.wait())
+            with ExitStack() as child_ends:
+                master, slave = os.openpty()
+                terminal_input = descriptors.enter_context(os.fdopen(master, "wb", buffering=0))
+                child_ends.callback(os.close, slave)
+                output, writer = os.pipe()
+                descriptors.callback(os.close, output)
+                child_ends.callback(os.close, writer)
+                process = await asyncio.create_subprocess_exec(
+                    "/usr/bin/make",
+                    *args,
+                    cwd=root,
+                    env=env,
+                    stdin=slave,
+                    stdout=writer,
+                    stderr=writer,
+                    start_new_session=True,
+                )
+        except OSError:
+            raise TransportError("Could not open the native authorization terminal") from None
+        reader = None
+        authorized = False
+        reached_eof = False
+        finished = asyncio.create_task(process.wait())
 
-    async def request_stop() -> None:
-        report(Phase.CANCELLING)
-        if authorized:
-            await asyncio.to_thread(_cancel_at_boundary, env)
-        else:
-            await _stop_group(process.pid, finished)
+        async def request_stop() -> None:
+            report(Phase.CANCELLING)
+            if authorized:
+                await asyncio.to_thread(_cancel_at_boundary, env)
+            else:
+                await _stop_group(process.pid, finished)
 
-    async def observe() -> int:
-        nonlocal authorized, reader, reached_eof
-        # Pexpect's asyncio transport closes its pipe at EOF. Keep the original
-        # master under our ownership until the child and its transaction finish.
-        reader = fdspawn(os.dup(master), timeout=None)
-        account = b"SU" if root_account else b"SUDO"
-        prompt = re.compile(rb"(?m)^(?:BECOME|" + account + rb") password: \Z")
-        report(Phase.AUTHENTICATING)
-        # Bound Pexpect's unmatched pre-authentication transcript.
-        matched = await reader.expect(
-            [prompt, pexpect.EOF, re.compile(rb"(?s).{65536}")],
-            timeout=PROMPT_TIMEOUT,
-            async_=True,
-        )
-        reached_eof = matched == 1
-        if cancel.is_set():
-            return 130
-        if reached_eof:
-            try:
-                return await asyncio.wait_for(asyncio.shield(finished), PROMPT_TIMEOUT)
-            except TimeoutError:
-                raise ReadinessTimeoutError(
-                    "The authorization terminal closed before the command was ready"
-                ) from None
-        if matched != 0:
-            raise AuthorizationError("Unexpected output before the native authorization prompt")
-        if termios.tcgetattr(master)[3] & termios.ECHO:
-            raise AuthorizationError("Password prompt has terminal echo enabled")
-        # No await separates the echo check, single PTY write and ownership transition.
-        # The native line reader can proceed only after the terminating newline.
-        answer = take_password()
-        try:
-            if os.write(master, answer + b"\n") != len(answer) + 1:
-                raise TransportError("The native terminal could not accept the complete response")
-        finally:
-            del answer
-        authorized = True
-        report(Phase.RUNNING)
-        # Match real output, not periodic wakeups. The reader retains at most a
-        # single chunk. After a quiet period wait for output or EOF without a timer.
-        timeout: float | None = IDLE_TIMEOUT
-        tail = b""
-        while True:
-            index = await reader.expect(
-                [pexpect.EOF, re.compile(rb"(?s).{1,8192}"), pexpect.TIMEOUT],
-                timeout=timeout,
+        async def observe() -> int:
+            nonlocal authorized, reader, reached_eof
+            # Pexpect's asyncio transport closes its pipe at EOF. Keep the original
+            # output pipe under our ownership until the child and its transaction finish.
+            reader = fdspawn(os.dup(output), timeout=None)
+            account = b"SU" if root_account else b"SUDO"
+            prompt = re.compile(rb"(?m)^(?:BECOME|" + account + rb") password: \Z")
+            report(Phase.AUTHENTICATING)
+            # Bound Pexpect's unmatched pre-authentication transcript.
+            matched = await reader.expect(
+                [prompt, pexpect.EOF, re.compile(rb"(?s).{65536}")],
+                timeout=PROMPT_TIMEOUT,
                 async_=True,
             )
-            if index == 0:
-                reached_eof = True
-                return await finished
-            if index == 2:
-                report(Phase.WAITING)
-                timeout = None
-            else:
-                timeout = IDLE_TIMEOUT
-                # Refuse renewed credentials. EOF dismisses a canonical
-                # prompt without supplying another secret or signalling a writer.
-                tail = (tail + reader.after)[-512:]
-                if tail.split(b"\n")[-1] in (
-                    b"BECOME password: ",
-                    account + b" password: ",
-                    b"Verification code: ",
-                ):
-                    terminal = termios.tcgetattr(master)
-                    if terminal[3] & termios.ICANON:
-                        os.write(master, terminal[6][termios.VEOF])
+            reached_eof = matched == 1
+            if cancel.is_set():
+                return 130
+            if reached_eof:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(finished), PROMPT_TIMEOUT)
+                except TimeoutError:
+                    raise ReadinessTimeoutError(
+                        "The authorization terminal closed before the command was ready"
+                    ) from None
+            if matched != 0:
+                raise AuthorizationError("Unexpected output before the native authorization prompt")
+            if termios.tcgetattr(master)[3] & termios.ECHO:
+                raise AuthorizationError("Password prompt has terminal echo enabled")
+            # No await separates the echo check, single PTY write and ownership transition.
+            # The native line reader can proceed only after the terminating newline.
+            answer = take_password()
+            try:
+                if os.write(master, answer + b"\n") != len(answer) + 1:
+                    raise TransportError(
+                        "The native terminal could not accept the complete response"
+                    )
+            finally:
+                del answer
+            authorized = True
+            report(Phase.RUNNING)
+            # Match real output, not periodic wakeups. The reader retains at most a
+            # single chunk. After a quiet period wait for output or EOF without a timer.
+            timeout: float | None = IDLE_TIMEOUT
+            tail = b""
+            while True:
+                index = await reader.expect(
+                    [pexpect.EOF, re.compile(rb"(?s).{1,8192}"), pexpect.TIMEOUT],
+                    timeout=timeout,
+                    async_=True,
+                )
+                if index == 0:
+                    reached_eof = True
+                    return await finished
+                if index == 2:
+                    report(Phase.WAITING)
+                    timeout = None
+                else:
+                    timeout = IDLE_TIMEOUT
+                    tail = (tail + reader.after)[-512:]
+                    if tail.split(b"\n")[-1] in (
+                        b"BECOME password: ",
+                        account + b" password: ",
+                        b"Verification code: ",
+                    ):
+                        terminal_input.close()
                         raise AuthorizationError("Additional native authentication is unsupported")
 
-    failure: TransportError
-    try:
-        return await _supervise(observe(), cancel, request_stop)
-    except pexpect.TIMEOUT:
-        failure = ReadinessTimeoutError("The native authorization prompt did not arrive in time")
-    except (OSError, termios.error, pexpect.ExceptionPexpect):
-        # Some Pexpect exceptions carry a terminal transcript. Do not retain
-        # them on the public exception, even as a suppressed __context__.
-        failure = TransportError(
-            "Authorization transport failed; inspect the operation result"
-            if authorized
-            else "The native authorization prompt was unavailable"
-        )
-    finally:
+        failure: TransportError
         try:
-            if authorized and not reached_eof:
-                try:
-                    report(Phase.INTERRUPTED)
-                    await asyncio.to_thread(_cancel_at_boundary, env)
-                finally:
-                    with suppress(OSError):
-                        await asyncio.to_thread(_drain_master, master)
-            elif not authorized and not finished.done():
-                await _stop_group(process.pid, finished)
+            return await _supervise(observe(), cancel, request_stop)
+        except pexpect.TIMEOUT:
+            failure = ReadinessTimeoutError(
+                "The native authorization prompt did not arrive in time"
+            )
+        except (OSError, termios.error, pexpect.ExceptionPexpect):
+            # Some Pexpect exceptions carry a terminal transcript. Do not retain
+            # them on the public exception, even as a suppressed __context__.
+            failure = TransportError(
+                "Authorization transport failed; inspect the operation result"
+                if authorized
+                else "The native authorization prompt was unavailable"
+            )
         finally:
             try:
-                await finished
+                if authorized and not reached_eof:
+                    try:
+                        report(Phase.INTERRUPTED)
+                        await asyncio.to_thread(_cancel_at_boundary, env)
+                    finally:
+                        with suppress(OSError):
+                            await asyncio.to_thread(_drain_output, output)
+                elif not authorized and not finished.done():
+                    await _stop_group(process.pid, finished)
             finally:
                 try:
-                    # After the child exits, consume hangup so Pexpect releases its
-                    # asyncio reader before the descriptor number can be reused.
-                    if reader is not None and reader.isalive() and not reached_eof:
-                        with suppress(OSError, pexpect.ExceptionPexpect):
-                            await reader.expect(pexpect.EOF, timeout=TERMINATE_TIMEOUT, async_=True)
+                    await finished
                 finally:
-                    if reader is not None:
-                        with suppress(OSError):
-                            reader.close()
-                    os.close(master)
-    raise failure
+                    try:
+                        # After the child exits, consume hangup so Pexpect releases its
+                        # asyncio reader before the descriptor number can be reused.
+                        if reader is not None and reader.isalive() and not reached_eof:
+                            with suppress(OSError, pexpect.ExceptionPexpect):
+                                await reader.expect(
+                                    pexpect.EOF, timeout=TERMINATE_TIMEOUT, async_=True
+                                )
+                    finally:
+                        if reader is not None:
+                            with suppress(OSError):
+                                reader.close()
+        raise failure
 
 
 async def execute_make(

@@ -6,6 +6,7 @@ edges. No update, download, package installation or host APT state is involved.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import runpy
@@ -136,7 +137,7 @@ def run_apt(
 def profile_arguments() -> list[str]:
     native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
     catalog = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
-    selected = native["package_names"]({"hyprland": True}, catalog, {})
+    selected = native["package_names"](json.dumps({"hyprland": True}), json.dumps(catalog), "{}")
     return [p for p in selected if p.partition("/")[0] in PROFILE_PACKAGES]
 
 

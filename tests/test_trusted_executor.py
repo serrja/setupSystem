@@ -114,3 +114,17 @@ def test_package_inventory_requires_configured_unmodified_package(monkeypatch):
     monkeypatch.setattr(layout, "_query", modified)
     with pytest.raises(ValueError, match="integrity"):
         layout._package_paths()
+
+
+def test_held_installed_package_uses_its_registered_resources(monkeypatch):
+    from setup_system import layout
+
+    def held(binary, *args):
+        if binary == "/usr/bin/dpkg":
+            return ""
+        if "-W" in args:
+            return "hold ok installed"
+        return str(layout.INSTALLED)
+
+    monkeypatch.setattr(layout, "_query", held)
+    assert layout._package_paths() == {layout.INSTALLED}

@@ -1,6 +1,7 @@
 """The offline template cache and distribution-managed fonts have separate lifecycles."""
 
 import hashlib
+import json
 import os
 import runpy
 import tomllib
@@ -17,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_font_packages_are_selected_with_the_desktop_without_an_archive_download():
     catalog = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
     packages = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["package_names"]
-    selection = packages({"hyprland": True}, catalog, {})
+    selection = packages(json.dumps({"hyprland": True}), json.dumps(catalog), "{}")
     assert {"fontconfig", "fonts-jetbrains-mono", "fonts-noto-color-emoji"} <= set(selection)
 
 

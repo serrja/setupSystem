@@ -1,5 +1,6 @@
 """Exercise the same consent and dispatch inputs as the installed plays."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -158,7 +159,7 @@ def test_installed_play_enforces_scope_without_the_textual_runner():
         },
     }
     with pytest.raises(ValueError, match="scope"):
-        validate(request, "workspace", {}, {}, "user-apply")
+        validate(json.dumps(request), "workspace", "{}", "{}", "user-apply")
 
 
 def test_private_operation_reader_rejects_links_and_excess_without_reading(tmp_path):

@@ -532,6 +532,125 @@ def test_migration_preserves_backup_created_during_publication(home, monkeypatch
 
     monkeypatch.setattr(os, "fsync", concurrent_create)
     with pytest.raises(ValueError, match="Conflicting"):
-        _backup_original(original)
+        _backup_original(original, original.read_bytes())
     assert original.read_bytes() == b'{"owner":"original"}'
     assert backup.read_bytes() == b'{"owner":"concurrent"}'
+
+
+@pytest.mark.parametrize("race", ["edit-operation", "new-destination", "edit-ownership"])
+def test_receipt_migration_refuses_a_competing_writer(home, monkeypatch, race):
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure import receipt_repository as journal
+
+    folder = historical_backup([])
+    destination = folder / "operation.json"
+    values = {str(home / "managed"): digest(b"installed")}
+    original = json.dumps({"status": "complete", "after": values, "completed": values}).encode()
+    destination.write_bytes(original)
+    concurrent = b'{"owner": "keep this edit"}'
+
+    if race == "new-destination":
+        destination.unlink()
+        source = folder / "git-profile.json"
+        source.write_text(
+            json.dumps(
+                {
+                    "application": "git-profile",
+                    "status": "complete",
+                    "files": [
+                        {
+                            "path": str(home / "managed"),
+                            "before": None,
+                            "after": digest(b"installed"),
+                        }
+                    ],
+                }
+            )
+        )
+        migrate = journal.migrate_user_files
+
+        def concurrent_create(*args):
+            result = migrate(*args)
+            destination.write_bytes(concurrent)
+            return result
+
+        monkeypatch.setattr(journal, "migrate_user_files", concurrent_create)
+    else:
+        if race == "edit-ownership":
+            destination = journal.state_root() / "workstation.json"
+            original = json.dumps(values).encode()
+            destination.write_bytes(original)
+        backup = destination.with_name(destination.stem + ".v0.json")
+        fsync = journal.os.fsync
+        changed = False
+
+        def edit_after_backup(descriptor):
+            nonlocal changed
+            fsync(descriptor)
+            if backup.exists() and not changed:
+                changed = True
+                destination.write_bytes(concurrent)
+
+        monkeypatch.setattr(journal.os, "fsync", edit_after_backup)
+
+    with pytest.raises((ValueError, FileExistsError)):
+        if race == "edit-ownership":
+            journal.save_ownership(journal.ownership(migrate=True))
+        else:
+            journal.load_operation(folder, migrate=True)
+    assert destination.read_bytes() == concurrent
+    if race != "new-destination":
+        assert backup.read_bytes() == original
+
+
+def test_receipt_migration_detects_changed_separate_source_after_publication(home, monkeypatch):
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure import receipt_repository as journal
+    from setup_system.infrastructure import user_storage
+
+    folder = historical_backup([])
+    source = folder / "git-profile.json"
+    source.write_text(
+        json.dumps(
+            {
+                "application": "git-profile",
+                "status": "complete",
+                "files": [
+                    {"path": str(home / "tool"), "before": None, "after": digest(b"applied")}
+                ],
+            }
+        )
+    )
+    destination = folder / "operation.json"
+    fsync = user_storage.os.fsync
+    raced = False
+
+    def edit_at_publication(fd):
+        nonlocal raced
+        fsync(fd)
+        if destination.exists() and not raced:
+            raced = True
+            source.write_text("new owner data")
+
+    monkeypatch.setattr(user_storage.os, "fsync", edit_at_publication)
+    with pytest.raises(ValueError, match="Concurrent"):
+        journal.load_operation(folder, migrate=True)
+    assert raced and source.read_text() == "new owner data"
+    assert not destination.exists()
+
+
+def test_migrated_receipt_keeps_open_editor_inode_recoverable(home):
+    from setup_system.domain.receipts import digest
+    from setup_system.infrastructure import receipt_repository as journal
+
+    folder = historical_backup([])
+    path = folder / "operation.json"
+    values = {str(home / "tool"): digest(b"after")}
+    raw = json.dumps({"status": "complete", "after": values, "completed": values}).encode()
+    path.write_bytes(raw)
+    with path.open("ab") as editor:
+        journal.load_operation(folder, migrate=True)
+        editor.write(b" late edit")
+    assert (folder / "operation.v0.json").read_bytes() == raw
+    assert next(folder.glob("operation.v0.retained-*")).read_bytes() == raw + b" late edit"
+    assert journal.load_operation(folder).status == "complete"

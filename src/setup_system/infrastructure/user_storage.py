@@ -5,11 +5,15 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
+
+from setup_system.infrastructure.atomic_rename import exchange, rename_new
 
 
 def state_root() -> Path:
@@ -166,21 +170,93 @@ def target_path(relative: str, *, validate_file: bool = True) -> Path:
     return result
 
 
-def receipt_bytes(path: Path) -> bytes:
-    limit = 4 * 1024 * 1024
-    with private_directory(path.parent, create=False) as parent:
+@dataclass(frozen=True)
+class FileSnapshot:
+    data: bytes
+    device: int
+    inode: int
+    mode: int
+    group: int
+    modified_ns: int
+
+    def json(self) -> dict[str, JsonValue]:
+        return TypeAdapter(dict[str, JsonValue]).validate_json(self.data, strict=True)
+
+    @classmethod
+    def read(cls, parent: int, name: str, *, limit: int = 4 * 1024 * 1024) -> FileSnapshot:
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-        descriptor = os.open(path.name, flags, dir_fd=parent)
+        descriptor = os.open(name, flags, dir_fd=parent)
         with os.fdopen(descriptor, "rb") as stream:
             info = os.fstat(descriptor)
             _check_file(info, os.getuid())
             if info.st_size > limit:
-                raise ValueError("File receipt exceeds the size limit")
+                raise ValueError("Managed file exceeds the size limit")
             data = stream.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError("File receipt exceeds the size limit")
-    return data
+            current = os.fstat(descriptor)
+        if len(data) > limit or info.st_ctime_ns != current.st_ctime_ns:
+            raise ValueError("Managed file changed during observation")
+        return cls(data, info.st_dev, info.st_ino, info.st_mode, info.st_gid, info.st_mtime_ns)
+
+    def matches(self, parent: int, name: str) -> bool:
+        try:
+            return self == self.read(parent, name, limit=len(self.data))
+        except (ValueError, OSError):
+            return False
+
+
+def capture_receipt(path: Path) -> FileSnapshot:
+    with private_directory(path.parent, create=False) as parent:
+        return FileSnapshot.read(parent, path.name)
 
 
 def read_object(path: Path) -> dict[str, JsonValue]:
-    return TypeAdapter(dict[str, JsonValue]).validate_json(receipt_bytes(path), strict=True)
+    return capture_receipt(path).json()
+
+
+def _withdraw(parent: int, name: str, published: FileSnapshot, displaced: str | None) -> None:
+    """Reclaim the candidate by name; keep any racing editor's inode."""
+    claimed = f"{name}.conflict-{uuid.uuid4().hex}"
+    try:
+        rename_new(parent, name, parent, claimed)
+    except FileNotFoundError:
+        pass
+    else:
+        if not published.matches(parent, claimed):
+            with suppress(FileExistsError):
+                rename_new(parent, claimed, parent, name)
+            os.fsync(parent)
+            return
+    if displaced is not None:
+        with suppress(FileExistsError):
+            rename_new(parent, displaced, parent, name)
+    os.fsync(parent)
+
+
+def publish_revision(
+    origin: int,
+    source: str,
+    observed: FileSnapshot | None,
+    parent: int,
+    target: str,
+    content: bytes,
+    retained: str | None,
+) -> FileSnapshot:
+    """Publish a new name exclusively or exchange and verify the actual displaced inode."""
+    with staged_file(parent, target, content, 0o600) as candidate:
+        prepared = FileSnapshot.read(parent, candidate, limit=len(content))
+        if retained is not None:
+            assert observed is not None
+            rename_new(parent, candidate, parent, retained)
+            exchange(parent, retained, target)
+            origin, source = parent, retained
+        else:
+            if observed is not None and not observed.matches(origin, source):
+                raise ValueError("Concurrent edit before migration")
+            rename_new(parent, candidate, parent, target)
+        os.fsync(parent)
+        if (observed is not None and not observed.matches(origin, source)) or not prepared.matches(
+            parent, target
+        ):
+            _withdraw(parent, target, prepared, retained)
+            raise ValueError(f"Concurrent edit; inspect {target} and its retained files")
+        return prepared

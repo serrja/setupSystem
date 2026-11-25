@@ -25,9 +25,18 @@ async def exercise() -> None:
 
 asyncio.run(exercise())
 home = Path.home()
-baseline: dict[str, JsonValue] = {"schema": 1, "settings": {}, "expected": None}
-facts = asyncio.run(AsyncMakeRunner().execute(Command.capture(Target.BASE_INSPECT, baseline)))
-assert facts.status in {"ready", "blocked"} and facts.observed.get("architecture"), facts
+inspections: tuple[tuple[Target, dict[str, JsonValue]], ...] = (
+    (Target.BASE_INSPECT, {"hyprland": True}),
+    (
+        Target.WORKSPACE_INSPECT,
+        {"apps": ["neovim"], "languages": ["python"], "theme": {"rounding": 4}},
+    ),
+)
+for target_id, selection in inspections:
+    baseline: dict[str, JsonValue] = {"schema": 1, "settings": selection, "expected": None}
+    facts = asyncio.run(AsyncMakeRunner().execute(Command.capture(target_id, baseline)))
+    assert facts.status in {"ready", "blocked"} and facts.observed.get("architecture"), facts
+    assert facts.observed.get("section") == target_id.value.removesuffix("-inspect"), facts
 assert not any(home.iterdir()), "Installed Inspect modified the user HOME"
 request: dict[str, JsonValue] = {"schema": 1, "settings": {"project": str(home)}, "expected": None}
 result = asyncio.run(AsyncMakeRunner().execute(Command.capture(Target.PROJECT_CHECK, request)))

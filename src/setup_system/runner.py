@@ -111,7 +111,7 @@ class RunEvent(ContractModel):
         }[self.phase]
 
 
-def _result(path: Path, code: int) -> TaskResult | None:
+def _result(path: Path, code: int, target: Target) -> TaskResult | None:
     try:
         data = read_wire(path)
     except FileNotFoundError:
@@ -120,6 +120,8 @@ def _result(path: Path, code: int) -> TaskResult | None:
         result = TaskResult.model_validate_json(data)
     except ValidationError:
         raise ValueError("The native operation returned an invalid result") from None
+    if target.mutating and result.status.allows_confirmation:
+        raise ValueError("The mutation returned a preview instead of a final outcome")
     if code and result.status not in {
         Status.FAILED,
         Status.PARTIAL,
@@ -241,7 +243,7 @@ class AsyncMakeRunner:
                 )
             except TransportError as exc:
                 try:
-                    outcome = await asyncio.to_thread(_result, result, 0)
+                    outcome = await asyncio.to_thread(_result, result, 0, target)
                 except (OSError, ValueError):
                     outcome = None
                 if outcome is not None and not target.mutating:
@@ -252,7 +254,7 @@ class AsyncMakeRunner:
                     raise
             else:
                 try:
-                    outcome = await asyncio.to_thread(_result, result, code)
+                    outcome = await asyncio.to_thread(_result, result, code, target)
                 except (OSError, ValueError, TransportError):
                     if not mutation_possible:
                         raise

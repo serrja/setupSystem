@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import ctypes
 import fcntl
 import hashlib
 import os
-import stat
 import uuid
 from collections.abc import Iterator, MutableMapping
 from contextlib import contextmanager
@@ -18,7 +16,7 @@ from typing import Any
 import tomlkit
 from platformdirs import user_config_path
 
-from setup_system.infrastructure.atomic_rename import rename_new
+from setup_system.infrastructure.user_storage import FileSnapshot, publish_revision
 from setup_system.models import BaseOptions, Section, WorkspaceOptions
 
 Options = BaseOptions | WorkspaceOptions
@@ -71,28 +69,15 @@ def _directory(home: Path, directory: Path, create: bool) -> Iterator[int | None
         os.close(fd)
 
 
-def _read(fd: int | None, name: str) -> bytes | None:
+def _read(fd: int | None, name: str) -> FileSnapshot | None:
     if fd is None:
         return None
     try:
-        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        return FileSnapshot.read(fd, name, limit=_LIMIT)
     except FileNotFoundError:
         return None
-    with os.fdopen(file_fd, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
-            raise ValueError(f"Unsafe settings file: {name}")
-        data = stream.read(_LIMIT + 1)
-        if len(data) > _LIMIT:
-            raise ValueError("Settings exceed the size limit")
-        return data
-
-
-def _exchange(fd: int, backup: str, target: str) -> None:
-    rename = ctypes.CDLL(None, use_errno=True).renameat2
-    if rename(fd, os.fsencode(backup), fd, os.fsencode(target), 2):
-        code = ctypes.get_errno()
-        raise OSError(code, os.strerror(code))
+    except ValueError as error:
+        raise ValueError(f"Unsafe settings file: {name}") from error
 
 
 def _merge(table: MutableMapping[str, Any], desired: dict[str, Any]) -> None:
@@ -172,7 +157,7 @@ class Settings:
                 raise asyncio.CancelledError
             return result
 
-    def _source(self, fd: int | None, section: Section) -> tuple[str, bytes | None]:
+    def _source(self, fd: int | None, section: Section) -> tuple[str, FileSnapshot | None]:
         name = f"{section}.toml"
         raw = _read(fd, name)
         if raw is None:
@@ -183,14 +168,26 @@ class Settings:
         return name, raw
 
     @staticmethod
-    def _revision(name: str, raw: bytes | None) -> str:
-        return name + ":" + (hashlib.sha256(raw).hexdigest() if raw is not None else "absent")
+    def _revision(name: str, snapshot: FileSnapshot | None) -> str:
+        if snapshot is None:
+            return name + ":absent"
+        metadata = (
+            snapshot.device,
+            snapshot.inode,
+            snapshot.group,
+            snapshot.mode,
+            snapshot.modified_ns,
+        )
+        return name + ":" + hashlib.sha256(repr(metadata).encode() + snapshot.data).hexdigest()
 
     def load(self, section: Section) -> Loaded:
         with _directory(self.home, self.directory, False) as fd:
-            name, raw = self._source(fd, section)
+            name, snapshot = self._source(fd, section)
+            raw = snapshot.data if snapshot else None
             return Loaded(
-                _decode(section, raw, name == _LEGACY[section]), self._revision(name, raw), name
+                _decode(section, raw, name == _LEGACY[section]),
+                self._revision(name, snapshot),
+                name,
             )
 
     def save(self, section: Section, options: Options, expected: str) -> Loaded:
@@ -200,8 +197,9 @@ class Settings:
         with _directory(self.home, self.directory, True) as fd:
             assert fd is not None
             fcntl.flock(fd, fcntl.LOCK_EX)
-            name, raw = self._source(fd, section)
-            if self._revision(name, raw) != expected:
+            name, snapshot = self._source(fd, section)
+            raw = snapshot.data if snapshot else None
+            if self._revision(name, snapshot) != expected:
                 raise ValueError("Settings changed; reload before saving")
             document = tomlkit.parse(raw.decode()) if raw is not None else tomlkit.document()
             _merge(
@@ -213,61 +211,6 @@ class Settings:
                 raise ValueError("Settings exceed the size limit")
             if name == target and raw == output:
                 return Loaded(validated, expected, target)
-            backup = f"{target}.bak-{uuid.uuid4().hex}"
-            new_fd = os.open(
-                backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd
-            )
-            keep = False
-            try:
-                with os.fdopen(new_fd, "wb") as stream:
-                    stream.write(output)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                if name != target or raw is None:
-                    if name != target and _read(fd, name) != raw:
-                        raise ValueError("Concurrent edit to the original settings; reload")
-                    os.link(backup, target, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
-                    if name != target and _read(fd, name) != raw:
-                        # Claim the published name before rolling back. Retain both versions
-                        # if an editor replaced it or wrote through an open descriptor.
-                        conflict = backup + ".conflict"
-                        try:
-                            rename_new(fd, target, fd, conflict)
-                        except FileNotFoundError:
-                            pass
-                        else:
-                            candidate = os.stat(backup, dir_fd=fd, follow_symlinks=False)
-                            claimed = os.stat(conflict, dir_fd=fd, follow_symlinks=False)
-                            if (
-                                not os.path.samestat(candidate, claimed)
-                                or _read(fd, conflict) != output
-                            ):
-                                try:
-                                    rename_new(fd, conflict, fd, target)
-                                except FileExistsError:
-                                    pass
-                        os.fsync(fd)
-                        raise ValueError(
-                            "Concurrent edit during migration; inspect the original and backup"
-                        )
-
-                else:
-                    # The displaced inode remains recoverable, including writes by an open editor.
-                    _exchange(fd, backup, target)
-                    keep = True
-                    os.fsync(fd)
-                    try:
-                        matches = _read(fd, backup) == raw
-                    except (ValueError, OSError):
-                        matches = False
-                    if not matches:
-                        if _read(fd, target) == output:
-                            _exchange(fd, backup, target)
-                            os.fsync(fd)
-                        raise ValueError(f"Concurrent settings edit; inspect {target} and {backup}")
-                os.fsync(fd)
-            finally:
-                if not keep:
-                    os.unlink(backup, dir_fd=fd)
-                    os.fsync(fd)
-        return Loaded(validated, self._revision(target, output), target)
+            retained = f"{target}.bak-{uuid.uuid4().hex}" if name == target and snapshot else None
+            published = publish_revision(fd, name, snapshot, fd, target, output, retained)
+        return Loaded(validated, self._revision(target, published), target)

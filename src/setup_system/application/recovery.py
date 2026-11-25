@@ -34,7 +34,8 @@ def recover(
         for target in targets:
             if target.status == "conflict":
                 raise ValueError(files.conflict(target))
-        journal.load_operation(folder, migrate=True)
+        if journal.load_operation(folder, migrate=True) != operation:
+            raise ValueError("The operation receipt changed during recovery inspection")
         index = journal.ownership(migrate=True)
         results = []
         for target in targets:

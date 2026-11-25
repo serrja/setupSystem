@@ -6,18 +6,29 @@ from collections.abc import Callable
 from pathlib import Path
 
 
-def rename_new(
-    source_fd: int, source_name: str, destination_fd: int, destination_name: str
+def _rename(
+    source_fd: int, source_name: str, destination_fd: int, destination_name: str, flag: int
 ) -> None:
-    """Move an entry without replacing another writer's destination."""
     rename = ctypes.CDLL(None, use_errno=True).renameat2
     rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
     rename.restype = ctypes.c_int
     if rename(
-        source_fd, os.fsencode(source_name), destination_fd, os.fsencode(destination_name), 1
+        source_fd, os.fsencode(source_name), destination_fd, os.fsencode(destination_name), flag
     ):
         code = ctypes.get_errno()
         raise OSError(code, os.strerror(code), destination_name)
+
+
+def rename_new(
+    source_fd: int, source_name: str, destination_fd: int, destination_name: str
+) -> None:
+    """Move an entry without replacing another writer's destination."""
+    _rename(source_fd, source_name, destination_fd, destination_name, 1)
+
+
+def exchange(parent: int, staged: str, target: str) -> None:
+    """Exchange two existing names and retain both inodes."""
+    _rename(parent, staged, parent, target, 2)
 
 
 def move_new(source: Path, destination: Path, *, check_directory: Callable[[Path], None]) -> None:

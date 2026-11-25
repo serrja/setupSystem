@@ -23,9 +23,9 @@ from setup_system.infrastructure.native_target import target
 def packages():
     native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
     return native["package_names"](
-        {"hyprland": True, "graphical_login": True},
-        tomllib.loads((ROOT / "config/base/packages.toml").read_text()),
-        {},
+        json.dumps({"hyprland": True, "graphical_login": True}),
+        json.dumps(tomllib.loads((ROOT / "config/base/packages.toml").read_text())),
+        json.dumps({}),
     )
 
 

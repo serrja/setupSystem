@@ -328,6 +328,7 @@ def test_only_base_user_files_use_unprivileged_make_after_consent(tmp_path):
 
 
 def test_base_user_apply_enters_real_play_without_a_become_prompt(tmp_path, monkeypatch):
+    from setup_system.infrastructure.operation_outcome import read_last_outcome
     from setup_system.runner import AsyncMakeRunner, Command
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -347,7 +348,12 @@ def test_base_user_apply_enters_real_play_without_a_become_prompt(tmp_path, monk
         )
     )
     assert reply.status == "blocked" and reply.blockers
-    assert not list(tmp_path.iterdir())
+    recorded = asyncio.run(read_last_outcome())
+    assert recorded is not None
+    assert recorded.target is Target.BASE_USER_APPLY and recorded.status is reply.status
+    state = tmp_path / "state"
+    folder = state / "setup-system"
+    assert set(tmp_path.rglob("*")) == {state, folder, folder / "last-operation.json"}
 
 
 def test_administrative_consent_precedes_the_dedicated_root_prompt(tmp_path):

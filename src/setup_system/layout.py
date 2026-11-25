@@ -44,7 +44,8 @@ def _query(*args: str) -> str:
 
 
 def _package_paths() -> set[Path]:
-    if _query("/usr/bin/dpkg-query", "-W", "-f=${Status}", PACKAGE) != "install ok installed":
+    status = _query("/usr/bin/dpkg-query", "-W", "-f=${Status}", PACKAGE)
+    if status not in {"install ok installed", "hold ok installed"}:
         raise ValueError("The Debian package must be configured")
     if _query("/usr/bin/dpkg", "--verify", PACKAGE):
         raise ValueError("The Debian package failed its integrity check")

@@ -1,5 +1,10 @@
-"""Pure input and result conversions for local Ansible plays."""
+"""Validate native requests and results from local Ansible plays.
 
+The plays use Ansible's to_json filter to evaluate nested template values before
+Pydantic validates their wire types.
+"""
+
+import json
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -16,15 +21,15 @@ from setup_system.models import BaseOptions, RequestEnvelope, TaskResult, Worksp
 
 
 def validate_request(
-    data: Any,
+    data: str,
     section: str,
-    apps: dict[str, JsonValue],
-    cleanup: dict[str, JsonValue],
+    apps: str,
+    cleanup: str,
     operation: str | None = None,
 ) -> dict[str, JsonValue]:
     if section not in {"base", "workspace"}:
         raise AnsibleFilterError("Unknown native operation section")
-    envelope = RequestEnvelope.model_validate(data)
+    envelope = RequestEnvelope.model_validate_json(data)
     if operation is not None:
         target = (
             operation
@@ -37,25 +42,24 @@ def validate_request(
     )
     result = settings.model_dump(mode="json")
     if section == "workspace":
-        entries = applications(apps)
+        entries = applications(json.loads(apps))
         known_apps = {key for key, row in entries.items() if row.kind != "language"}
         if (
             set(result["apps"]) - known_apps
-            or set(result["languages"]) - (set(apps) - known_apps)
-            or set(result["cleanup"]) - set(cleanup)
+            or set(result["languages"]) - (set(entries) - known_apps)
+            or set(result["cleanup"])
+            - set(TypeAdapter(dict[str, JsonValue]).validate_json(cleanup))
         ):
             raise AnsibleFilterError("Choose only reviewed catalog entries")
     return result
 
 
-def package_names(
-    settings: dict[str, JsonValue], base: dict[str, JsonValue], catalog: dict[str, JsonValue]
-) -> list[str]:
-    intent = TypeAdapter(BaseOptions | WorkspaceOptions).validate_python(settings)
+def package_names(settings: str, base: str, catalog: str) -> list[str]:
+    intent = TypeAdapter(BaseOptions | WorkspaceOptions).validate_json(settings)
     packages: list[str] = []
     if isinstance(intent, BaseOptions):
         try:
-            sources = BasePackages.model_validate(base)
+            sources = BasePackages.model_validate_json(base)
         except ValidationError as exc:
             raise AnsibleFilterError("Invalid Debian package catalog") from exc
         if intent.hyprland:
@@ -69,7 +73,7 @@ def package_names(
             packages.extend(("console-setup", "xkb-data"))
     else:
         try:
-            apps = applications(catalog)
+            apps = applications(json.loads(catalog))
         except ValidationError as exc:
             raise AnsibleFilterError("Invalid application package catalog") from exc
         for name in (*intent.apps, *intent.languages):
@@ -91,14 +95,17 @@ def apt_closure(output: str, cleanup: bool) -> list[str]:
     return lines
 
 
-def native_result(data: Any) -> dict[str, JsonValue]:
-    return TaskResult.model_validate(data).model_dump(mode="json", exclude_unset=True)
+def native_result(data: str) -> dict[str, JsonValue]:
+    return TaskResult.model_validate_json(data).model_dump(mode="json", exclude_unset=True)
 
 
-def same_plan(expected: Any, fresh: Any) -> bool:
-    return expected is not None and TaskResult.model_validate(expected).same_plan(
-        TaskResult.model_validate(fresh)
-    )
+def same_plan(expected: str, fresh: str) -> bool:
+    plan = TypeAdapter(TaskResult | None).validate_json(expected)
+    return plan is not None and plan.same_plan(TaskResult.model_validate_json(fresh))
+
+
+def release_asset(release: str, application: str, arch: str) -> dict[str, str]:
+    return github_deb(json.loads(release), json.loads(application), arch)
 
 
 def apt_actions(records: list[str]) -> list[dict[str, str]]:
@@ -129,5 +136,5 @@ class FilterModule:
             native_request=validate_request,
             native_packages=package_names,
             native_closure=apt_closure,
-            native_github_deb=github_deb,
+            native_github_deb=release_asset,
         )
