@@ -19,7 +19,7 @@ from setup_system.extensions import Activation
 from setup_system.journal import Event, Journal
 from setup_system.plugin_manager import PluginManager, Snapshot
 from setup_system.plugin_ui import panel_type
-from setup_system_sdk import Manifest, Mutation, Outcome, Plan, Resource, Result
+from setup_system_sdk import ActionEvent, Manifest, Mutation, Outcome, Plan, Resource, Result
 from setup_system_sdk.protocol import Reply
 
 
@@ -210,6 +210,9 @@ def test_explicit_remaining_cleanup_never_replays_verified_deletions(home, monke
         assert calls == [["left", "right"]] and [
             r.identity for r in outstanding.mutation.plan.resources
         ] == ["right"]
+        remaining.add("left")
+        assert not await manager.remaining_cleanup("demo")
+        remaining.remove("left")
         assert (await manager.resume_cleanup(first)).outcome is Outcome.BLOCKED
         assert (await manager.resume_cleanup(outstanding)).outcome is Outcome.COMPLETE
         assert calls == [["left", "right"], ["right"]]
@@ -303,5 +306,51 @@ def test_exported_global_history_contains_only_public_event_fields(home):
         assert path.stat().st_mode & 0o777 == 0o600
         assert Event.model_validate_json(path.read_text()) == event
         assert path != await journal.export()
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ActionEvent.model_validate(
+                {
+                    "phase": "applied",
+                    "message_code": "resource_seen",
+                    "details": {"authorization": "synthetic-redacted"},
+                }
+            )
+
+    asyncio.run(run())
+
+
+def test_async_commands_run_only_after_fresh_reviewed_plan(home):
+    from setup_system_sdk import Inputs
+    from setup_system_sdk.native import NativeBackend
+
+    seen = []
+
+    class Program(NativeBackend):
+        inputs = dict.fromkeys(("install", "configure", "uninstall"), Inputs)
+
+        async def plan(self, action_id, settings, inputs):
+            return Plan(summary=action_id)
+
+        async def install(self, settings, inputs, plan):
+            seen.append("install")
+            return Result(outcome=Outcome.CHANGED, message=plan.summary)
+
+        async def configure(self, settings, inputs, plan):
+            seen.append("configure")
+            return Result(outcome=Outcome.CHANGED, message=plan.summary)
+
+        async def uninstall(self, settings, inputs, plan):
+            seen.append("uninstall")
+            return Result(outcome=Outcome.CHANGED, message=plan.summary)
+
+    async def run():
+        plugin = Program()
+        for key in plugin.inputs:
+            req = Mutation(action_id=key, settings={}, inputs={}, plan=Plan(summary=key))
+            assert (await plugin.apply_request(key, req)).message == key
+            stale = req.model_copy(update={"plan": Plan(summary="stale")})
+            assert (await plugin.apply_request(key, stale)).outcome is Outcome.BLOCKED
+        assert seen == list(plugin.inputs)
 
     asyncio.run(run())

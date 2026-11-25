@@ -34,6 +34,7 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
+from setup_system.infrastructure import retirement_checkpoint as checkpoint
 from setup_system.infrastructure.downloads import DownloadError, validate_https_url
 from setup_system.layout import INSTALLED, verify_installation
 from setup_system_sdk import PLUGIN_GROUP, UI_GROUP, Identifier, Inputs, Manifest
@@ -506,7 +507,9 @@ def _state(env_root: Path, plugin_id: str, *, disabled: bool) -> Activation | No
 def active(env_root: Path, plugin_id: str) -> Activation | None:
     """Inspect a specific venv's distribution metadata without loading its modules."""
     root = _directory(env_root, plugin_id)
-    if any(os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json")):
+    if checkpoint.pending(root) or any(
+        os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json")
+    ):
         return None
     return _state(env_root, plugin_id, disabled=False)
 
@@ -517,9 +520,16 @@ def installed(env_root: Path) -> tuple[CatalogEntry, ...]:
         return ()
     _private(env_root)
     result = []
-    for path in sorted(env_root.iterdir()):
+    paths = {p for p in env_root.iterdir() if p.name != checkpoint.NAMESPACE}
+    try:
+        paths.update(env_root / name for name in checkpoint.targets(env_root))
+    except (OSError, ValueError):
+        result.append(
+            CatalogEntry(None, "Invalid retirement storage", source=env_root / checkpoint.NAMESPACE)
+        )
+    for path in sorted(paths):
         try:
-            if os.path.lexists(path / ".retiring.json"):
+            if checkpoint.pending(path) or os.path.lexists(path / ".retiring.json"):
                 from setup_system.extension_lifecycle import retirement_manifest
 
                 result.append(CatalogEntry(retirement_manifest(path), source=path, disabled=True))
@@ -618,8 +628,10 @@ def _activate(root: Path, prior: bytes | None, pointer: _Pointer) -> None:
             current = _local_file(root / "active.json", 4096)
         except FileNotFoundError:
             current = None
-        if current != prior or any(
-            os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json")
+        if (
+            current != prior
+            or checkpoint.pending(root)
+            or any(os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json"))
         ):
             raise ValueError("Plugin activation changed during staging")
         with tempfile.NamedTemporaryFile(dir=root, delete=False) as staged:
@@ -684,7 +696,12 @@ async def install_release(
     selected = await asyncio.to_thread(release.selected)
     root = _directory(env_root, selected.manifest.id)
     await asyncio.to_thread(_private, env_root, create=True)
-    await asyncio.to_thread(_private, root, create=True)
+
+    def create_plugin_root() -> None:
+        with checkpoint.allow_creation(root):
+            _private(root, create=True)
+
+    await asyncio.to_thread(create_plugin_root)
     if await asyncio.to_thread(os.path.lexists, root / ".retiring.json"):
         raise ValueError("Finish the interrupted extension removal before updating")
     if await asyncio.to_thread(os.path.lexists, root / "disabled.json"):

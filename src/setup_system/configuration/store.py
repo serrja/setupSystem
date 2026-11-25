@@ -258,3 +258,23 @@ async def forget_profile(
         operation,
         Result(outcome=Outcome.COMPLETE, message="Profile removal verified", resources=[change]),
     )
+
+
+def reconcile_removed_profile(path: Path, operation: uuid.UUID, revision: str | None) -> bool:
+    """Finish unlinking the exact file already claimed by a confirmed profile removal."""
+    with _directory(Path.home(), path.parent, False) as fd:
+        if fd is None:
+            return True
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        held = ".removing-" + operation.hex
+        staged = _read(fd, held)
+        if _read(fd, path.name) is not None:
+            if staged:
+                raise ValueError("Both the edited profile and its recovery copy remain")
+            return False
+        if staged:
+            if Settings._revision(path.name, staged) != revision or not staged.matches(fd, held):
+                raise ValueError("The staged profile changed during removal")
+            os.unlink(held, dir_fd=fd)
+            os.fsync(fd)
+        return _read(fd, path.name) is None and _read(fd, held) is None

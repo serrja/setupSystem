@@ -1,12 +1,13 @@
 """Personal Git profiles and native GitHub CLI account inspection."""
 
 import asyncio
+import os
 from pathlib import Path
 from typing import ClassVar
 
 from pydantic import Field
 
-from setup_plugin_git import keys
+from setup_plugin_git import keys, local_keys
 from setup_plugin_git.profiles import (
     ImportProfile,
     Profile,
@@ -77,10 +78,15 @@ class Plugin(DebianPackages):
         "login": Account,
         "logout": keys.KeyAccount,
         "remove-owned-keys": CleanupKeys,
-        "generate-key": Inputs,
+        "generate-key": local_keys.Generate,
+        "remove-local-keys": local_keys.RemoveLocal,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
+        if isinstance(inputs, local_keys.Generate):
+            return local_keys.generate_plan(inputs)
+        if isinstance(inputs, local_keys.RemoveLocal):
+            return local_keys.removal_plan()
         if isinstance(inputs, (keys.Upload, keys.Revoke, keys.Probe)) and isinstance(
             settings, Settings
         ):
@@ -148,22 +154,15 @@ class Plugin(DebianPackages):
                         "Complete browser authentication, then choose Account status."
                     ),
                 )
-        if action_id == "generate-key":
-            return Plan(
-                outcome=Outcome.NEEDS_USER_ACTION,
-                resources=[],
-                summary=(
-                    "In a terminal, run ssh-keygen -t ed25519. Choose a new filename and "
-                    "a passphrase. "
-                    "Decline any overwrite prompt. Upload only its .pub file in GitHub "
-                    "Settings → SSH keys."
-                ),
-            )
         return super().prepare(action_id, settings, inputs)
 
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
+        if isinstance(inputs, local_keys.Generate):
+            return local_keys.generate(inputs, plan)
+        if isinstance(inputs, local_keys.RemoveLocal):
+            return local_keys.remove(plan)
         if isinstance(inputs, (keys.Upload, keys.Revoke)):
             return keys.mutate(inputs, plan)
         if isinstance(inputs, CleanupKeys):
@@ -190,6 +189,24 @@ class Plugin(DebianPackages):
         )
 
     async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
+        if isinstance(inputs, local_keys.Generate):
+            rows = await asyncio.to_thread(
+                local_keys.observed, local_keys.directory() / inputs.name, plan.resources
+            )
+            return Result(
+                outcome=Outcome.COMPLETE,
+                message="Verified the generated OpenSSH key pair",
+                resources=rows,
+            )
+        if isinstance(inputs, local_keys.RemoveLocal):
+            absent = await asyncio.to_thread(
+                lambda: all(not os.path.lexists(r.identity) for r in plan.resources)
+            )
+            return Result(
+                outcome=Outcome.COMPLETE if absent else Outcome.PARTIAL,
+                message="Checked the reviewed local key files",
+                resources=plan.resources,
+            )
         if isinstance(inputs, (keys.Upload, keys.Revoke)):
             return await asyncio.to_thread(keys.verify, inputs, plan)
         if isinstance(inputs, CleanupKeys):

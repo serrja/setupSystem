@@ -18,6 +18,7 @@ from setup_system.extensions import (
     _private,
     _read_generation,
 )
+from setup_system.infrastructure import retirement_checkpoint as checkpoint
 from setup_system.infrastructure.recorded_tree import record_tree, remove_recorded
 from setup_system_sdk import Inputs, Manifest
 
@@ -95,7 +96,12 @@ class Retirement(Inputs):
 
 
 def _retirement(root: Path) -> Retirement:
-    record = Retirement.model_validate_json(_local_file(root / _RETIRING, 64 * 1024 * 1024))
+    data = (
+        checkpoint.load(root, _RETIRING).payload.encode()
+        if checkpoint.pending(root)
+        else _local_file(root / _RETIRING, 64 * 1024 * 1024)
+    )
+    record = Retirement.model_validate_json(data)
     if record.manifest.id != root.name:
         raise ValueError("The retirement record belongs to another extension")
     return record
@@ -107,6 +113,9 @@ def retirement_manifest(root: Path) -> Manifest:
 
 def removable(env_root: Path, plugin: str) -> tuple[str, ...]:
     root = _directory(env_root, plugin)
+    if checkpoint.pending(root):
+        checkpoint.check_target(root, checkpoint.load(root, _RETIRING))
+        return _retirement(root).entries
     _private(root)
     if os.path.lexists(root / _RETIRING):
         record = _retirement(root)
@@ -132,6 +141,12 @@ def removable(env_root: Path, plugin: str) -> tuple[str, ...]:
 
 def retire(env_root: Path, plugin: str, expected: tuple[str, ...]) -> None:
     root = _directory(env_root, plugin)
+    if checkpoint.pending(root):
+        record = _retirement(root)
+        if record.entries != expected:
+            raise ValueError("Retirement differs from confirmation")
+        checkpoint.finish(root, _RETIRING, record.model_dump_json().encode())
+        return
     with generation_lock(root, exclusive=True), ExitStack() as locks:
         if removable(env_root, plugin) != expected:
             raise ValueError("Extension changed after confirmation")
@@ -160,5 +175,4 @@ def retire(env_root: Path, plugin: str, expected: tuple[str, ...]) -> None:
         else:
             record = _retirement(root)
         remove_recorded(root, record.files, root / _RETIRING)
-        (root / _RETIRING).unlink()
-        root.rmdir()
+        checkpoint.finish(root, _RETIRING, record.model_dump_json().encode())

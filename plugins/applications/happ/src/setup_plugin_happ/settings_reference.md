@@ -17,7 +17,8 @@ This operation has no editable parameters.
 | `subscription` | Local subscription ID | `required` | `{"maxLength": 48, "pattern": "^[a-z][a-z0-9_-]{0,47}$"}` |
 | `title` | Display name | `required` | `{"maxLength": 80, "minLength": 1}` |
 | `source_type` | Source format | `"standard"` | `{"enum": ["standard", "provider-json"]}` |
-| `url_reference` | Store the HTTPS URL in the system keyring. | `required` | `{"format": "uuid"}` |
+| `url_handling` | Choose the system keyring or enter the URL directly in Happ at each import. | `"system-keyring"` | `{"enum": ["system-keyring", "enter-in-happ"]}` |
+| `url_reference` | Store the HTTPS URL in the system keyring. | `null` | `—` |
 
 ## Import in Happ
 

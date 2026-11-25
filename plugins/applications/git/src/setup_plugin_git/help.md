@@ -15,3 +15,8 @@ The managed-file journal preserves displaced config files and detects concurrent
 ## 🔐 SSH keys
 
 Choose the OpenSSH public key and hosting account for Upload public SSH key. The result records its server ID and fingerprint. Verify SSH account access uses the chosen public key, strict known-host checking and noninteractive OpenSSH. Unlock the key in your agent first. Revoke owned SSH key checks the same ID and fingerprint before sending a deletion to the hosting service. [GitHub SSH connection test](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/testing-your-ssh-connection).
+
+
+Create an SSH key opens Debian's root-owned GNOME OpenSSH passphrase dialog when a graphical session and `ssh-askpass-gnome` are available. OpenSSH writes an encrypted Ed25519 pair into a dedicated directory under `~/.ssh/setup-system` and returns its public fingerprint. Choose Upload public SSH key separately. In a terminal-only session, run `ssh-keygen -t ed25519`, choose an unused filename, enter the passphrase in OpenSSH and select the resulting public file for upload. A terminal-created identity remains user-owned. [OpenSSH key generation](https://man.openbsd.org/ssh-keygen) · [Debian GNOME OpenSSH prompt](https://packages.debian.org/trixie/ssh-askpass-gnome).
+
+Full cleanup revokes reviewed plugin-created hosting keys first. The local-key step lists individual files and the public fingerprint before deleting an unchanged managed pair. Preserve any key that other hosts still use.

@@ -12,7 +12,7 @@ from pydantic import Field, SecretStr, TypeAdapter
 from setup_system.application.rollback import RecoveryPlan
 from setup_system.authorization import BecomePassword
 from setup_system.configuration import Settings
-from setup_system.configuration.store import forget_profile, profiles
+from setup_system.configuration.store import forget_profile, profiles, reconcile_removed_profile
 from setup_system.domain.receipts import FileState
 from setup_system.extension_lifecycle import removable, retire
 from setup_system.infrastructure.user_storage import capture_receipt
@@ -413,7 +413,12 @@ async def reconcile_local(manager: PluginManager, plugin: str, snapshot: LocalSn
         revision = Settings._revision(path.name, state)
         unchanged = revision == row.before
         if row.effect == "remove":
-            complete = state is None
+            try:
+                complete = await asyncio.to_thread(
+                    reconcile_removed_profile, path, snapshot.operation_id, row.before
+                )
+            except (OSError, ValueError):
+                return Result(outcome=Outcome.PARTIAL, message="A staged profile needs inspection")
         else:
             complete = bool(
                 state

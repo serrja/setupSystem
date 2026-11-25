@@ -292,7 +292,10 @@ class PluginPage(Vertical):
         if self.active_action is None:
             raise ValueError("Choose an action")
         index = self.manifest.actions.index(self.active_action)
-        return {**self.forms[f"input-{index}"].values(), **self.forms[f"run-{index}"].values()}
+        return {
+            **self.forms[f"input-{index}"].values(visible_only=True),
+            **self.forms[f"run-{index}"].values(visible_only=True),
+        }
 
     @on(Button.Pressed)
     def button(self, event: Button.Pressed) -> None:

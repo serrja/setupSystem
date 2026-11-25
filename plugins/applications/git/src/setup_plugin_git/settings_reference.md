@@ -44,7 +44,9 @@ This operation has no editable parameters.
 
 ## Create an SSH key
 
-This operation has no editable parameters.
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `name` | A new private directory under ~/.ssh/setup-system contains the pair. | `required` | `{"pattern": "^[a-z][a-z0-9_-]{0,47}$"}` |
 
 ## Install
 
@@ -105,3 +107,7 @@ This operation has no editable parameters.
 | `account` | Account | `required` | `{"maxLength": 100, "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"}` |
 | `public_key` | OpenSSH public key | `required` | `{"format": "path"}` |
 | `login` | SSH transport user | `"git"` | `{"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"}` |
+
+## Remove managed local SSH keys
+
+This operation has no editable parameters.

@@ -4,11 +4,11 @@ import asyncio
 import base64
 import os
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import Field, IPvAnyAddress, IPvAnyNetwork, field_validator
+from pydantic import Field, IPvAnyAddress, IPvAnyNetwork, field_validator, model_validator
 
 from setup_system.infrastructure.user_storage import inside_home
 from setup_system_sdk import (
@@ -53,11 +53,29 @@ class Subscription(Inputs):
     source_type: Literal["standard", "provider-json"] = Field(
         default="standard", title="Source format"
     )
-    url_reference: UUID = Field(
+    url_handling: Literal["system-keyring", "enter-in-happ"] = Field(
+        default="system-keyring",
+        title="Subscription URL handling",
+        description="Choose the system keyring or enter the URL directly in Happ at each import.",
+    )
+    url_reference: UUID | None = Field(
+        default=None,
         title="Subscription URL",
         description="Store the HTTPS URL in the system keyring.",
-        json_schema_extra={"ui": {"widget": "secret_reference", "secret": True}},
+        json_schema_extra={
+            "ui": {
+                "widget": "secret_reference",
+                "secret": True,
+                "visible_when": {"url_handling": "system-keyring"},
+            }
+        },
     )
+
+    @model_validator(mode="after")
+    def selected_storage(self) -> Self:
+        if (self.url_reference is not None) != (self.url_handling == "system-keyring"):
+            raise ValueError("Choose a keyring reference only for system-keyring handling")
+        return self
 
     @field_validator("title")
     @classmethod
@@ -185,7 +203,9 @@ class Plugin(DebianPackages, FilesBackend):
     def files(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> dict[Path, bytes]:
         if action_id == "save-subscription" and isinstance(inputs, Subscription):
             return {
-                subscription_file(inputs.subscription): inputs.model_dump_json(indent=2).encode()
+                subscription_file(inputs.subscription): inputs.model_dump_json(
+                    indent=2, exclude_none=True
+                ).encode()
                 + b"\n"
             }
         if action_id == "export-route" and isinstance(inputs, Route):
@@ -255,6 +275,16 @@ class Plugin(DebianPackages, FilesBackend):
                         "Reconnect when ready. Remote access may be interrupted."
                     ),
                 }
+                if record.url_handling == "enter-in-happ":
+                    handoffs.update(
+                        {
+                            "import": "Choose + in Happ and enter the URL directly in Happ.",
+                            "update-subscription": (
+                                "Open the subscription in Happ, enter its current URL directly in "
+                                "the native dialog when prompted, and refresh it."
+                            ),
+                        }
+                    )
                 return Plan(
                     outcome=Outcome.NEEDS_USER_ACTION,
                     summary=f"{record.title}. {handoffs[action_id]}",
@@ -270,6 +300,8 @@ class Plugin(DebianPackages, FilesBackend):
                 if isinstance(inputs, Subscription)
                 else await asyncio.to_thread(read_subscription, inputs.subscription)
             )
+            if record.url_reference is None:
+                return await super().plan(action_id, settings, inputs)
             try:
                 secret = await read_secret("happ", record.url_reference)
                 raw = secret.get_secret_value()
@@ -289,7 +321,10 @@ class Plugin(DebianPackages, FilesBackend):
             if not valid:
                 return Plan(
                     outcome=Outcome.BLOCKED,
-                    summary="Enter a valid HTTPS subscription URL in the system keyring",
+                    summary=(
+                        "Enter a valid HTTPS subscription URL in the system keyring, or choose "
+                        "enter-in-happ to supply the URL in Happ on each import."
+                    ),
                 )
         return await super().plan(action_id, settings, inputs)
 

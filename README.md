@@ -15,7 +15,7 @@ For an installed package, run `make -C /usr/lib/setup-system update`. Open the c
 
 ## 🧩 Open an extension
 
-Search the catalog or select a category. Open a card and choose **Activate / update extension** to prepare its isolated backend with uv. Read the source, author, release digest and requested permissions before activation. Program installation has its own **Install** action. **Add by link** accepts a verified HTTPS release manifest or a compatible binary wheel. The administrator's source policy and the approved digest must cover the complete executable dependency chain. [Extension trust and delivery](docs/plugin_trust.md)
+Search the catalog or select a category. Open a card and choose **Activate / update extension** to prepare its isolated backend with uv. Read the source, author, release digest and requested permissions before activation. Program installation has its own **Install** action. **Add from link** accepts a verified HTTPS release manifest or a compatible binary wheel. The administrator's source policy and the approved digest must cover the complete executable dependency chain. [Extension trust and delivery](docs/plugin_trust.md)
 
 Use **Settings / Profiles** to edit and save preferences. Under **Actions**, select the command, review its parameters and choose **Preview**. Apply the snapshot after checking the listed resources, account, permissions and recovery options. Saved profiles and operation history remain available when you return to the card. **Help** opens the packaged instructions. [Using the configurator](docs/textual_workflow.md)
 

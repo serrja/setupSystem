@@ -260,21 +260,41 @@
           "title": "Source format",
           "type": "string"
         },
+        "url_handling": {
+          "default": "system-keyring",
+          "description": "Choose the system keyring or enter the URL directly in Happ at each import.",
+          "enum": [
+            "system-keyring",
+            "enter-in-happ"
+          ],
+          "title": "Subscription URL handling",
+          "type": "string"
+        },
         "url_reference": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
           "description": "Store the HTTPS URL in the system keyring.",
-          "format": "uuid",
           "title": "Subscription URL",
-          "type": "string",
           "ui": {
             "secret": true,
+            "visible_when": {
+              "url_handling": "system-keyring"
+            },
             "widget": "secret_reference"
           }
         }
       },
       "required": [
         "subscription",
-        "title",
-        "url_reference"
+        "title"
       ],
       "title": "Subscription",
       "type": "object"

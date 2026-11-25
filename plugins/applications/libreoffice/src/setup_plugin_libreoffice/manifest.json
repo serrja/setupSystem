@@ -9,7 +9,8 @@
   "version": "1.0.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
-    "root"
+    "root",
+    "user-files"
   ],
   "capabilities": [
     "debian-package"
@@ -87,14 +88,38 @@
       "supports_rollback": false,
       "read_only": false,
       "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure-launcher",
+      "label": "Save application launcher",
+      "page": "actions",
+      "target": "configure-launcher",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "read_only": false,
+      "description": ""
     }
   ],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
-    "description": "Load only caller-selected sources and explicitly declared environment names.",
-    "properties": {},
-    "title": "PluginSettings",
+    "properties": {
+      "component": {
+        "default": "start-center",
+        "enum": [
+          "start-center",
+          "writer",
+          "calc",
+          "impress"
+        ],
+        "title": "Start component",
+        "type": "string"
+      }
+    },
+    "title": "Settings",
     "type": "object"
   },
   "input_schemas": {
@@ -120,6 +145,28 @@
       "additionalProperties": false,
       "properties": {},
       "title": "Inputs",
+      "type": "object"
+    },
+    "configure-launcher": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Launcher profile ID",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Application menu label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "name"
+      ],
+      "title": "LauncherProfile",
       "type": "object"
     },
     "preferences": {

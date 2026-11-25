@@ -2,7 +2,7 @@
 
 ## 🔐 Subscriptions
 
-Save the subscription name, source format and a secret-store reference. Keep the URL in your secret store. Use the subscription's Import action to open the instructions for the native Happ dialog. URL tokens can occur in the path or query. The manager does not launch a VPN connection. [Happ configuration imports](https://www.happ.su/main/dev-docs/examples-of-links-and-parameters).
+Save the subscription name and source format. Select **system-keyring** to retain a secret reference. Select **enter-in-happ** when a keyring is unavailable or you prefer to supply the URL on each import. In this mode, enter the URL only in Happ’s native subscription dialog. setupSystem stores the local name, source format and per-subscription routing choices. Use the subscription's Import action to open the instructions for the native Happ dialog. URL tokens can occur in the path or query. The manager does not launch a VPN connection. [Happ configuration imports](https://www.happ.su/main/dev-docs/examples-of-links-and-parameters).
 
 ## ⚙️ Routing
 

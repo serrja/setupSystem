@@ -4,7 +4,9 @@ Generated from the plugin's Pydantic settings and action inputs.
 
 ## Settings
 
-This operation has no editable parameters.
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `component` | Start component | `"start-center"` | `{"enum": ["start-center", "writer", "calc", "impress"]}` |
 
 ## Install
 
@@ -29,3 +31,10 @@ This operation has no editable parameters.
 ## Recovery
 
 This operation has no editable parameters.
+
+## Save application launcher
+
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `profile_id` | Launcher profile ID | `required` | `{"pattern": "^[a-z][a-z0-9_-]{0,47}$"}` |
+| `name` | Application menu label | `required` | `{"maxLength": 80, "minLength": 1}` |

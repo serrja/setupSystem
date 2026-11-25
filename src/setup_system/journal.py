@@ -6,27 +6,20 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 from uuid import UUID, uuid4
 
 import structlog
 from pydantic import Field
 
 from setup_system.infrastructure.user_storage import private_directory
-from setup_system_sdk import ActionId, Identifier, Inputs, Outcome
+from setup_system_sdk import ActionEvent, ActionId, Identifier
 
 
-class Event(Inputs):
+class Event(ActionEvent):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    level: Literal["info", "warning", "error"] = "info"
     plugin_id: Identifier
     operation_id: UUID
     action_id: ActionId
-    phase: Literal["planned", "prepared", "applied", "verified", "unresolved", "blocked"]
-    message_code: Identifier
-    outcome: Outcome | None = None
-    # Only counts enter the journal. Raw streams, requests and plugin diagnostics stay out.
-    details: dict[Literal["resource_count"], int] = Field(default_factory=dict)
 
 
 class Journal:

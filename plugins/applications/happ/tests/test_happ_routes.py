@@ -159,3 +159,43 @@ def test_local_subscription_cleanup_preserves_other_records(tmp_path, monkeypatc
     assert removal.outcome == Outcome.COMPLETE
     assert not app.subscription_file("one").exists() and app.subscription_file("two").is_file()
     assert not (app.root() / "one/user-route.happ").exists()
+
+
+def test_native_only_url_handling_avoids_keyring_and_keeps_local_routes(tmp_path, monkeypatch):
+    import setup_plugin_happ as app
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for scope in ("CONFIG", "DATA", "STATE", "CACHE"):
+        monkeypatch.setenv("XDG_" + scope + "_HOME", str(tmp_path / scope.lower()))
+
+    async def rejected(*args):
+        pytest.fail("The native-only URL mode must never access keyring")
+
+    monkeypatch.setattr(app, "read_secret", rejected)
+    plugin = Plugin()
+    form = Subscription(subscription="office", title="Office", url_handling="enter-in-happ")
+    apply(plugin, "save-subscription", form)
+    content = app.subscription_file("office").read_text()
+    assert "url_reference" not in content and "https:" not in content
+    for action in ("import", "update-subscription"):
+        result = asyncio.run(
+            plugin.plan(action, PluginSettings(), SubscriptionID(subscription="office"))
+        )
+        assert result.outcome == Outcome.NEEDS_USER_ACTION and "directly in" in result.summary
+    apply(plugin, "export-route", Route(subscription="office", domain="example.test"))
+    assert (app.root() / "office/user-route.happ").is_file()
+    with pytest.raises(ValidationError):
+        Subscription(subscription="office", title="Office", url_handling="system-keyring")
+    with pytest.raises(ValidationError):
+        Subscription(
+            subscription="office",
+            title="Office",
+            url_handling="enter-in-happ",
+            url_reference=uuid4(),
+        )
+    # The previous on-disk format, containing a UUID without an explicit mode, remains readable.
+    reference = uuid4()
+    old = Subscription.model_validate(
+        {"subscription": "old", "title": "Old", "url_reference": str(reference)}
+    )
+    assert old.url_handling == "system-keyring" and old.url_reference == reference

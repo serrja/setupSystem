@@ -8,7 +8,7 @@ from typing import ClassVar
 
 from setup_plugin_rtk.runtime import _released_binary, install_rtk, plan_rtk, release
 from setup_system.infrastructure.file_publication import observe
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import ActionEvent, Inputs, Outcome, Plan, PluginSettings, Resource, Result
 from setup_system_sdk.native import NativeBackend, owned_file_removal, remove_owned_file
 
 
@@ -55,6 +55,12 @@ class Plugin(NativeBackend):
             outcome=Outcome.NO_CHANGES if status.version == selected.version else Outcome.READY,
         )
 
+    async def install(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result:
+        return await asyncio.to_thread(self.mutate, "install", settings, inputs, plan)
+
+    async def uninstall(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result:
+        return await asyncio.to_thread(remove_owned_file, Path.home() / ".local/bin/rtk", plan)
+
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
@@ -75,6 +81,13 @@ class Plugin(NativeBackend):
         )
         return Result(
             outcome=Outcome.CHANGED,
+            events=(
+                ActionEvent(
+                    phase="applied",
+                    message_code="release_binary_published",
+                    details={"resource_count": 1},
+                ),
+            ),
             message=message,
             recovery_id=folder.name if folder else None,
             resources=plan.resources,

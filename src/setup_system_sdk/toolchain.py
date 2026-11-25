@@ -16,6 +16,7 @@ from typing import ClassVar
 from platformdirs import user_data_path
 
 from setup_system.extension_lifecycle import fingerprint, generation_lock, seal_generation
+from setup_system.infrastructure import retirement_checkpoint as checkpoint
 from setup_system.infrastructure.file_publication import move_new, observe
 from setup_system.infrastructure.managed_files import apply_files
 from setup_system.infrastructure.processes import run_command
@@ -76,6 +77,13 @@ class Removal(Inputs):
 
 
 def _checked_generation(path: Path, digest: str | None) -> Removal | None:
+    if checkpoint.pending(path):
+        saved = checkpoint.load(path, ".removing.json")
+        checkpoint.check_target(path, saved)
+        record = Removal.model_validate_json(saved.payload)
+        if record.generation != digest or path.name != digest:
+            raise ValueError("Tool generation retirement belongs to a different release")
+        return record
     checked_directory(path)
     if path.name != digest:
         raise ValueError("Tool generation differs from its installed identity")
@@ -106,6 +114,11 @@ def _checked_generation(path: Path, digest: str | None) -> Removal | None:
 
 
 def _remove_generation(path: Path, digest: str | None) -> None:
+    if checkpoint.pending(path):
+        record = _checked_generation(path, digest)
+        assert record
+        checkpoint.finish(path, ".removing.json", record.model_dump_json().encode())
+        return
     with generation_lock(path, exclusive=True):
         marker = path / ".removing.json"
         record = _checked_generation(path, digest)
@@ -123,8 +136,7 @@ def _remove_generation(path: Path, digest: str | None) -> None:
             finally:
                 os.close(directory)
         remove_recorded(path, record.files, marker)
-        marker.unlink()
-        path.rmdir()
+        checkpoint.finish(path, marker.name, record.model_dump_json().encode())
 
 
 def _remove_wrapper(path: Path, row: Resource) -> None:
@@ -219,6 +231,8 @@ class Toolchain(DebianPackages):
         checked_directory(root)
         folder = root / digest
         owned = {r.identity: r for r in owned_resources() if r.ownership == "created"}
+        if checkpoint.pending(folder):
+            raise ValueError("Finish the interrupted tool generation retirement")
         exists = folder.exists() or folder.is_symlink()
         if exists:
             checked_directory(folder)
@@ -297,7 +311,7 @@ class Toolchain(DebianPackages):
             else:
                 if path.parent != root or not re.fullmatch(r"[a-f0-9]{64}", path.name):
                     raise ValueError("Tool generation path does not belong to this plugin")
-                if not path.exists() and not path.is_symlink():
+                if not os.path.lexists(path) and not checkpoint.pending(path):
                     continue
                 _checked_generation(path, item.after)
             rows.append(
@@ -359,7 +373,8 @@ class Toolchain(DebianPackages):
             folder = Path(first.identity)
             if first.before is None:
                 with private_directory(folder.parent) as directory:
-                    os.mkdir(folder.name, mode=0o700, dir_fd=directory)
+                    with checkpoint.allow_creation(folder):
+                        os.mkdir(folder.name, mode=0o700, dir_fd=directory)
                 try:
                     self.install_tools(stage, folder, lock)
                     if not self.readback(folder, settings):
@@ -400,7 +415,13 @@ class Toolchain(DebianPackages):
             for r in plan.resources
         ):
             good = await asyncio.to_thread(
-                lambda: all(not os.path.lexists(r.identity) for r in plan.resources)
+                lambda: all(
+                    not os.path.lexists(r.identity)
+                    and not (
+                        r.kind == "toolchain_generation" and checkpoint.pending(Path(r.identity))
+                    )
+                    for r in plan.resources
+                )
             )
             return Result(
                 outcome=Outcome.COMPLETE if good else Outcome.PARTIAL,

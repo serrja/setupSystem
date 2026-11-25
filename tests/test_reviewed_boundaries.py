@@ -259,19 +259,23 @@ def test_retirement_resumes_after_partial_deletion_and_detects_added_files(home,
     )
     monkeypatch.setattr(extension_lifecycle, "_read_generation", lambda *_: state)
     entries = removable(env, "demo")
-    original = Path.unlink
+    import hashlib
+
+    from setup_system.infrastructure import recorded_tree
+
+    original = recorded_tree._discard
     count = 0
 
-    def crash(self, *args, **kwargs):
+    def crash(claims, name, entry):
         nonlocal count
-        if self.parent == gen / "files":
+        if entry[3] in {hashlib.sha256(b"a").hexdigest(), hashlib.sha256(b"b").hexdigest()}:
             count += 1
             if count == 2:
                 raise PermissionError("injected interruption")
-        return original(self, *args, **kwargs)
+        return original(claims, name, entry)
 
     with monkeypatch.context() as restricted:
-        restricted.setattr(Path, "unlink", crash)
+        restricted.setattr(recorded_tree, "_discard", crash)
         with pytest.raises(PermissionError, match="interruption"):
             retire(env, "demo", entries)
     assert extension_lifecycle.retirement_manifest(root) == state.manifest
@@ -284,3 +288,118 @@ def test_retirement_resumes_after_partial_deletion_and_detects_added_files(home,
     assert removable(env, "demo") == entries
     retire(env, "demo", entries)
     assert not root.exists()
+
+
+def test_racing_file_replacement_during_retirement_is_preserved(home, monkeypatch):
+    from setup_system.infrastructure import recorded_tree
+
+    root = home / "code"
+    root.mkdir()
+    target = root / "owned"
+    target.write_text("initial")
+    records = recorded_tree.record_tree(root)
+    original = recorded_tree.rename_new
+
+    def race(source, name, dest, new):
+        if name == "owned":
+            changed = root / "new"
+            changed.write_text("manual")
+            changed.replace(target)
+        original(source, name, dest, new)
+
+    monkeypatch.setattr(recorded_tree, "rename_new", race)
+    with pytest.raises(ValueError, match="preserved"):
+        recorded_tree.remove_recorded(root, records)
+    assert target.read_text() == "manual"
+
+
+def test_generated_identity_must_match_native_and_later_worker_readback(home):
+    manager = PluginManager(state_root=home / "state")
+    row = resource(after=None)
+    published = row.model_copy(update={"after": "native", "permissions": 0o600, "verified": True})
+
+    async def run():
+        ident = uuid4()
+        await manager.ledger.prepare(
+            ident, "demo", "create", "digest", Plan(summary="Generate", resources=[row])
+        )
+        await manager.ledger.applied(ident, observations=(published,))
+        different = published.model_copy(update={"after": "later"})
+        with pytest.raises(ValueError, match="changed"):
+            await manager.ledger.finish(
+                ident, Result(outcome=Outcome.COMPLETE, message="Read", resources=[different])
+            )
+        assert not await manager.ledger.holdings("demo")
+        await manager.ledger.finish(
+            ident, Result(outcome=Outcome.COMPLETE, message="Read", resources=[published])
+        )
+        assert (await manager.ledger.holdings("demo"))[0].after == "native"
+
+    asyncio.run(run())
+
+
+def test_cancelled_install_releases_only_provisional_dependencies(home):
+    ledger = ResourceLedger(home / "db/ledger")
+
+    async def run():
+        first = uuid4()
+        await ledger.prepare(
+            first,
+            "consumer",
+            "install",
+            "identity",
+            Plan(summary="Install"),
+            dependencies=("base",),
+        )
+        assert await ledger.dependents("base") == ["consumer"]
+        await ledger.finish(first, Result(outcome=Outcome.CANCELLED, message="No changes"))
+        assert not await ledger.dependents("base")
+        installed = uuid4()
+        await ledger.prepare(
+            installed,
+            "consumer",
+            "install",
+            "identity",
+            Plan(summary="Install"),
+            dependencies=("base",),
+        )
+        await ledger.finish(installed, Result(outcome=Outcome.COMPLETE, message="Complete"))
+        update = uuid4()
+        await ledger.prepare(
+            update,
+            "consumer",
+            "update",
+            "identity",
+            Plan(summary="Update"),
+            dependencies=("base", "extra"),
+        )
+        await ledger.finish(update, Result(outcome=Outcome.BLOCKED, message="Cancelled"))
+        assert await ledger.dependents("base") == ["consumer"] and not await ledger.dependents(
+            "extra"
+        )
+
+    asyncio.run(run())
+
+
+def test_interrupted_profile_removal_retains_edited_staging_copy(home):
+    from setup_system.configuration.store import reconcile_removed_profile
+
+    store = Settings()
+
+    async def setup():
+        empty = await store.read("demo")
+        return await store.publish("demo", "default", {"title": "fixture"}, 1, empty.revision)
+
+    existing = asyncio.run(setup())
+    path = Path(cleanup.profile_path(store, "demo", "default"))
+    operation = uuid4()
+    staged = path.with_name(".removing-" + operation.hex)
+    path.rename(staged)
+    assert reconcile_removed_profile(path, operation, existing.revision)
+    assert not staged.exists()
+    existing = asyncio.run(setup())
+    path.rename(staged)
+    staged.write_text("manual")
+    with pytest.raises(ValueError, match="changed"):
+        reconcile_removed_profile(path, operation, existing.revision)
+    assert staged.read_text() == "manual"

@@ -107,6 +107,8 @@ class SetupApp(App[None]):
         self.store = store or Settings()
         self.entries: dict[str, CatalogEntry] = {}
         self.external: dict[str, CatalogEntry] = {}
+        self.active_ids: set[str] = set()
+        self.unavailable: list[tuple[str, str]] = []
         self.opened: set[str] = set()
         self.startup_digests: dict[str, str] = {}
         colors = palette(
@@ -172,6 +174,14 @@ class SetupApp(App[None]):
             asyncio.to_thread(builtins, self.root),
             asyncio.to_thread(installed, self.manager.env_root),
         )
+        self.active_ids = {
+            e.manifest.id for e in enabled if e.manifest and not e.disabled and not e.reason
+        }
+        self.unavailable = [
+            (e.source.name if e.source else "Extension", e.reason)
+            for e in enabled + available
+            if e.manifest is None
+        ]
         self.entries = dict(self.external)
         disabled = []
         for entry in enabled + available:
@@ -210,11 +220,27 @@ class SetupApp(App[None]):
             ):
                 listing.add_option(
                     Option(
-                        item.name + (" · disabled" if entry.reason or entry.disabled else ""),
+                        item.name
+                        + " · "
+                        + (
+                            entry.reason
+                            or (
+                                "disabled"
+                                if entry.disabled
+                                else "active"
+                                if key in self.active_ids
+                                else "available"
+                            )
+                        ),
                         id=key,
                         disabled=bool(entry.reason),
                     )
                 )
+
+        if category in (Select.BLANK, "all"):
+            for name, reason in self.unavailable:
+                if needle in name.casefold():
+                    listing.add_option(Option(f"{name} · {reason}", disabled=True))
 
     @on(Input.Changed, "#search")
     @on(Select.Changed, "#category")
@@ -255,6 +281,10 @@ class SetupApp(App[None]):
             f"{manifest.name} {manifest.version}\nAuthor: {manifest.author}\n"
             f"Publisher source: {manifest.source}\nDownloaded from: {origin}\nSDK: {manifest.sdk}\n"
             f"Permissions: {permissions}\nSHA-256: {release.digest}"
+        )
+        closure = await asyncio.to_thread(release.selected)
+        detail += "\nBinary distributions\n" + "\n".join(
+            f"{w.name} · SHA-256 {w.sha256}" for w in closure.wheels
         )
         if not await self.push_screen_wait(Confirm(detail, "Trust and activate")):
             return

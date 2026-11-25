@@ -13,7 +13,16 @@ from setup_system.extensions import Activation
 from setup_system.journal import Event, Journal
 from setup_system.plugin_manager import AsyncMakeRunner, PluginManager, Snapshot
 from setup_system.resource_ledger import ResourceLedger
-from setup_system_sdk import Action, Manifest, Mutation, Outcome, Plan, Resource, Result
+from setup_system_sdk import (
+    Action,
+    ActionEvent,
+    Manifest,
+    Mutation,
+    Outcome,
+    Plan,
+    Resource,
+    Result,
+)
 from setup_system_sdk.protocol import Reply
 
 
@@ -133,7 +142,12 @@ def test_failed_readback_never_creates_ownership_or_retries(home, monkeypatch):
     async def execute(*args):
         calls.append("write")
         await asyncio.sleep(0.02)
-        return Result(outcome=Outcome.CHANGED, message="Submitted", resources=plan.resources)
+        return Result(
+            outcome=Outcome.CHANGED,
+            message="Submitted",
+            resources=plan.resources,
+            events=(ActionEvent(phase="applied", message_code="resource_submitted"),),
+        )
 
     monkeypatch.setattr(manager, "activation", select)
     monkeypatch.setattr(plugin_manager, "query", query)
@@ -148,6 +162,10 @@ def test_failed_readback_never_creates_ownership_or_retries(home, monkeypatch):
         assert calls == ["write"]
         events = await manager.journal.history("demo")
         assert events[-1].outcome == Outcome.UNKNOWN_OUTCOME
+        assert any(
+            e.message_code == "resource_submitted" and e.operation_id == snapshot.operation_id
+            for e in events
+        )
         assert "sensitive" not in (home / "state/history/events.jsonl").read_text()
 
     asyncio.run(exercise())

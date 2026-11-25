@@ -317,9 +317,11 @@ class SchemaForm(Vertical):
                     match = all(current.get(name) == value for name, value in conditions.items())
                     setattr(field, attribute, match if attribute == "display" else not match)
 
-    def values(self, *, explicit: bool = False) -> Values:
+    def values(self, *, explicit: bool = False, visible_only: bool = False) -> Values:
         result = {}
         for field in self.fields:
+            if visible_only and not field.display:
+                continue
             value = field.value()
             if not explicit or field.key in self.stored or value != field.spec.default:
                 result[field.key] = value

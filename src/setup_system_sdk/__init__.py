@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Literal, Protocol, Self, runtime_checkable
 from urllib.parse import urlsplit
 
 from packaging.specifiers import SpecifierSet
@@ -222,7 +222,18 @@ class Plan(Inputs):
     outcome: Outcome = Outcome.READY
 
 
+class ActionEvent(Inputs):
+    """A worker observation. The host binds its operation, action and plugin identity."""
+
+    level: Literal["info", "warning", "error"] = "info"
+    phase: Literal["planned", "prepared", "applied", "verified", "unresolved", "blocked"]
+    message_code: Identifier
+    outcome: Outcome | None = None
+    details: dict[Literal["resource_count"], int] = Field(default_factory=dict)
+
+
 class Result(Inputs):
+    events: tuple[ActionEvent, ...] = Field(default=(), max_length=64)
     recovery_id: str | None = Field(default=None, pattern=r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
     outcome: Outcome
     message: str = Field(max_length=8192)
@@ -239,6 +250,29 @@ class Action(Inputs):
     supports_rollback: bool = False
     read_only: bool = False
     description: str = ""
+
+
+def _validate_ui(schema: Values) -> None:
+    hints = schema.get("ui")
+    if hints is not None:
+        ui = UIHints.model_validate(hints)
+        if ui.secret and ui.widget != "secret_reference":
+            raise ValueError("Plugin secrets require a native secret reference")
+    if schema.get("writeOnly") or schema.get("format") == "password":
+        raise ValueError("Persistent models must use secret references")
+    children: list[JsonValue] = []
+    for group in ("properties", "$defs"):
+        section = schema.get(group)
+        if isinstance(section, dict):
+            children.extend(section.values())
+    for group in ("oneOf", "anyOf", "allOf", "prefixItems"):
+        section = schema.get(group)
+        if isinstance(section, list):
+            children.extend(section)
+    children.append(schema.get("items"))
+    for child in children:
+        if isinstance(child, dict):
+            _validate_ui(child)
 
 
 class Manifest(Inputs):
@@ -290,6 +324,8 @@ class Manifest(Inputs):
         if any(not s or len(s) > 4096 or not s.isprintable() for s in metadata):
             raise ValueError("Invalid plugin display metadata")
         prefix = "SETUP_PLUGIN_" + self.id.upper().replace("-", "_") + "_"
+        for schema in (self.settings_schema, *self.input_schemas.values()):
+            _validate_ui(schema)
         properties = self.settings_schema.get("properties", {})
         if not isinstance(properties, dict):
             raise ValueError("Expected named settings fields")
@@ -310,6 +346,21 @@ class Manifest(Inputs):
         if any(set(a.permissions) - set(self.permissions) for a in self.actions):
             raise ValueError("Action requests undeclared permissions")
         return self
+
+
+@runtime_checkable
+class Installable(Protocol):
+    async def install(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result: ...
+
+
+@runtime_checkable
+class Configurable(Protocol):
+    async def configure(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result: ...
+
+
+@runtime_checkable
+class Uninstallable(Protocol):
+    async def uninstall(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result: ...
 
 
 class Backend:

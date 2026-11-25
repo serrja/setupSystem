@@ -29,12 +29,20 @@ CREATE TABLE IF NOT EXISTS changes(
     operation TEXT NOT NULL REFERENCES operations(id), kind TEXT NOT NULL, identity TEXT NOT NULL,
     phase TEXT NOT NULL, resource TEXT NOT NULL, PRIMARY KEY(operation, kind, identity)
 );
+CREATE TABLE IF NOT EXISTS native_readbacks(
+    operation TEXT NOT NULL REFERENCES operations(id), kind TEXT NOT NULL, identity TEXT NOT NULL,
+    resource TEXT NOT NULL, PRIMARY KEY(operation,kind,identity)
+);
 CREATE TABLE IF NOT EXISTS holdings(
     kind TEXT NOT NULL, identity TEXT NOT NULL, plugin TEXT NOT NULL, resource TEXT NOT NULL,
     PRIMARY KEY(kind, identity, plugin)
 );
 CREATE TABLE IF NOT EXISTS requirements(consumer TEXT NOT NULL, provider TEXT NOT NULL,
     PRIMARY KEY(consumer,provider));
+CREATE TABLE IF NOT EXISTS planned_requirements(
+    operation TEXT REFERENCES operations(id), consumer TEXT NOT NULL,provider TEXT NOT NULL,
+    PRIMARY KEY(operation,consumer,provider)
+);
 CREATE TABLE IF NOT EXISTS rollbacks(
     operation TEXT PRIMARY KEY REFERENCES operations(id), phase TEXT NOT NULL
 );
@@ -142,7 +150,9 @@ class ResourceLedger:
                 )
             if action == "uninstall":
                 async with db.execute(
-                    "SELECT consumer FROM requirements WHERE provider=?", (plugin,)
+                    "SELECT consumer FROM requirements WHERE provider=? UNION SELECT "
+                    "consumer FROM planned_requirements WHERE provider=?",
+                    (plugin, plugin),
                 ) as cursor:
                     if await cursor.fetchone():
                         raise ValueError("Another installed program requires this plugin")
@@ -156,7 +166,8 @@ class ResourceLedger:
                         if await cursor.fetchone():
                             raise ValueError("Dependency removal is in progress")
                     await db.execute(
-                        "INSERT OR IGNORE INTO requirements VALUES(?,?)", (plugin, provider)
+                        "INSERT OR IGNORE INTO planned_requirements VALUES(?,?,?)",
+                        (key, plugin, provider),
                     )
             for resource in plan.resources:
                 args = (resource.kind, resource.identity)
@@ -203,8 +214,18 @@ class ResourceLedger:
                 )
             await db.execute("UPDATE operations SET phase='prepared' WHERE id=?", (key,))
 
-    async def applied(self, operation: UUID, recovery: str | None = None) -> None:
+    async def applied(
+        self, operation: UUID, recovery: str | None = None, observations: tuple[Resource, ...] = ()
+    ) -> None:
         async with self.connection() as db:
+            await db.executemany(
+                "INSERT INTO native_readbacks VALUES (?,?,?,?)",
+                [
+                    (str(operation), r.kind, r.identity, r.model_dump_json())
+                    for r in observations
+                    if r.verified
+                ],
+            )
             if recovery:
                 await db.execute(
                     "UPDATE confirmations SET recovery=? WHERE operation=?",
@@ -247,7 +268,30 @@ class ResourceLedger:
                 raise ValueError("Readback does not cover the prepared resource identities")
             if not success:
                 verified = {key: item for key, item in verified.items() if item.verified}
+            async with db.execute(
+                "SELECT kind,identity,resource FROM native_readbacks WHERE operation=?", (key,)
+            ) as cursor:
+                native = {
+                    (kind, name): Resource.model_validate_json(raw)
+                    for kind, name, raw in await cursor.fetchall()
+                }
+            async with db.execute(
+                "SELECT kind,identity FROM changes WHERE operation=? AND phase='verified'", (key,)
+            ) as cursor:
+                completed = set(await cursor.fetchall())
             for identity, observation in verified.items():
+                captured = native.get(identity)
+                if captured and any(
+                    value is not None and value != actual
+                    for value, actual in (
+                        (captured.after, observation.after),
+                        (captured.permissions, observation.permissions),
+                        (captured.remote_id, observation.remote_id),
+                    )
+                ):
+                    raise ValueError("Resource identity changed after its native publication")
+                if identity in completed:
+                    continue
                 desired = planned[identity]
                 if desired.after is not None and observation.after != desired.after:
                     raise ValueError("Readback differs from the confirmed resource")
@@ -298,6 +342,11 @@ class ResourceLedger:
             )
             if success:
                 await db.execute(
+                    "INSERT OR IGNORE INTO requirements SELECT consumer,provider FROM "
+                    "planned_requirements WHERE operation=?",
+                    (key,),
+                )
+                await db.execute(
                     "DELETE FROM requirements WHERE consumer=? AND EXISTS "
                     "(SELECT 1 FROM operations WHERE id=? AND action='uninstall')",
                     (plugin, key),
@@ -308,11 +357,39 @@ class ResourceLedger:
                     (result.recovery_id, key),
                 )
             if not unresolved:
+                await db.execute("DELETE FROM planned_requirements WHERE operation=?", (key,))
                 await db.execute("DELETE FROM reservations WHERE operation=?", (key,))
             await db.execute(
                 "UPDATE operations SET phase=?, outcome=? WHERE id=?",
                 ("unresolved" if unresolved else "verified", result.outcome.value, key),
             )
+
+    async def removable_reservations(self, operation: UUID, plugin: str) -> set[tuple[str, str]]:
+        async with (
+            self.connection() as db,
+            db.execute(
+                "SELECT h.resource,c.resource FROM changes c JOIN reservations r USING "
+                "(operation,kind,identity) "
+                "JOIN holdings h USING (kind,identity) WHERE c.operation=? AND h.plugin=? "
+                "AND c.phase!='verified' "
+                "AND NOT EXISTS (SELECT 1 FROM holdings other WHERE other.kind=h.kind AND "
+                "other.identity=h.identity AND other.plugin!=h.plugin)",
+                (str(operation), plugin),
+            ) as cursor,
+        ):
+            permitted = set()
+            for held, planned in await cursor.fetchall():
+                owner = Resource.model_validate_json(held)
+                target = Resource.model_validate_json(planned)
+                if (
+                    owner.ownership == "created"
+                    and owner.cleanup
+                    and not set(owner.consumers) - {plugin}
+                    and owner.after == target.before
+                    and owner.remote_id == target.remote_id
+                ):
+                    permitted.add((owner.kind, owner.identity))
+            return permitted
 
     async def holdings(self, plugin: str) -> list[Resource]:
         if not await asyncio.to_thread(self.path.exists):
@@ -446,7 +523,9 @@ class ResourceLedger:
         async with (
             self.connection() as db,
             db.execute(
-                "SELECT consumer FROM requirements WHERE provider=? ORDER BY consumer", (plugin,)
+                "SELECT consumer FROM requirements WHERE provider=? UNION SELECT consumer "
+                "FROM planned_requirements WHERE provider=? ORDER BY consumer",
+                (plugin, plugin),
             ) as cursor,
         ):
             return [row[0] for row in await cursor.fetchall()]

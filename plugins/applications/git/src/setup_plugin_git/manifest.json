@@ -85,8 +85,10 @@
       "id": "generate-key",
       "label": "Create an SSH key",
       "page": "accounts",
-      "target": null,
-      "permissions": [],
+      "target": "generate-key",
+      "permissions": [
+        "account-keys"
+      ],
       "supports_rollback": false,
       "read_only": false,
       "description": ""
@@ -214,6 +216,19 @@
       "label": "Verify SSH account access",
       "page": "accounts",
       "target": null,
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-local-keys",
+      "label": "Remove managed local SSH keys",
+      "page": "accounts",
+      "target": "remove-local-keys",
       "permissions": [
         "account-keys"
       ],
@@ -551,8 +566,25 @@
     },
     "generate-key": {
       "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "A new private directory under ~/.ssh/setup-system contains the pair.",
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Key name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Generate",
+      "type": "object"
+    },
+    "remove-local-keys": {
+      "additionalProperties": false,
+      "description": "Remove unchanged key pairs recorded as created by this plugin.",
       "properties": {},
-      "title": "Inputs",
+      "title": "RemoveLocal",
       "type": "object"
     }
   },

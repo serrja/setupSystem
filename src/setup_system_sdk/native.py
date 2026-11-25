@@ -5,11 +5,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
+
+from platformdirs import user_data_dir
+from pydantic import Field, field_validator
 
 from setup_system.application.recovery import restore
 from setup_system.authorization import session_environment
@@ -26,13 +30,16 @@ from setup_system.infrastructure.receipt_repository import (
 from setup_system.infrastructure.user_storage import checked_directory, inside_home
 from setup_system_sdk import (
     Backend,
+    Configurable,
     Inputs,
+    Installable,
     Mutation,
     Outcome,
     Plan,
     PluginSettings,
     Resource,
     Result,
+    Uninstallable,
     owned_resources,
     ownership_context,
 )
@@ -200,6 +207,12 @@ class NativeBackend(Backend):
             observed = await self.plan(target, settings, inputs)
             if observed != request.plan or observed.outcome != Outcome.READY:
                 return Result(outcome=Outcome.BLOCKED, message="Plan changed. Preview again.")
+            if target == "install" and isinstance(self, Installable):
+                return await self.install(settings, inputs, observed)
+            if target == "configure" and isinstance(self, Configurable):
+                return await self.configure(settings, inputs, observed)
+            if target == "uninstall" and isinstance(self, Uninstallable):
+                return await self.uninstall(settings, inputs, observed)
             return await asyncio.to_thread(self.mutate, target, settings, inputs, request.plan)
 
 
@@ -224,10 +237,50 @@ def recipe(backend: NativeBackend, target: str) -> None:
     print(result.model_dump_json())
 
 
+class LauncherProfile(Inputs):
+    profile_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,47}$", title="Launcher profile ID")
+    name: str = Field(min_length=1, max_length=80, title="Application menu label")
+
+    @field_validator("name")
+    @classmethod
+    def menu_label(cls, value: str) -> str:
+        if not value.isprintable() or value.strip() != value or "\\" in value:
+            raise ValueError(
+                "Enter a single-line menu label without surrounding whitespace or escapes"
+            )
+        return value
+
+
+def launcher_file(
+    profile: LauncherProfile, plugin: str, executable: str, args: tuple[str, ...]
+) -> dict[Path, bytes]:
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", plugin) or not re.fullmatch(
+        r"/usr/bin/[a-z][a-z0-9-]*", executable
+    ):
+        raise ValueError("Expected a packaged application and launcher namespace")
+    if not all(re.fullmatch(r"-{1,2}[a-z][a-z-]*", arg) for arg in args):
+        raise ValueError("The application launcher accepts only fixed native options")
+    path = inside_home(
+        Path(user_data_dir())
+        / "applications"
+        / f"setup-system-{plugin}-{profile.profile_id}.desktop"
+    )
+    content = (
+        "[Desktop Entry]\nType=Application\n"
+        f"Name={profile.name}\nTryExec={executable}\n"
+        f"Exec={' '.join((executable, *args))}\n"
+        f"Icon={Path(executable).name}\nTerminal=false\n"
+    )
+    return {path: content.encode()}
+
+
 class FilesBackend(NativeBackend):
     """Review exact home-file bytes, preserve local edits and verify the desired state."""
 
     file_actions: ClassVar[frozenset[str]]
+
+    async def configure(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result:
+        return await asyncio.to_thread(self.mutate, "configure", settings, inputs, plan)
 
     def mode(self, path: Path) -> int:
         return 0o600

@@ -13,7 +13,9 @@ Select a program in the catalog. Its Overview identifies the extension, and Chec
 | Happ | Manage named subscription references and export routing rules for native import. |
 | Neovim | Select editor settings, plugin revisions, parsers and language tools. |
 | Firefox ESR | Merge selected privacy settings into the system enterprise policy. |
-| ChatGPT, Telegram Desktop and LibreOffice | Review package changes and open native account or settings instructions. |
+| Telegram Desktop | Create named menu shortcuts for normal, tray or Settings startup and manage accounts in Telegram. |
+| LibreOffice | Create named menu shortcuts for Writer, Calc, Impress or the Start Center. |
+| ChatGPT | Review the official signed package and open native account or settings instructions. |
 
 ## 🧹 User data and removal
 

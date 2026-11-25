@@ -28,7 +28,7 @@ from setup_system.journal import Event, Journal
 from setup_system.layout import INSTALLED, verify_installation
 from setup_system.make_transport import Phase, authenticated_make
 from setup_system.resource_ledger import LocalSnapshot, ResourceLedger
-from setup_system_sdk import Action, Inputs, Mutation, Outcome, Plan, Result, Values
+from setup_system_sdk import Action, ActionEvent, Inputs, Mutation, Outcome, Plan, Result, Values
 from setup_system_sdk.protocol import LIMIT, Reply, Request
 
 _cancellation: ContextVar[asyncio.Event | None] = ContextVar("plugin_cancellation", default=None)
@@ -437,6 +437,7 @@ class PluginManager:
             await self.ledger.finish(snapshot.operation_id, final)
             await self.journal.emit(event("verified", final.outcome))
             return final
+        observations: tuple[ActionEvent, ...] = ()
         try:
             token = _cancellation.get()
             native = (
@@ -444,13 +445,16 @@ class PluginManager:
                 if token and token.is_set()
                 else await self.runner.execute(state, snapshot, password)
             )
+            observations = native.events
             if native.outcome in (
                 Outcome.CHANGED,
                 Outcome.COMPLETE,
                 Outcome.NEEDS_REBOOT,
                 Outcome.NO_CHANGES,
             ):
-                await self.ledger.applied(snapshot.operation_id, native.recovery_id)
+                await self.ledger.applied(
+                    snapshot.operation_id, native.recovery_id, tuple(native.resources)
+                )
                 await self.journal.emit(event("applied"))
                 authenticated_readback = (
                     password is not None
@@ -474,12 +478,25 @@ class PluginManager:
             else:
                 final = native
             await self.ledger.finish(snapshot.operation_id, final)
+            observations = (*native.events, *(e for e in final.events if e not in native.events))
+
         except Exception:
             final = Result(
                 outcome=Outcome.UNKNOWN_OUTCOME,
                 message="Inspect current state before continuing. The native outcome is uncertain.",
             )
             await self.ledger.finish(snapshot.operation_id, final)
+        for observed in observations:
+            await self.journal.emit(
+                Event.model_validate(
+                    {
+                        **observed.model_dump(),
+                        "plugin_id": snapshot.plugin_id,
+                        "operation_id": snapshot.operation_id,
+                        "action_id": item.action_id,
+                    }
+                )
+            )
         unresolved = final.outcome in (Outcome.UNKNOWN_OUTCOME, Outcome.PARTIAL)
         await self.journal.emit(event("unresolved" if unresolved else "verified", final.outcome))
         return final
@@ -590,7 +607,11 @@ class PluginManager:
             ):
                 continue
             left = current.mutation.plan.resources
-            if any(row not in item.plan.resources for row in left):
+            reserved = await self.ledger.removable_reservations(original.operation_id, plugin)
+            if any(
+                row not in item.plan.resources or (row.kind, row.identity) not in reserved
+                for row in left
+            ):
                 continue
             removed = [r for r in item.plan.resources if r not in left]
             if removed:
