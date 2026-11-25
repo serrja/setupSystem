@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import tomllib
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from pydantic import ValidationError
 
 from setup_system.domain.projects import Project, ProjectCatalog, ProjectLayout
 from setup_system.infrastructure.managed_files import apply_files
+from setup_system.infrastructure.processes import run_command
 
 
 def load_projects(root: Path) -> ProjectCatalog:
@@ -49,9 +49,9 @@ def load_layout(root: Path, *, home: Path | None = None) -> ProjectLayout:
 
 def _git(path: Path, *args: str, required: bool = True) -> bytes:
     environment = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
-    result = subprocess.run(
+    result = run_command(
         ["git", "-c", "core.fsmonitor=false", "-C", str(path), *args],
-        capture_output=True,
+        text=False,
         timeout=15,
         check=False,
         env=environment,
