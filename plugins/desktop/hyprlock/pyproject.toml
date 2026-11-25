@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-hyprlock"
+version = "1.0.0"
+requires-python = ">=3.12"
+description = "Hyprlock desktop configuration"
+license = "MIT"
+dependencies = ["setup-system>=0.6.0.dev0"]
+
+[project.entry-points."setup_system.plugins"]
+hyprlock = "setup_plugin_hyprlock:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_hyprlock"]

@@ -4,7 +4,7 @@ Read the pinned [baseRules engineering contract](https://github.com/serrja/baseR
 
 Textual is the public configuration interface. The normal-user application invokes fixed Make targets. The Debian package owns the executable playbooks and resources. Use native Ansible become for individual system tasks. Validate the machine, source and confirmed snapshot again at the privilege boundary. Keep Preview read-only and preserve managed-file recovery, projectRules, user data and local changes.
 
-Load application and stage settings through `setup_system.configuration.Settings`. Keep editable intentions, package-owned catalogs, privileged policy and observed facts in their respective contracts. Regenerate the offline [settings reference](docs/settings_map.md) when its source models change.
+Load shell preferences and private plugin profiles through `setup_system.configuration.Settings`. Plugin packages own their action and settings models, resource declarations, native recipes and Help. Keep editable intentions, package-owned catalogs, privileged policy and observed facts in their respective contracts. Regenerate the offline [settings reference](docs/settings_map.md) and each packaged plugin reference when their source models change.
 
 Package installation and update end at APT. Opening the application, Preview, explicit Apply and Restore have separate entry points and confirmation rules. Run all development tests in isolated directories. Use a separately authorized disposable Debian machine for operating-system, hardware and boot acceptance.
 

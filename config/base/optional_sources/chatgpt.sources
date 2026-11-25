@@ -1,5 +1,0 @@
-Types: deb
-URIs: https://persistent.oaistatic.com/codex-app-prod/linux/deb
-Suites: stable
-Components: main
-Signed-By: /usr/lib/setup-system/config/base/chatgpt-archive-keyring.gpg

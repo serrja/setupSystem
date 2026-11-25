@@ -4,6 +4,9 @@ from contextlib import nullcontext
 from pathlib import Path
 
 from setup_system.domain.recovery import RecoveryFiles, RecoveryJournal, RecoveryTarget
+from setup_system.infrastructure import receipt_repository
+from setup_system.infrastructure.receipt_migrations import restore_manifest
+from setup_system.infrastructure.restore_files import LocalRecoveryFiles
 
 
 def recover(
@@ -66,3 +69,10 @@ def recover(
         operation.status = "restored"
         journal.save_operation(folder, operation)
         return results
+
+
+def restore(backup_id: str, *, apply: bool = False) -> list[tuple[str, str]]:
+    folder = receipt_repository.operation_folder(backup_id)
+    if receipt_repository.receipt_source(folder) is None:
+        return restore_manifest(folder, apply=apply)
+    return recover(folder, apply=apply, journal=receipt_repository, files=LocalRecoveryFiles())

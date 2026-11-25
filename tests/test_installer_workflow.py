@@ -1,69 +1,43 @@
-"""Direct delivery and optional application selection replace the temporary proxy flow."""
+"""Verify named profile selections without authorizing or installing any application."""
 
 import asyncio
-import json
-import runpy
-import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
-from test_native_ui import Tasks, app_for, idle
-
-from setup_system.models import BaseOptions, WorkspaceOptions
-from setup_system.runner import Target
+from setup_system.configuration import Settings
+from setup_system.profiles import preview_profile, read_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_happ_is_not_required_for_base_or_theme_plan() -> None:
-    native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
-    base = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
-    apps = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
-    for settings in (
-        BaseOptions(hyprland=True),
-        WorkspaceOptions(desktop_theme=True),
-        WorkspaceOptions(),
-    ):
-        values = settings.model_dump(mode="json")
-        assert "happ" not in values.get("apps", ())
-        assert "happ" not in native["package_names"](
-            settings.model_dump_json(), json.dumps(base), json.dumps(apps)
-        )
-    assert (
-        native["package_names"](
-            WorkspaceOptions().model_dump_json(),
-            json.dumps(base),
-            json.dumps(apps),
-        )
-        == []
-    )
+def test_profiles_select_only_declared_actions_and_do_not_enable_a_vpn(tmp_path):
+    profiles = read_profiles(ROOT)
+    assert set(profiles) == {"base", "workspace"}
+    for profile in profiles.values():
+        for row in profile.actions:
+            assert row.plugin != "happ"
+            manifests = list((ROOT / "plugins").glob(f"*/{row.plugin}/src/*/manifest.json"))
+            assert len(manifests) == 1
+            from setup_system_sdk import Manifest
+
+            manifest = Manifest.model_validate_json(manifests[0].read_bytes())
+            assert row.action in {action.id for action in manifest.actions}
 
 
-def test_happ_is_selected_only_by_explicit_workspace_intention() -> None:
-    apps = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
-    validate = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["validate_request"]
-    for selected in ([], ["happ"]):
-        plan = validate(
-            json.dumps({"schema": 1, "settings": {"apps": selected}, "expected": None}),
-            "workspace",
-            json.dumps(apps),
-            "{}",
-        )
-        assert ("happ" in plan["apps"]) == bool(selected)
-        assert "subscription" not in plan
-    assert apps["happ"]["github"] == "Happ-proxy/happ-desktop"
+def test_profile_preview_requires_no_apply_and_detaches_saved_values(tmp_path):
+    profile = read_profiles(ROOT)["base"]
+    calls = []
 
+    class Stub:
+        async def activation(self, plugin):
+            return SimpleNamespace(manifest=SimpleNamespace(dependencies=[], settings_version=1))
 
-def test_cancelled_confirmation_never_executes(tmp_path) -> None:
-    async def exercise():
-        tasks = Tasks()
-        app = app_for(tmp_path, tasks)
-        async with app.run_test(size=(100, 35)) as pilot:
-            await pilot.press("ctrl+2")
-            await pilot.click("#plan")
-            await idle(app, pilot)
-            await pilot.click("#apply")
-            await pilot.press("escape")
-            assert [target for target, _, _ in tasks.calls] == [Target.WORKSPACE_PLAN]
-            assert not app.settings.directory.exists()
+        async def preview(self, plugin, action, options, inputs, *, saved):
+            calls.append((plugin, action, options, inputs, saved))
+            return (plugin, action)
 
-    asyncio.run(exercise())
+    store = Settings(tmp_path, tmp_path / "config")
+    previews = asyncio.run(preview_profile(Stub(), store, profile))
+    assert sorted(previews) == sorted((row.plugin, row.action) for row in profile.actions)
+    assert all(not (options or inputs or saved) for _, _, options, inputs, saved in calls)
+    assert not store.directory.exists()

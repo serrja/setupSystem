@@ -1,0 +1,5 @@
+{
+  "plymouth": "/usr/share/initramfs-tools/hooks/plymouth",
+  "plymouth-themes": "/usr/share/plymouth/themes/spinner/spinner.plymouth",
+  "console-setup": "/usr/bin/setupcon"
+}

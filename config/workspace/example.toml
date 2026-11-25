@@ -1,4 +1,0 @@
-# An example browser and language selection. Preview resolves their current sources.
-schema_version = 1
-apps = ["firefox"]
-languages = ["python"]

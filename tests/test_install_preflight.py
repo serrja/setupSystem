@@ -1,15 +1,12 @@
 """Reject unsupported sources, privileged execution paths and arbitrary native task input."""
 
-import json
-import runpy
 import subprocess
-import tomllib
+import sys
 from pathlib import Path
 
 import pytest
-from ansible.errors import AnsibleFilterError
 
-from setup_system.infrastructure.upstream_asset import github_deb
+from setup_system_sdk.apt import Approval, GithubRelease, Packages
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,8 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
     ],
 )
 def test_privileged_sources_require_exact_release_url(url):
-    entry = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())["happ"]
-    asset = entry["asset"]["amd64"]
+    asset = "fixture_amd64.deb"
     upstream = {
         "draft": False,
         "prerelease": False,
@@ -33,37 +29,37 @@ def test_privileged_sources_require_exact_release_url(url):
         "tag_name": "1.2",
         "assets": [{"name": asset, "browser_download_url": url, "digest": "sha256:" + "f" * 64}],
     }
-    with pytest.raises(ValueError, match="SHA-256"):
-        github_deb(upstream, entry, "amd64")
+    with pytest.raises(ValueError, match="verified asset"):
+        GithubRelease.model_validate(upstream).asset("owner/fixture", asset)
 
 
 def test_unrecognized_role_is_rejected_before_dispatch(tmp_path):
     run = subprocess.run(
-        ["/bin/sh", str(ROOT / "libexec/play.sh"), "base", "shell"],
-        cwd=ROOT,
+        [sys.executable, "-I", "-B", "-m", "setup_system_sdk.apt", "unregistered"],
+        cwd=tmp_path,
         capture_output=True,
         text=True,
     )
-    assert run.returncode and "Unknown packaged operation" in run.stderr
+    assert run.returncode == 2 and not run.stdout
     assert not list(tmp_path.iterdir())
 
 
 def test_caller_cannot_inject_package_options_or_a_command(tmp_path):
-    filters = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))[
-        "FilterModule"
-    ]().filters()
-    apps = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
-    for settings in (
-        {"apps": ["--help"]},
-        {"apps": ["../pkg"]},
-        {"apps": ["systemd"]},
-        {"command": "id"},
+    for bundle in (
+        {"names": ["--help"]},
+        {"names": ["../pkg"]},
+        {"names": ["ok"], "command": "id"},
     ):
-        with pytest.raises((ValueError, AnsibleFilterError)):
-            filters["native_request"](
-                json.dumps({"schema": 1, "settings": settings, "expected": None}),
-                "workspace",
-                json.dumps(apps),
-                "{}",
+        with pytest.raises(ValueError):
+            Packages.model_validate(bundle)
+    for change in ({"action_id": "shell"}, {"plugin_id": "../other"}, {"command": "id"}):
+        with pytest.raises(ValueError):
+            Approval.model_validate(
+                {
+                    "plugin_id": "example",
+                    "action_id": "install",
+                    "plan": {"summary": "Preview"},
+                    **change,
+                }
             )
     assert not list(tmp_path.iterdir())

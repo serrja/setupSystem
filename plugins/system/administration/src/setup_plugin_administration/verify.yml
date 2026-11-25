@@ -1,0 +1,15 @@
+---
+- name: Verify one selected account and its effective sudo policy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read back the effective policy with root authentication
+      become: true
+      become_method: ansible.builtin.su
+      # A fixed raw invocation avoids staging a user-owned Python module for become.
+      ansible.builtin.raw: >-
+        /usr/bin/printf %s {{ setup_system_payload }} |
+        /usr/bin/base64 --decode |
+        /usr/bin/python3 -I -B /usr/lib/setup-system/plugins/administration/setup_plugin_administration/native.py verify-sudo
+      changed_when: false

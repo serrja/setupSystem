@@ -1,109 +1,75 @@
-"""Exercise real bounded directory completion and delayed results."""
+"""Only the latest bounded choice request can change the active form."""
 
 import asyncio
-import threading
-from pathlib import Path
 
-from setup_system.configuration import Settings
-from setup_system.suggestions import ProjectChoices, Suggestions
+import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import Select
+
+from setup_system.ui.schema_fields import SchemaForm
 
 
-def test_latest_edit_wins_while_directory_read_is_pending(tmp_path, monkeypatch):
-    async def scenario():
-        entered = threading.Event()
-        release = threading.Event()
-        requests = []
-        first = tmp_path / "first"
-        second = tmp_path / "second"
-        for directory in (first, second):
-            directory.mkdir()
-            (directory / "A B é").mkdir()
-        source = Suggestions(
-            Path(__file__).resolve().parents[1] / "config", tmp_path, Settings.application()
+class ChoicesApp(App):
+    def __init__(self, provider):
+        super().__init__()
+        self.form = SchemaForm(
+            {"properties": {"host": {"type": "string", "ui": {"choice_provider": "hosts"}}}},
+            {},
+            provider,
         )
-        original = source._scan
 
-        def delayed(directory):
-            requests.append(directory)
-            if directory == first:
-                entered.set()
-                assert release.wait(3)
-            return original(directory)
-
-        monkeypatch.setattr(source, "_scan", delayed)
-        choices = ProjectChoices(source)
-        old = asyncio.create_task(choices.get_suggestion(str(first) + "/A"))
-        assert await asyncio.to_thread(entered.wait, 2)
-        current = asyncio.create_task(choices.get_suggestion(str(second) + "/A"))
-        await asyncio.sleep(0)
-        release.set()
-        assert await old is None
-        assert await current == str(second / "A B é")
-        assert await choices.get_suggestion(str(second) + "/A ") == str(second / "A B é")
-        assert requests == [first, second]
-        assert await choices.get_suggestion("") is None
-
-    asyncio.run(scenario())
+    def compose(self) -> ComposeResult:
+        yield self.form
 
 
-def test_quick_edits_use_one_scan_and_return_bounded_results(tmp_path, monkeypatch):
-    async def scenario():
-        for idx in range(160):
-            (tmp_path / f"folder {idx}").mkdir()
-        source = Suggestions(tmp_path, tmp_path, Settings.application())
-        choices = ProjectChoices(source)
-        scans = []
-        original = source._scan
+def test_stale_completion_cannot_overwrite_latest_query():
+    async def exercise():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        seen = []
 
-        def counted(directory):
-            scans.append(directory)
-            return original(directory)
-
-        monkeypatch.setattr(source, "_scan", counted)
-        replies = await asyncio.gather(
-            *(choices.get_suggestion(str(tmp_path) + suffix) for suffix in ("/f", "/fo", "/fol"))
-        )
-        assert replies[:2] == [None, None]
-        assert replies[-1].startswith(str(tmp_path / "folder "))
-        assert 0 < len(await source.project_values(str(tmp_path) + "/")) <= 128
-        assert scans == [tmp_path]
-
-    asyncio.run(scenario())
-
-
-def test_a_slow_previous_directory_does_not_delay_the_latest_query(tmp_path, monkeypatch):
-    async def scenario():
-        first, latest = tmp_path / "first", tmp_path / "latest"
-        first.mkdir()
-        latest.mkdir()
-        (latest / "answer").mkdir()
-        source = Suggestions(tmp_path, tmp_path, Settings.application())
-        started, release = threading.Event(), threading.Event()
-        scan = source._scan
-
-        def scan_directory(path):
-            if path == first:
+        async def provider(name, text):
+            seen.append(text)
+            if text == "old":
                 started.set()
-                assert release.wait(4)
-            return scan(path)
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
+            return ["one", "two"] if text else []
 
-        monkeypatch.setattr(source, "_scan", scan_directory)
-        choices = ProjectChoices(source)
-        stale = asyncio.create_task(choices.get_suggestion(str(first) + "/"))
-        try:
-            assert await asyncio.to_thread(started.wait, 2)
-            fresh = choices.get_suggestion(str(latest) + "/a")
-            assert await asyncio.wait_for(fresh, 1) == str(latest / "answer")
-            assert await stale is None
-        finally:
-            release.set()
+        app = ChoicesApp(provider)
+        async with app.run_test():
+            editor = app.form.fields[0]
+            editor.refresh_choices("old")
+            await asyncio.wait_for(started.wait(), 2)
+            latest = editor.refresh_choices("new")
+            await asyncio.wait_for(cancelled.wait(), 1)
+            await latest.wait()
+            assert seen[-1] == "new"
+            assert isinstance(editor.control, Select)
+            editor.control.value = "two"
+            assert app.form.values() == {"host": "two"}
 
-    asyncio.run(scenario())
+    asyncio.run(exercise())
 
 
-def test_directory_completion_obeys_the_application_limit(tmp_path, monkeypatch):
-    monkeypatch.setenv("SETUP_SYSTEM_SUGGESTION_RESULTS", "1")
-    for name in ("alpha", "beta", "gamma"):
-        (tmp_path / name).mkdir()
-    choices = Suggestions(tmp_path, tmp_path, Settings.application())
-    assert len(asyncio.run(choices.project_values(str(tmp_path) + "/"))) == 1
+def test_fast_edits_debounce_and_all_choices_stay_bounded():
+    async def exercise():
+        seen = []
+
+        async def provider(name, text):
+            seen.append(text)
+            return [str(i) for i in range(400)]
+
+        app = ChoicesApp(provider)
+        async with app.run_test():
+            editor = app.form.fields[0]
+            for text in ("o", "or", "origin"):
+                latest = editor.refresh_choices(text)
+            await latest.wait()
+            assert seen == ["origin"]
+            editor.control.value = "127"
+            with pytest.raises(Exception, match="Illegal select value"):
+                editor.control.value = "128"
+
+    asyncio.run(exercise())

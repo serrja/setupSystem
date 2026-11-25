@@ -1,10 +1,11 @@
 """Check native Signed-By trust, diagnostic redaction and private APT indexes."""
 
-import hashlib
-import runpy
+import subprocess
 from pathlib import Path
 
 import pytest
+
+from setup_system_sdk import apt
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,7 +22,6 @@ def test_signed_sources_use_the_regular_trixie_keyring():
 
 @pytest.mark.parametrize("kind", ["missing", "empty", "symlink"])
 def test_invalid_canonical_keyring_stops_before_package_commands(tmp_path, monkeypatch, kind):
-    scope = runpy.run_path(str(ROOT / "ansible/files/apt_apply.py"))
     canonical = tmp_path / "canonical.pgp"
     other = tmp_path / "unreviewed"
     other.write_bytes(b"unknown key")
@@ -30,30 +30,22 @@ def test_invalid_canonical_keyring_stops_before_package_commands(tmp_path, monke
     elif kind == "symlink":
         canonical.symlink_to(other)
     monkeypatch.setattr(
-        scope["subprocess"],
+        apt.subprocess,
         "run",
         lambda *args, **kw: pytest.fail("APT ran before trust validation"),
     )
-    with pytest.raises(ValueError, match="keyring"):
-        scope["keyring"](canonical)
+    with pytest.raises(ValueError):
+        apt.keyring(canonical)
     assert other.read_bytes() == b"unknown key"
 
 
-def test_native_failed_task_diagnostic_preserves_reason_without_credentials(tmp_path):
-    filters = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))[
-        "FilterModule"
-    ]().filters()
-    value = hashlib.sha256(str(tmp_path).encode()).hexdigest()
-    message = (
-        "signature verification failed https://"
-        + value
-        + ":"
-        + value
-        + "@example.invalid/path?token="
-        + value
-        + " password="
-        + value
+def test_failed_query_records_a_fixed_localized_error(tmp_path, monkeypatch):
+    private = "https://account:credential@fixture.invalid/path?token=private"
+    monkeypatch.setattr(
+        apt,
+        "run_command",
+        lambda *args, **kw: subprocess.CompletedProcess(["fixture"], 1, "", private),
     )
-    redacted = filters["native_error"](message)
-    assert "signature verification failed" in redacted and value not in redacted
-    assert not list(tmp_path.iterdir())
+    with pytest.raises(ValueError, match="signed package source") as failure:
+        apt.query(["fixture"], tmp_path)
+    assert private not in str(failure.value)

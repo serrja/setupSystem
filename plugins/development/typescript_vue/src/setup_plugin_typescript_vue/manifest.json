@@ -1,0 +1,159 @@
+{
+  "id": "typescript_vue",
+  "name": "TypeScript and Vue",
+  "author": "serrja",
+  "category": "development",
+  "kind": "application",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_typescript_vue:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "sudo",
+    "user-files"
+  ],
+  "capabilities": [
+    "toolchain",
+    "native-editor-tools"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check tool availability",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install Debian prerequisites",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "sudo"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update Debian prerequisites",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "sudo"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Configure user tools",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Remove owned Debian packages",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "sudo"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-tools",
+      "label": "Remove managed tool generations",
+      "page": "actions",
+      "target": "remove-tools",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "prettier": {
+        "default": true,
+        "description": "Publish the formatter with the Vue and TypeScript language servers.",
+        "title": "Install Prettier",
+        "type": "boolean"
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-tools": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "overview",
+    "settings",
+    "actions",
+    "resources",
+    "history",
+    "help"
+  ],
+  "settings_version": 1
+}

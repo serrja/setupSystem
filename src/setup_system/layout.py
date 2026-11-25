@@ -57,7 +57,12 @@ def verify_installation(root: Path) -> None:
     if root != INSTALLED:
         raise ValueError("System changes require the installed Debian package")
     owned = _package_paths()
-    for tree in (root, PYTHON_PACKAGE):
+    parent = PYTHON_PACKAGE.parent
+    metadata = [p for p in owned if p.parent == parent and p.match("setup_system-*.dist-info")]
+    if len(metadata) != 1 or set(parent.glob("setup_system-*.dist-info")) != set(metadata):
+        raise ValueError("Python distribution metadata differs from the Debian package inventory")
+    sdk = parent / "setup_system_sdk"
+    for tree in (root, PYTHON_PACKAGE, sdk, *metadata):
         protected(tree)
         expected = {p for p in owned if p.is_relative_to(tree)}
         actual = {tree, *tree.rglob("*")}
@@ -65,7 +70,10 @@ def verify_installation(root: Path) -> None:
             raise ValueError("Program resources differ from the Debian package inventory")
         for entry in actual:
             protected(entry, directory=entry.is_dir())
-    if not (root / "Makefile").is_file() or not (PYTHON_PACKAGE / "layout.py").is_file():
+    if not (root / "Makefile").is_file() or not all(
+        path.is_file()
+        for path in (PYTHON_PACKAGE / "layout.py", sdk / "worker.py", metadata[0] / "METADATA")
+    ):
         raise ValueError("The installed Debian program is incomplete")
 
 

@@ -1,16 +1,11 @@
 """Exercise native release resources, selection validation and settings source isolation."""
 
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
 from setup_system import layout
 from setup_system.configuration import Settings
-from setup_system.domain.applications import applications
-from setup_system.domain.displays import MonitorLayout
-from setup_system.models import BaseOptions, PlanSnapshot, WorkspaceOptions
-from setup_system.suggestions import Catalog
+from setup_system_sdk import PluginSettings
 
 
 def test_explicit_source_and_wheel_roots_do_not_fall_back_to_installed_data(tmp_path, monkeypatch):
@@ -30,76 +25,6 @@ def test_explicit_source_and_wheel_roots_do_not_fall_back_to_installed_data(tmp_
         assert layout.resource_root() == bundle
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"handler": "shell"},
-        {"kind": "script"},
-        {"packages": ["--option"]},
-        {"asset": {"other": "thing.deb"}},
-        {"packages": []},
-        {"github": "a/b", "asset": {"amd64": "{other}.deb"}, "packages": []},
-        {"github": "a/b", "asset": {"amd64": "good.deb"}, "packages": []},
-    ],
-)
-def test_explicit_catalogs_require_implemented_handlers(change):
-    with pytest.raises(ValueError):
-        applications(
-            {"new_tool": {"title": "Example", "kind": "app", "packages": ["tree"], **change}}
-        )
-
-
-def test_settings_and_selection_do_not_read_files(monkeypatch):
-    monkeypatch.setattr(Path, "open", lambda *a, **kw: pytest.fail("Model read from disk"))
-    settings = WorkspaceOptions.model_validate({"apps": ["firefox"]})
-    assert settings.apps == ("firefox",)
-
-
-@pytest.mark.parametrize(
-    ("model", "change"),
-    [
-        (BaseOptions(), {"hyprland": 1}),
-        (WorkspaceOptions(), {"unknown": True}),
-        (WorkspaceOptions(), {"apps": ["firefox", "firefox"]}),
-        (WorkspaceOptions(), {"theme": {"effects": "true"}}),
-        (MonitorLayout(output="DP-1", mode="1024x768@60", scale=1, x=0, y=0), {"x": True}),
-        (
-            MonitorLayout(output="DP-1", mode="1024x768@60", scale=1, x=0, y=0),
-            {"scale": float("inf")},
-        ),
-    ],
-)
-def test_validated_updates_reject_undeclared_or_lossy_values(model, change):
-    with pytest.raises(ValidationError):
-        type(model).model_validate({**model.model_dump(), **change})
-
-
-def test_live_source_identity_is_detached_from_mutable_editor_metadata():
-    source = {
-        "editor": {
-            "manager": "git",
-            "current": "",
-            "path": "/home/fixture/data/lazy.nvim",
-            "repo": "https://github.com/folke/lazy.nvim",
-            "version": "a" * 40,
-        }
-    }
-    plan = PlanSnapshot.capture(
-        "workspace",
-        {"apps": ["neovim"]},
-        {
-            "status": "ready",
-            "actions": [
-                {"kind": "tool", "name": "editor", "version": "a" * 40, "label": "Install editor"}
-            ],
-            "observed": {"tools": source, "needs_system": False, "needs_user": True},
-        },
-        None,
-    )
-    source["editor"]["version"] = "b" * 40
-    assert plan.payload()["expected"]["observed"]["tools"]["editor"]["version"] == "a" * 40
-
-
 def test_locator_refuses_symlinked_data_and_release_ancestors(tmp_path, monkeypatch):
     bundle = tmp_path / "real"
     bundle.mkdir()
@@ -109,29 +34,34 @@ def test_locator_refuses_symlinked_data_and_release_ancestors(tmp_path, monkeypa
     monkeypatch.setattr(layout, "__file__", str(source / "src/setup_system/runner.py"))
     with pytest.raises(ValueError, match="symlink"):
         layout.resource_root()
-    with pytest.raises(ValueError, match="symlink"):
-        Catalog(source / "config")
+
+
+class FixtureSettings(PluginSettings):
+    title: str = "default"
 
 
 def test_declared_settings_sources_and_precedence(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir(mode=0o700)
-    monkeypatch.chdir(home)
-    (home / ".env").write_text("SETUP_SYSTEM_HYPRLAND=true\n")
-    monkeypatch.setenv("SETUP_SYSTEM_HYPRLAND", "true")
-    store = Settings(home, home / "config")
-    loaded = store.load("base")
-    assert not loaded.options.hyprland and not store.directory.exists()
-    store.save("base", BaseOptions(hyprland=True), loaded.revision)
-    assert store.load("base").options.hyprland
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TITLE", "private")
+    (tmp_path / ".env").write_text("TITLE=private")
+    store = Settings(tmp_path, tmp_path / "config")
+    import asyncio
+
+    draft = asyncio.run(store.read("example"))
+    assert draft.values == {} and not store.directory.exists()
+    saved = asyncio.run(store.publish("example", "default", {"title": "saved"}, 1, draft.revision))
+    options = FixtureSettings.resolve(
+        profile={"title": "profile"}, saved=saved.values, overrides={}
+    )
+    assert options.title == "saved"
+    assert (
+        FixtureSettings.resolve(profile={}, saved=saved.values, overrides={"title": "once"}).title
+        == "once"
+    )
+    assert asyncio.run(store.read("example")).values == {"title": "saved"}
 
 
 @pytest.mark.parametrize("key", ["_env_file", "_secrets_dir", "_env_prefix", "_cli_parse_args"])
-def test_toml_cannot_change_settings_reader_sources(tmp_path, key):
-    home = tmp_path / "home"
-    home.mkdir(mode=0o700)
-    store = Settings(home, home / "config")
-    store.directory.mkdir(parents=True, mode=0o700)
-    (store.directory / "workspace.toml").write_text(f'schema_version=1\n{key}="local"\n')
-    with pytest.raises(ValueError):
-        store.load("workspace")
+def test_saved_fields_cannot_change_settings_reader_sources(key):
+    with pytest.raises(ValidationError):
+        FixtureSettings.resolve(profile={}, saved={key: "local"}, overrides={})

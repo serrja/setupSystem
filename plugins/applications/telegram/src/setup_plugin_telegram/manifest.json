@@ -1,0 +1,193 @@
+{
+  "id": "telegram",
+  "name": "Telegram Desktop",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_telegram:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-files"
+  ],
+  "capabilities": [
+    "debian-package"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Telegram Desktop",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "accounts",
+      "label": "Accounts",
+      "page": "accounts",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "notifications",
+      "label": "Notifications",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure-launcher",
+      "label": "Save application launcher",
+      "page": "actions",
+      "target": "configure-launcher",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "read_only": false,
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "startup": {
+        "default": "normal",
+        "enum": [
+          "normal",
+          "tray",
+          "settings"
+        ],
+        "title": "Launch behavior",
+        "type": "string"
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure-launcher": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Launcher profile ID",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Application menu label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "name"
+      ],
+      "title": "LauncherProfile",
+      "type": "object"
+    },
+    "accounts": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "notifications": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

@@ -216,8 +216,12 @@ class LocalRecoveryFiles:
         directories = []
         for entry in op.directories:
             path = target_path(entry.relative + "/.setup-system-directory-check").parent
-            if entry.relative not in op.requested_directories and not any(
-                path in p.parents for p in paths
+            if (
+                entry.relative not in op.requested_directories
+                and not any(
+                    Path(entry.relative) in Path(name).parents for name in op.requested_directories
+                )
+                and not any(path in p.parents for p in paths)
             ):
                 raise ValueError("Recovery directory has no managed files")
             if path.exists() and (path.stat().st_dev, path.stat().st_ino) == (

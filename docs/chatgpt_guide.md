@@ -1,7 +1,7 @@
 # ChatGPT Desktop
 
-Select ChatGPT Desktop in **Working environment**. Preview uses the packaged keyring to check OpenAI's signed Debian source and resolve a Linux package for the target. APT checks fresh indexes in a private run directory. Apply compares the package transaction again before installation. Review any source or architecture error shown by Preview. A retry uses the same signature checks.
+## ⚙️ Plugin actions
 
-## 🔎 After an install attempt
+Open ChatGPT and preview Install. The package adapter verifies the publisher’s signed index, target architecture and package digest. An unavailable source or incompatible release blocks installation.
 
-Workspace Inspect shows when the last explicit ChatGPT Apply checked the signed indexes and whether verification succeeded. A failed source check is separate from catalog availability. Complete account authentication in ChatGPT after installation. [Official Linux installation guide](https://learn.chatgpt.com/docs/linux/linux-app).
+Sign in through the official application. Review personalization and account preferences there. SetupSystem never reads the application’s authentication store. [Official Linux installation guide](https://learn.chatgpt.com/docs/linux/linux-app).

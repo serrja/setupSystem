@@ -1,7 +1,10 @@
 """Exclude active dpkg database writers before executing a locked native target."""
 
+import hashlib
 import os
+import re
 import sys
+from pathlib import Path
 
 
 def main() -> None:
@@ -25,10 +28,19 @@ def main() -> None:
                         file=sys.stderr,
                     )
                     sys.exit(75)
+        if "SETUP_SYSTEM_RELEASE_DIGEST" in os.environ:
+            plugin = os.environ.get("SETUP_SYSTEM_RELEASE_ID", "")
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", plugin):
+                raise ValueError("Invalid confirmed extension")
+            release = Path("/usr/lib/setup-system/plugin_catalog") / (plugin + ".json")
+            with release.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != os.environ["SETUP_SYSTEM_RELEASE_DIGEST"]:
+                raise ValueError("The confirmed Debian extension release changed")
     except (ValueError, OSError) as problem:
         print(f"Cannot check package database locks: {problem}", file=sys.stderr)
         sys.exit(75)
-    os.execvp(sys.argv[1], sys.argv[1:])
+    os.execv("/usr/bin/make", ["/usr/bin/make", *sys.argv[1:]])
 
 
 if __name__ == "__main__":
