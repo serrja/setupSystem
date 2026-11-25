@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import tomllib
 from pathlib import Path
 from typing import Literal
 
+from platformdirs import user_cache_path
 from pydantic import JsonValue
 
 from setup_system.domain.projects import TemplateMetadata
@@ -31,6 +31,10 @@ def load_templates(root: Path) -> dict[str, TemplateSource]:
     }
 
 
+def template_cache(cache_root: Path | None = None) -> Path:
+    return (cache_root or user_cache_path()) / "setup-system/templates"
+
+
 def plan_template(
     sources: dict[str, TemplateSource],
     *,
@@ -53,13 +57,12 @@ def plan_template(
         raise ValueError("No reviewed version; choose a version from templates versions")
     if any(key.startswith("_") for key in data or {}):
         raise ValueError("Internal Copier answers cannot be supplied")
-    cache = cache_root or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
     return TemplatePlan(
         operation=operation,
         source=source,
         version=match,
         destination=destination.expanduser().absolute(),
-        cache_root=cache / "setup-system/templates",
+        cache_root=template_cache(cache_root),
         offline=offline,
         defaults=defaults,
         data=snapshot_answers(data or {}),

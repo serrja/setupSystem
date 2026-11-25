@@ -4,6 +4,8 @@ import platform
 import subprocess
 from collections.abc import Mapping
 
+from setup_system.infrastructure.processes import run_command
+
 
 def architecture(machine: str) -> str:
     return {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
@@ -34,12 +36,11 @@ def current_target(release: Mapping[str, str] | None = None) -> tuple[str, bool]
     dpkg_arch = None
     if facts.get("ID") == "debian":
         try:
-            dpkg_arch = subprocess.check_output(
+            dpkg_arch = run_command(
                 ["/usr/bin/dpkg", "--print-architecture"],
-                text=True,
-                stderr=subprocess.DEVNULL,
+                discard_stderr=True,
                 timeout=5,
-            ).strip()
+            ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
     return target(facts, machine, dpkg_arch)

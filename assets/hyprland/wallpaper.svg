@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
   <!-- Original setupSystem artwork, independent of monitor geometry. -->
   <defs>
-    <linearGradient id="night" x2="1" y2="1"><stop stop-color="@{ crust }@"/><stop offset=".55" stop-color="@{ base }@"/><stop offset="1" stop-color="@{ surface0 }@"/></linearGradient>
-    <radialGradient id="glow"><stop stop-color="@{ green }@" stop-opacity=".3"/><stop offset="1" stop-color="@{ green }@" stop-opacity="0"/></radialGradient>
-    <linearGradient id="ridge" x2="1" y2=".4"><stop stop-color="@{ surface1 }@"/><stop offset="1" stop-color="@{ surface2 }@"/></linearGradient>
+    <linearGradient id="night" x2="1" y2="1"><stop stop-color="@{ render_ctx.crust }@"/><stop offset=".55" stop-color="@{ render_ctx.base }@"/><stop offset="1" stop-color="@{ render_ctx.surface0 }@"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="@{ render_ctx.green }@" stop-opacity=".3"/><stop offset="1" stop-color="@{ render_ctx.green }@" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ridge" x2="1" y2=".4"><stop stop-color="@{ render_ctx.surface1 }@"/><stop offset="1" stop-color="@{ render_ctx.surface2 }@"/></linearGradient>
   </defs>
   <rect width="1920" height="1080" fill="url(#night)"/>
   <ellipse cx="1400" cy="270" rx="650" ry="650" fill="url(#glow)"/>
-  <circle cx="1420" cy="250" r="68" fill="@{ text }@" opacity=".8"/>
+  <circle cx="1420" cy="250" r="68" fill="@{ render_ctx.text }@" opacity=".8"/>
   <path d="M0 870 400 590 800 880 1290 410 1920 900V1080H0Z" fill="url(#ridge)"/>
-  <path d="m850 860 440-450 355 278-230-90-92 116-83-54Z" fill="@{ green }@" opacity=".36"/>
-  <path d="M0 990 550 790 1010 1010 1500 750 1920 960V1080H0Z" fill="@{ mantle }@" opacity=".9"/>
+  <path d="m850 860 440-450 355 278-230-90-92 116-83-54Z" fill="@{ render_ctx.green }@" opacity=".36"/>
+  <path d="M0 990 550 790 1010 1010 1500 750 1920 960V1080H0Z" fill="@{ render_ctx.mantle }@" opacity=".9"/>
 </svg>

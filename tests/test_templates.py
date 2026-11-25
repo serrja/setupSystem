@@ -538,10 +538,33 @@ def test_public_git_and_local_copier_do_not_inherit_ambient_credentials(
         calls.append((argv, env))
         return SimpleNamespace(returncode=0, stdout="")
 
-    monkeypatch.setattr(copier_templates.subprocess, "run", capture)
+    monkeypatch.setattr(copier_templates, "run_command", capture)
     assert copier_templates.available_versions(bare, tmp_path / "cache", offline=False) == ()
     copier_templates._run_copier(selected, checkout, destination)
     git, copier = calls
     assert "http.followRedirects=false" in git[0] and git[1]["HOME"] == "/dev/null"
     assert git[0][-2] == source.url and git[1]["GIT_TERMINAL_PROMPT"] == "0"
     assert copier[1]["GIT_ALLOW_PROTOCOL"] == "file" and "--skip-tasks" in copier[0]
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_timed_out_copier_checks_destination_before_reporting(
+    tmp_path, monkeypatch, source, changed
+):
+    from setup_system.diagnostics import PartialApplyError
+
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    selected = plan(source, destination)
+    monkeypatch.setattr(copier_templates, "copier_executable", lambda: tmp_path / "copier")
+
+    def timeout(argv, **options):
+        assert options["discard_output"]
+        if changed:
+            (destination / "generated").write_text("partial")
+        raise subprocess.TimeoutExpired(argv, timeout=1)
+
+    monkeypatch.setattr(copier_templates, "run_command", timeout)
+    with pytest.raises(PartialApplyError if changed else ValueError):
+        copier_templates._run_copier(selected, tmp_path / "cache.git", destination)
+    assert (destination / "generated").exists() == changed

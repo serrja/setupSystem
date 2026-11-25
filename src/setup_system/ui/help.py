@@ -13,6 +13,7 @@ from textual.widgets import Button, Markdown, Select
 
 TOPICS = {
     "configuration": "Configuration",
+    "settings_map": "Settings reference",
     "administration": "Administrative access",
     "recovery": "Recovery",
     "desktop_login": "Login and screen lock",

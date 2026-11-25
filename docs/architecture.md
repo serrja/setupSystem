@@ -7,7 +7,7 @@ The Debian package installs the Python application under dist-packages and execu
 | Responsibility | Implementation |
 | --- | --- |
 | Form state, validation and immutable plan snapshots | `src/setup_system/models.py`, `app.py`, `ui/` |
-| Section settings, revisions and migration | `src/setup_system/settings.py` |
+| Typed sources, stage revisions and migration | `src/setup_system/configuration/` |
 | Completion and catalog selections | `src/setup_system/suggestions.py`, `config/` |
 | Running an operation and handling its single password prompt | `src/setup_system/runner.py`, `libexec/play.sh` |
 | Command sequence and per-task privileges | `mk/`, `ansible/` |

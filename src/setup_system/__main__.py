@@ -2,4 +2,5 @@
 
 from setup_system.entrypoint import main
 
-main()
+if __name__ == "__main__":
+    main()

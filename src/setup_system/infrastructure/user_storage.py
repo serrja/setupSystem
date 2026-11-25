@@ -1,4 +1,4 @@
-"""Owned HOME paths, bounded reads and atomic stdlib-only storage for delivery."""
+"""Check owned HOME paths and publish bounded, revision-checked user data."""
 
 from __future__ import annotations
 
@@ -11,13 +11,14 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from platformdirs import user_state_path
 from pydantic import JsonValue, TypeAdapter
 
 from setup_system.infrastructure.atomic_rename import exchange, rename_new
 
 
 def state_root() -> Path:
-    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "setup-system"
+    return user_state_path("setup-system")
 
 
 def inside_home(path: Path) -> Path:

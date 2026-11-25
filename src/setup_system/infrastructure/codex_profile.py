@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import tomlkit
+from platformdirs import user_config_path
 from pydantic import Field
 
 from setup_system.domain.contracts import ContractModel
@@ -78,7 +79,7 @@ def files(config: Path) -> tuple[dict[Path, bytes], dict[Path, FileState | None]
     lock = PolicySource.model_validate(tomllib.loads((config / "workspace/rules.toml").read_text()))
     if hashlib.sha256(policy).hexdigest() != lock.sha256:
         raise ValueError("The packaged instructions do not match the reviewed source")
-    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    xdg = user_config_path()
     archive = xdg / "setup-system/policy"
     personal_path(home, archive)
     url = f"https://github.com/{lock.repository}/blob/{lock.commit}/{lock.document}"

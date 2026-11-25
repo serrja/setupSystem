@@ -9,9 +9,12 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "1.2.3"
@@ -106,16 +109,13 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
     }.items():
         assert command("dpkg-deb", "-f", str(package), field) == value
     dependencies = command("dpkg-deb", "-f", str(package), "Depends")
-    assert {
-        "ansible-core",
-        "make",
-        "python3-textual",
-        "python3-typer",
-        "python3-aiofiles",
-        "python3-httpx",
-        "git",
-        "ca-certificates",
-    } <= {part.split(" (")[0] for part in dependencies.split(", ")}
+    runtime = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
+    names = {canonicalize_name(Requirement(requirement).name) for requirement in runtime}
+    debian_names = {"ansible-core": "ansible-core", "pyyaml": "python3-yaml"}
+    required = {debian_names.get(name, f"python3-{name}") for name in names}
+    assert required | {"make", "git", "ca-certificates"} <= {
+        part.split(" (")[0] for part in dependencies.split(", ")
+    }
     raw = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(package)])
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         names = set(archive.getnames())

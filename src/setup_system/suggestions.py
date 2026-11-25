@@ -12,6 +12,7 @@ from zoneinfo import available_timezones
 
 from textual.suggester import Suggester, SuggestFromList
 
+from setup_system.configuration import ApplicationOptions
 from setup_system.domain.applications import applications
 from setup_system.domain.intentions import Section
 from setup_system.domain.observations import NativeObservations
@@ -50,7 +51,7 @@ class ProjectChoices(Suggester):
                 self._pending = None
 
     async def _complete(self, value: str) -> str | None:
-        await asyncio.sleep(0.075)
+        await asyncio.sleep(self.source.options.suggestion_debounce_seconds)
         choices = await self.source.project_values(value)
         return next((path for path in choices if path.startswith(value)), None)
 
@@ -78,7 +79,8 @@ class Catalog:
 
 
 class Suggestions:
-    def __init__(self, config: Path, home: Path) -> None:
+    def __init__(self, config: Path, home: Path, options: ApplicationOptions) -> None:
+        self.options = options
         self.config, self.home = config, home
         self.timezones: tuple[str, ...] = ()
         self.locales: tuple[str, ...] = ()
@@ -115,8 +117,7 @@ class Suggestions:
             self.backups = observed.backups
         self.modes = {output.output: output.modes for output in observed.outputs}
 
-    @staticmethod
-    def _scan(directory: Path) -> tuple[str, ...]:
+    def _scan(self, directory: Path) -> tuple[str, ...]:
         try:
             with os.scandir(directory) as entries:
                 return tuple(
@@ -124,10 +125,10 @@ class Suggestions:
                         islice(
                             (
                                 entry.path
-                                for entry in islice(entries, 2048)
+                                for entry in islice(entries, self.options.suggestion_scan_entries)
                                 if not entry.name.startswith(".") and entry.is_dir()
                             ),
-                            128,
+                            self.options.suggestion_results,
                         )
                     )
                 )
@@ -144,7 +145,7 @@ class Suggestions:
             return self.projects
         async with self._scan_lock:
             if directory not in self.project_dirs:
-                if len(self.project_dirs) >= 32:
+                if len(self.project_dirs) >= self.options.suggestion_cache_directories:
                     self.project_dirs.pop(next(iter(self.project_dirs)))
                 self.project_dirs[directory] = await asyncio.to_thread(self._scan, directory)
             candidates = self.project_dirs[directory]

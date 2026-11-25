@@ -28,6 +28,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from setup_system.configuration import Loaded, Settings
 from setup_system.domain.observations import NativeObservations, ProjectObservations
 from setup_system.infrastructure.operation_outcome import read_last_outcome
 from setup_system.infrastructure.palette import palette
@@ -50,7 +51,6 @@ from setup_system.runner import (
     RunEvent,
     Target,
 )
-from setup_system.settings import Loaded, Settings
 from setup_system.suggestions import Catalog, Suggestions, config_root
 from setup_system.ui.dialogs import Consent, DiscardEdits, Password
 from setup_system.ui.forms import BaseForm, WorkspaceForm
@@ -117,10 +117,41 @@ class SetupApp(App[None]):
         catalog: Catalog | None = None,
     ) -> None:
         super().__init__()
-        self.runner = runner if runner is not None else AsyncMakeRunner()
         self.settings = settings if settings is not None else Settings()
-        self.catalog = catalog if catalog is not None else Catalog(config_root())
-        colors = palette(self.catalog.config.parent)
+        self._runner = runner
+        self._catalog = catalog
+        self.runner: AsyncMakeRunner
+        self.catalog: Catalog
+        self.suggestions: Suggestions
+        self.loaded: dict[Section, Loaded] = {}
+        self.pending: PlanSnapshot | None = None
+        self.cancel_event: asyncio.Event | None = None
+        self.quit_when_finished = False
+        self.saving: set[Section] = set()
+        self.reloading: set[Section] = set()
+        self.reviewing: PlanSnapshot | None = None
+        self.controls: dict[str, Button] = {}
+        self.navigation: TabbedContent
+        self.base_form: BaseForm
+        self.workspace_form: WorkspaceForm
+        self.feedback: Static
+        self.feedback_updated = False
+
+    async def on_load(self) -> None:
+        """Read the packaged inputs before Textual composes the two forms."""
+        try:
+            options = await asyncio.to_thread(self.settings.application)
+            self.catalog = (
+                self._catalog
+                if self._catalog is not None
+                else await asyncio.to_thread(lambda: Catalog(config_root()))
+            )
+            colors = await asyncio.to_thread(palette, self.catalog.config.parent)
+        except ERRORS as exc:
+            self.exit(return_code=1, message=f"Could not load configurator settings: {exc}")
+            return
+        self.runner = self._runner if self._runner is not None else AsyncMakeRunner(options=options)
+        self.suggestions = Suggestions(self.catalog.config, self.settings.home, options)
         theme = TextualTheme(
             name="mocha-green",
             primary=colors["green"],
@@ -135,20 +166,6 @@ class SetupApp(App[None]):
         )
         self.register_theme(theme)
         self.theme = theme.name
-        self.suggestions = Suggestions(self.catalog.config, self.settings.home)
-        self.loaded: dict[Section, Loaded] = {}
-        self.pending: PlanSnapshot | None = None
-        self.cancel_event: asyncio.Event | None = None
-        self.quit_when_finished = False
-        self.saving: set[Section] = set()
-        self.reloading: set[Section] = set()
-        self.reviewing: PlanSnapshot | None = None
-        self.controls: dict[str, Button] = {}
-        self.navigation: TabbedContent
-        self.base_form: BaseForm
-        self.workspace_form: WorkspaceForm
-        self.feedback: Static
-        self.feedback_updated = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -610,11 +627,12 @@ def main() -> int:
         print("setupSystem requires an interactive terminal.", file=sys.stderr)
         return 2
     try:
-        SetupApp().run()
+        app = SetupApp()
+        app.run()
+        return app.return_code or 0
     except ERRORS as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":

@@ -44,13 +44,14 @@ class Commands:
         argv: list[str],
         *,
         env: dict[str, str],
-        text: bool,
-        capture_output: bool,
+        discard_output: bool,
+        discard_stderr: bool,
         timeout: int,
         check: bool,
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
-        assert timeout == 120 and text and capture_output
+        assert timeout == 120 and discard_stderr
+        assert discard_output == ("get-default" not in argv)
         assert env == {
             "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
             "LANG": "C",

@@ -8,6 +8,9 @@ setup-system
 
 Choose **Base system** for Debian, Hyprland, graphical login and regional settings. Choose **Working environment** for the theme, applications, editor and projects. **Inspect** reads the current machine. Review a plan and confirm **Apply** when you want to change it. Press **F1** for the installed guides or run `man setup-system` in a terminal. [Using the configurator](textual_workflow.md) · [Settings](configuration.md) · [Recovery](recovery.md)
 
+
+APT installs the Python settings loader and other declared runtime dependencies with the application. Launching it from another directory reads the same packaged resources and the invoking user’s stage preferences. Package updates preserve those preferences and their retained backups. [Settings and storage](configuration.md)
+
 ## 📦 Install on Debian
 
 Use an existing Debian 13 (trixie) installation on amd64 or arm64 with configured APT sources and a normal user account. HTTPS delivery requires a POSIX shell, curl with CA certificates, jq, dpkg, APT, util-linux, coreutils and the GitHub CLI. Its `gh attestation verify` command must support bundle, source and signer verification. The script checks the required flags. The download works without a checkout, Make, Python or uv.

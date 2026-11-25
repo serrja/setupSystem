@@ -7,7 +7,6 @@ import platform
 import pwd
 import shlex
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -18,6 +17,7 @@ from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files, changed_files
 from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.user_storage import target_path
 
 
@@ -144,7 +144,7 @@ def validate_shell(root: Path, zsh: Path) -> None:
         )
         for path, content in _targets(root, isolated, config_home=home / ".config").items():
             path.write_bytes(content)
-            subprocess.run([str(zsh), "-f", "-n", str(path)], check=True, timeout=10)
+            run_command([str(zsh), "-f", "-n", str(path)], discard_output=True, timeout=10)
         env = os.environ.copy()
         env.update(
             HOME=str(home),
@@ -162,21 +162,25 @@ def validate_shell(root: Path, zsh: Path) -> None:
                 if script is None:
                     raise RuntimeError("PTY-backed Zsh startup check requires script")
                 invocation = [script, "-q", "-e", "-c", shlex.join(invocation), "/dev/null"]
-            result = subprocess.run(
+            result = run_command(
                 invocation,
                 cwd=home,
                 env=env,
-                capture_output=True,
-                text=True,
                 check=False,
                 timeout=15,
             )
             output = result.stdout + result.stderr
-            if result.returncode != 0 or any(
-                warning in output
-                for warning in ("compinit:", "failed to load module", "not interactive")
-            ):
-                raise RuntimeError(f"Zsh isolated {flags} startup failed: {output.strip()}")
+            warning = next(
+                (
+                    item
+                    for item in ("compinit:", "failed to load module", "not interactive")
+                    if item in output
+                ),
+                None,
+            )
+            if result.returncode or warning:
+                reason = warning or f"exit {result.returncode}"
+                raise RuntimeError(f"Zsh isolated {flags} startup failed ({reason})")
             if flags != "-c" and not all(
                 name + ": function" in result.stdout for name in ("cproj", "compdef")
             ):

@@ -283,3 +283,13 @@ def test_ci_and_container_consume_reviewed_runtime_versions() -> None:
     assert set(re.findall(r"^FROM ghcr.io/astral-sh/uv:([0-9.]+)@", docker, re.M)) == {
         runtime["uv"]
     }
+
+
+def test_release_target_outputs_are_normalized_from_project_metadata(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="Example.Demo"\nversion="1.2.3.dev4"\n'
+    )
+    output = subprocess.check_output(
+        [sys.executable, "-I", ROOT / "docker/release_target.py"], cwd=tmp_path, text=True
+    )
+    assert output.splitlines() == ["package-name=example-demo", "version-target=1.2.3"]

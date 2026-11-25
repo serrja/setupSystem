@@ -38,10 +38,10 @@ def waybar_template(tmp_path_factory: pytest.TempPathFactory) -> str:
             "release_root": str(ROOT),
             "intent": {"theme": {}},
             "facts": {"xdg": {}},
-            "render_ctx": (
-                "{{ (lookup('ansible.builtin.file', release_root + "
-                "'/config/shared/palette.toml') | native_toml) "
-                "| workspace_context(intent, facts) }}"
+            "render_ctx": next(
+                row["ansible.builtin.set_fact"]["render_ctx"]
+                for row in tasks
+                if "render_ctx" in row.get("ansible.builtin.set_fact", {})
             ),
             "templates": [
                 {
@@ -151,6 +151,17 @@ def test_workspace_state_has_actual_active_and_occupied_flags(
 def executable(path: Path, source: str) -> None:
     path.write_text(f"#!{sys.executable}\n" + source)
     path.chmod(0o700)
+
+
+def test_oversized_workspace_reply_is_rejected_while_hyprctl_is_running(tmp_path, monkeypatch):
+    executable(
+        tmp_path / "hyprctl",
+        "import os,time\nos.write(1, b'x' * 4096)\ntime.sleep(30)\n",
+    )
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(panel, "MAX_REPLY", 1024)
+    with pytest.raises(ValueError, match="exceeds its bound"):
+        panel._query("workspaces")
 
 
 def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(

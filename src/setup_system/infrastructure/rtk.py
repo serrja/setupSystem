@@ -10,7 +10,6 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
@@ -25,6 +24,7 @@ from setup_system.infrastructure.downloads import GITHUB_RELEASE_HOSTS, Download
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files
 from setup_system.infrastructure.native_target import architecture
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.receipt_repository import ownership
 
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
@@ -111,19 +111,17 @@ def release(version: str | None = None) -> Release:
 def _verify_executable(command: Path) -> RtkStatus:
     """Smoke only the binary extracted from verified official release bytes."""
     env = {"HOME": str(command.parent), "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
-    version = subprocess.run(
+    version = run_command(
         [str(command), "--version"],
         env=env,
-        capture_output=True,
-        text=True,
+        discard_stderr=True,
         timeout=10,
         check=False,
     )
-    gain = subprocess.run(
+    gain = run_command(
         [str(command), "gain", "--help"],
         env=env,
-        capture_output=True,
-        text=True,
+        discard_stderr=True,
         timeout=10,
         check=False,
     )

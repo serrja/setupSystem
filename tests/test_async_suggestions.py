@@ -4,6 +4,7 @@ import asyncio
 import threading
 from pathlib import Path
 
+from setup_system.configuration import Settings
 from setup_system.suggestions import ProjectChoices, Suggestions
 
 
@@ -17,7 +18,9 @@ def test_latest_edit_wins_while_directory_read_is_pending(tmp_path, monkeypatch)
         for directory in (first, second):
             directory.mkdir()
             (directory / "A B é").mkdir()
-        source = Suggestions(Path(__file__).resolve().parents[1] / "config", tmp_path)
+        source = Suggestions(
+            Path(__file__).resolve().parents[1] / "config", tmp_path, Settings.application()
+        )
         original = source._scan
 
         def delayed(directory):
@@ -47,7 +50,7 @@ def test_quick_edits_use_one_scan_and_return_bounded_results(tmp_path, monkeypat
     async def scenario():
         for idx in range(160):
             (tmp_path / f"folder {idx}").mkdir()
-        source = Suggestions(tmp_path, tmp_path)
+        source = Suggestions(tmp_path, tmp_path, Settings.application())
         choices = ProjectChoices(source)
         scans = []
         original = source._scan
@@ -74,7 +77,7 @@ def test_a_slow_previous_directory_does_not_delay_the_latest_query(tmp_path, mon
         first.mkdir()
         latest.mkdir()
         (latest / "answer").mkdir()
-        source = Suggestions(tmp_path, tmp_path)
+        source = Suggestions(tmp_path, tmp_path, Settings.application())
         started, release = threading.Event(), threading.Event()
         scan = source._scan
 
@@ -96,3 +99,11 @@ def test_a_slow_previous_directory_does_not_delay_the_latest_query(tmp_path, mon
             release.set()
 
     asyncio.run(scenario())
+
+
+def test_directory_completion_obeys_the_application_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("SETUP_SYSTEM_SUGGESTION_RESULTS", "1")
+    for name in ("alpha", "beta", "gamma"):
+        (tmp_path / name).mkdir()
+    choices = Suggestions(tmp_path, tmp_path, Settings.application())
+    assert len(asyncio.run(choices.project_values(str(tmp_path) + "/"))) == 1

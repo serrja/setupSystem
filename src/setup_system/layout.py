@@ -3,6 +3,7 @@
 import subprocess
 from pathlib import Path
 
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.system_paths import protected
 
 PACKAGE = "setup-system"
@@ -30,15 +31,14 @@ def resource_root() -> Path:
 
 def _query(*args: str) -> str:
     try:
-        return subprocess.check_output(
-            args,
+        return run_command(
+            list(args),
             env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
             cwd="/",
             stdin=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
+            discard_stderr=True,
             timeout=30,
-        ).strip()
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError("Could not verify the installed Debian package") from exc
 
