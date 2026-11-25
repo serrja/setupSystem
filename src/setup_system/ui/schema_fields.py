@@ -262,7 +262,7 @@ class ValueEditor(Vertical):
         if spec.type == "object":
             return {field.key: field.value() for field in self.fields}
         if isinstance(self.control, SelectionList):
-            return self._selection(self.control)
+            return list[JsonValue](self._selection(self.control))
         if spec.type == "array":
             return [item.value() for item in self.fields]
         if isinstance(self.control, Switch):
