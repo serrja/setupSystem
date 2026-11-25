@@ -1,6 +1,5 @@
 """Read target capabilities without opening a writer, elevated process or network."""
 
-import json
 import os
 import pwd
 import re
@@ -11,13 +10,26 @@ from pathlib import Path
 from typing import TypedDict
 from zoneinfo import available_timezones
 
+import typer
+from pydantic import StrictBool, TypeAdapter
+
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
+from setup_system.domain.intentions import BaseOptions, Section, WorkspaceOptions
+from setup_system.domain.observations import NativeObservations, OutputModes
 from setup_system.infrastructure.native_target import current_target, get_release
 from setup_system.infrastructure.package_journal import historical_status
+from setup_system.machine_io import write_model
 
 
-class Display(TypedDict):
-    output: str
-    modes: list[str]
+class HyprMonitor(TypedDict):
+    name: str
+    availableModes: list[str]
+
+
+class FactRequest(ContractModel):
+    section: Section
+    intent: BaseOptions | WorkspaceOptions
+    inspect: StrictBool
 
 
 def keyboard_choices() -> list[str]:
@@ -33,19 +45,19 @@ def keyboard_choices() -> list[str]:
     return sorted(set(layouts))
 
 
-def monitors() -> list[Display]:
+def monitors() -> list[OutputModes]:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not Path("/usr/bin/hyprctl").is_file():
         return []
     try:
         probe = subprocess.run(
             ["/usr/bin/hyprctl", "monitors", "-j"], check=True, capture_output=True, timeout=4
         )
-        rows = json.loads(probe.stdout)
+        rows = TypeAdapter(list[HyprMonitor]).validate_json(probe.stdout)
         return [
-            {
-                "output": m["name"],
-                "modes": [mode.removesuffix("Hz") for mode in m["availableModes"]],
-            }
+            OutputModes(
+                output=m["name"],
+                modes=tuple(mode.removesuffix("Hz") for mode in m["availableModes"]),
+            )
             for m in rows
         ]
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
@@ -76,15 +88,18 @@ def desktop_error() -> str | None:
     )
 
 
-def main() -> None:
-    if sys.argv[1:] == ["desktop-ready"]:
-        issue = desktop_error()
-        if issue:
-            raise SystemExit(issue)
-        return
-    data = json.load(sys.stdin)
-    if os.geteuid() == 0:
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command()
+def collect() -> None:
+    """Inspect the declared stage and the normal user's workstation."""
+    if os.geteuid() == 0 or os.geteuid() != os.getuid():
         raise ValueError("Open the local application as your ordinary account")
+    raw = sys.stdin.buffer.read(MAX_MESSAGE_BYTES + 1)
+    if len(raw) > MAX_MESSAGE_BYTES:
+        raise ValueError("Fact request exceeds the supported size")
+    data = FactRequest.model_validate_json(raw)
     home = Path(os.environ["HOME"])
     if not home.is_absolute() or not home.is_dir() or home.stat().st_uid != os.getuid():
         raise ValueError("HOME must be an existing directory owned by the caller")
@@ -108,20 +123,21 @@ def main() -> None:
     arch, supported = current_target(release)
     outputs = monitors()
     reason = [] if supported else ["System operations require Debian 13 trixie on amd64 or arm64."]
-    intent = data["intent"]
-    if any(
-        not any(m["output"] == o["output"] and m["mode"] in o["modes"] for o in outputs)
-        for m in intent.get("monitors", [])
-    ):
-        reason.append("A selected display or mode is unavailable in this Hyprland session.")
-    if intent.get("graphical_login") and not intent.get("hyprland"):
+    intent = data.intent
+    if isinstance(intent, WorkspaceOptions):
+        if any(
+            not any(m.output == o.output and m.mode in o.modes for o in outputs)
+            for m in intent.monitors
+        ):
+            reason.append("A selected display or mode is unavailable in this Hyprland session.")
+        if (intent.desktop_theme or intent.monitors) and supported:
+            issue = desktop_error()
+            if issue:
+                reason.append(issue)
+    elif intent.graphical_login and not intent.hyprland:
         reason.append("Select Hyprland with graphical login.")
-    if (intent.get("desktop_theme") or intent.get("monitors")) and supported:
-        issue = desktop_error()
-        if issue:
-            reason.append(issue)
     account = pwd.getpwuid(os.getuid())
-    result: dict[str, object] = dict(
+    facts = dict(
         home=str(home),
         xdg=xdg,
         uid=account.pw_uid,
@@ -131,9 +147,9 @@ def main() -> None:
         outputs=outputs,
         blockers=reason,
     )
-    if data["inspect"] and data["section"] == "base":
+    if data.inspect and data.section == "base":
         path = Path("/usr/share/i18n/SUPPORTED")
-        result.update(
+        facts.update(
             previous_package_operation=historical_status(),
             timezones=sorted(available_timezones()),
             keyboards=keyboard_choices(),
@@ -147,8 +163,16 @@ def main() -> None:
             if path.exists()
             else [],
         )
-    print(json.dumps(result))
+    write_model(NativeObservations.model_validate(facts))
+
+
+@cli.command()
+def desktop_ready() -> None:
+    """Verify the installed Hyprland commands."""
+    if issue := desktop_error():
+        typer.echo(issue, err=True)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

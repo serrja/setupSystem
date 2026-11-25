@@ -11,7 +11,9 @@
   register: vendor_release
 - name: Check publisher, architecture, immutable asset name and digest
   ansible.builtin.set_fact:
-    latest_debs: "{{ latest_debs | combine({vendor_id: vendor_release.json | native_github_deb(app_catalog[vendor_id], facts.architecture)}) }}"
+    latest_debs: >-
+      {{ latest_debs | combine({vendor_id: vendor_release.json | to_json
+         | native_github_deb(app_catalog[vendor_id] | to_json, facts.architecture)}) }}
 
 - name: Observe the installed Happ package and vendor service
   ansible.builtin.command:

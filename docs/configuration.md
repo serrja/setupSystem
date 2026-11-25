@@ -9,11 +9,11 @@ Each section saves its own preferences in `$XDG_CONFIG_HOME/setup-system`, which
 
 ## 💾 Save and reload
 
-Save validates the selected fields, preserves TOML comments and checks the revision read by the form. Reload after an external edit. The migration reads known earlier section settings and retains the old file when saving the new format. Backups of replaced settings remain beside the new file.
+Save validates the selected fields, preserves TOML comments and checks the revision read by the form. Reload reads the saved settings again. If the form has unsaved edits, it asks before replacing them. The migration reads known earlier section settings and retains the old file when saving the new format. Backups of replaced settings remain beside the new file.
 
 **Base system** accepts timezone, locale, keyboard and selected desktop or boot changes. **Working environment** groups application and language choices, theme, outputs, project paths, cleanup and recovery. Inspect refreshes suggestions. Output and mode selections are checked against a connected display. Entering a value, switching sections and saving preferences require no elevation.
 
-Preview obtains the actions and their preconditions. Review the complete proposed change before Apply. The request also carries the original preview so that a changed package resolution, file or output can stop the run.
+Preview shows the section, actions and preconditions. Switching sections preserves a pending preview. Editing a field used by its operation requires a fresh preview before Apply. An operation already running keeps its confirmed settings. The request also carries the original preview so that a changed package resolution, file or output can stop the run.
 
 ## Earlier user launcher
 

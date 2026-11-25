@@ -6,9 +6,11 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import yaml
+from pydantic import JsonValue
 
 from setup_system.application import templates
 from setup_system.domain.projects import (
@@ -133,10 +135,24 @@ def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TemplateSource:
     )
 
 
-def plan(source: TemplateSource, destination: Path, **options: object) -> TemplatePlan:
-    values = {"template": source.metadata.alias, "version": "0.1.0", "defaults": True, **options}
+def plan(
+    source: TemplateSource,
+    destination: Path,
+    *,
+    operation: Literal["create", "update"] = "create",
+    version: str | None = "0.1.0",
+    offline: bool = False,
+    data: dict[str, JsonValue] | None = None,
+) -> TemplatePlan:
     return templates.plan_template(
-        {source.metadata.alias: source}, destination=destination, **values
+        {source.metadata.alias: source},
+        template=source.metadata.alias,
+        destination=destination,
+        version=version,
+        operation=operation,
+        offline=offline,
+        defaults=True,
+        data=data,
     )
 
 

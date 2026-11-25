@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue
 
 from setup_system.domain.system_facts import ClockSnapshot, EncryptionState, InspectionPaths
 from setup_system.infrastructure import clock, encryption, inspection, inspection_commands
@@ -33,10 +34,10 @@ class Queries:
     home_device: str = "/dev/root"
     home_filesystem: str = "ext4"
     root_filesystem: str = "ext4"
-    root_tree: object = field(
+    root_tree: JsonValue = field(
         default_factory=lambda: [{"name": "root", "type": "part", "fstype": "ext4"}]
     )
-    home_tree: object = field(
+    home_tree: JsonValue = field(
         default_factory=lambda: [{"name": "home", "type": "part", "fstype": "ext4"}]
     )
     clock: str = "Timezone=UTC\nNTP=yes\nNTPSynchronized=no\nLocalRTC=no\nCanNTP=yes\n"
@@ -104,7 +105,7 @@ def context(tmp_path: Path) -> tuple[Path, InspectionPaths, Queries]:
     )
 
 
-def encrypted_tree() -> list[dict[str, object]]:
+def encrypted_tree() -> list[dict[str, JsonValue]]:
     return [
         {
             "name": "vg-root",

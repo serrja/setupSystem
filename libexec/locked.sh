@@ -2,8 +2,10 @@
 # Installed tasks and package updates take an exclusive lock on the same directory.
 set -eu
 lock=/run/setup-system
-if [ ! -d "$lock" ] && [ "$(pwd -P)" != /usr/lib/setup-system ]; then
-    lock=.
+if [ ! -d "$lock" ]; then
+    # shellcheck source=libexec/runtime.sh
+    . "$(dirname -- "$0")/runtime.sh"
+    if [ "$root" != "$installed_root" ]; then lock=.; fi
 fi
 # Direct dpkg already owns its native POSIX lock when its maintainer guard runs.
 # Check for that writer while holding our flock to close the post-preinst window.

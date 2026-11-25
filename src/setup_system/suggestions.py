@@ -10,29 +10,19 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import available_timezones
 
-from textual.suggester import Suggester
+from textual.suggester import Suggester, SuggestFromList
 
 from setup_system.domain.applications import applications
 from setup_system.domain.intentions import Section
 from setup_system.domain.observations import NativeObservations
-from setup_system.runner import resource_root
+from setup_system.domain.projects import ProjectCatalog
+from setup_system.layout import resource_root
 
 
-class Choices(Suggester):
-    """Textual awaits this method on each edit; sources stay in memory until refresh."""
-
-    def __init__(self, values: tuple[str, ...] = ()) -> None:
-        super().__init__(use_cache=False, case_sensitive=True)
-        self.values = values
-
-    async def get_suggestion(self, value: str) -> str | None:
-        return next((item for item in self.values if item.startswith(value) and value), None)
-
-
-class KeyboardChoices(Choices):
+class KeyboardChoices(SuggestFromList):
     async def get_suggestion(self, value: str) -> str | None:
         before, comma, typed = value.rpartition(",")
-        choice = await super().get_suggestion(typed)
+        choice = await super().get_suggestion(typed) if typed else None
         return before + comma + choice if choice and choice not in before.split(",") else None
 
 
@@ -40,19 +30,28 @@ class ProjectChoices(Suggester):
     def __init__(self, source: Suggestions):
         super().__init__(use_cache=False, case_sensitive=True)
         self.source = source
-        self.generation = 0
+        self._pending: asyncio.Task[str | None] | None = None
 
     async def get_suggestion(self, value: str) -> str | None:
-        self.generation += 1
-        generation = self.generation
-        if not value:
+        if self._pending is not None:
+            self._pending.cancel()
+        search = asyncio.create_task(self._complete(value)) if value else None
+        self._pending = search
+        if search is None:
             return None
+        try:
+            return await search
+        except asyncio.CancelledError:
+            if self._pending is search:
+                raise
+            return None
+        finally:
+            if self._pending is search:
+                self._pending = None
+
+    async def _complete(self, value: str) -> str | None:
         await asyncio.sleep(0.075)
-        if self.generation != generation:
-            return None
         choices = await self.source.project_values(value)
-        if self.generation != generation:
-            return None
         return next((path for path in choices if path.startswith(value)), None)
 
 
@@ -81,21 +80,20 @@ class Catalog:
 class Suggestions:
     def __init__(self, config: Path, home: Path) -> None:
         self.config, self.home = config, home
-        self.timezones = Choices()
-        self.locales = Choices()
-        self.keyboards = KeyboardChoices()
-        self.outputs = Choices()
+        self.timezones: tuple[str, ...] = ()
+        self.locales: tuple[str, ...] = ()
+        self.keyboards: tuple[str, ...] = ()
         self.modes: dict[str, tuple[str, ...]] = {}
-        self.projects = Choices()
-        self.backups = Choices()
+        self.projects: tuple[str, ...] = ()
+        self.backups: tuple[str, ...] = ()
         self._scan_lock = asyncio.Lock()
         self.project_dirs: dict[Path, tuple[str, ...]] = {}
 
     def _catalog_paths(self) -> tuple[str, ...]:
         source = self.config / "workspace/projects.toml"
-        catalog = _toml(source)
-        root = Path(str(catalog["projectsRoot"]).replace("$HOME/", str(self.home) + "/", 1))
-        paths = (root / entry["id"] for entry in catalog.get("project", ()))
+        catalog = ProjectCatalog.model_validate(_toml(source))
+        root = self.home / catalog.projects_root.removeprefix("$HOME/")
+        paths = (root / record.id for record in catalog.project)
         return tuple(
             str(path)
             for path in paths
@@ -104,19 +102,18 @@ class Suggestions:
 
     async def refresh(self, section: Section, observed: NativeObservations) -> None:
         if section == "base":
-            self.timezones.values = observed.timezones or tuple(
+            self.timezones = observed.timezones or tuple(
                 sorted(await asyncio.to_thread(available_timezones))
             )
-            self.locales.values = observed.locales
-            self.keyboards.values = observed.keyboards
+            self.locales = observed.locales
+            self.keyboards = observed.keyboards
         else:
             async with self._scan_lock:
                 self.project_dirs.clear()
                 paths = await asyncio.to_thread(self._catalog_paths)
-            self.projects.values = tuple(sorted(set(paths)))
-            self.backups.values = observed.backups
+            self.projects = tuple(sorted(set(paths)))
+            self.backups = observed.backups
         self.modes = {output.output: output.modes for output in observed.outputs}
-        self.outputs.values = tuple(self.modes)
 
     @staticmethod
     def _scan(directory: Path) -> tuple[str, ...]:
@@ -139,12 +136,12 @@ class Suggestions:
 
     async def project_values(self, value: str) -> tuple[str, ...]:
         if not value:
-            return self.projects.values
+            return self.projects
         expanded = value.replace("~/", str(self.home) + "/", 1) if value.startswith("~/") else value
         path = Path(expanded)
         directory = path if expanded.endswith("/") else path.parent
         if not directory.is_absolute() or ".." in directory.parts:
-            return self.projects.values
+            return self.projects
         async with self._scan_lock:
             if directory not in self.project_dirs:
                 if len(self.project_dirs) >= 32:
@@ -153,4 +150,4 @@ class Suggestions:
             candidates = self.project_dirs[directory]
         if value.startswith("~/"):
             candidates = tuple("~/" + os.path.relpath(item, self.home) for item in candidates)
-        return tuple(dict.fromkeys((*self.projects.values, *candidates)))
+        return tuple(dict.fromkeys((*self.projects, *candidates)))

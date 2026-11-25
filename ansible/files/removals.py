@@ -10,10 +10,15 @@ import tomllib
 from pathlib import Path
 from typing import TypedDict
 
+from pydantic import ConfigDict, TypeAdapter, with_config
+
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES
 from setup_system.domain.intentions import CleanupMode
 from setup_system.infrastructure.native_target import current_target
+from setup_system.layout import require_installed_resource
 
 
+@with_config(ConfigDict(extra="forbid", strict=True))
 class RemovalSelection(TypedDict):
     selected: list[str]
     closure: list[str]
@@ -116,20 +121,25 @@ def check(request: RemovalSelection) -> None:
         ):
             raise ValueError("Unknown editor account")
         commands = ["/usr/sbin/runuser", "-u", account.pw_name, "--"] if os.geteuid() == 0 else []
-        subprocess.run(
+        keys = ("EDITOR=nvim", "VISUAL=nvim")
+        matched = subprocess.run(
             [
                 *commands,
-                "/usr/bin/python3",
-                "-I",
-                "-B",
-                "-c",
-                "import pathlib,sys; p=pathlib.Path(sys.argv[1]); "
-                "lines=p.read_text().splitlines(); "
-                "sys.exit(0 if 'EDITOR=nvim' in lines and 'VISUAL=nvim' in lines else 1)",
+                "/usr/bin/grep",
+                "-Fx",
+                "-e",
+                keys[0],
+                "-e",
+                keys[1],
+                "--",
                 str(config / "environment.d/90-setup-system-editor.conf"),
             ],
             check=True,
+            text=True,
+            capture_output=True,
         )
+        if set(matched.stdout.splitlines()) != set(keys):
+            raise ValueError("Verify both Neovim editor environment settings before removal")
         subprocess.run(
             [*commands, "/usr/bin/nvim", "--clean", "--headless", "-n", "-i", "NONE", "+q"],
             timeout=15,
@@ -140,4 +150,9 @@ def check(request: RemovalSelection) -> None:
 
 
 if __name__ == "__main__":
-    check(json.load(sys.stdin))
+    if os.geteuid() == 0:
+        require_installed_resource(Path(__file__), "ansible/files/removals.py")
+    raw = sys.stdin.buffer.read(MAX_MESSAGE_BYTES + 1)
+    if len(raw) > MAX_MESSAGE_BYTES:
+        raise ValueError("Removal selection exceeds the supported size")
+    check(TypeAdapter(RemovalSelection).validate_json(raw))

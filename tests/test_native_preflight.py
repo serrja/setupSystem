@@ -7,6 +7,7 @@ import os
 import runpy
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -33,9 +34,8 @@ def test_debian_identity_is_checked_as_a_whole(key, value):
 def test_firefox_matching_policy_has_no_second_action(tmp_path, monkeypatch, capsys):
     scope = runpy.run_path(str(ROOT / "ansible/files/system_contract.py"))
     policy = tmp_path / "policies.json"
-    main = scope["main"]
-    main.__globals__["policy_stamp"] = lambda: scope["policy_stamp"](policy)
-    monkeypatch.setattr(sys, "argv", ["system_contract.py", "plan"])
+    run = scope["run"]
+    run.__globals__["policy_stamp"] = lambda: scope["policy_stamp"](policy)
 
     def plan():
         monkeypatch.setattr(
@@ -43,7 +43,7 @@ def test_firefox_matching_policy_has_no_second_action(tmp_path, monkeypatch, cap
             "stdin",
             io.StringIO(json.dumps({"section": "workspace", "settings": {"apps": ["firefox"]}})),
         )
-        main()
+        run("plan")
         return json.loads(capsys.readouterr().out)
 
     assert plan()["actions"]
@@ -71,12 +71,22 @@ def test_user_manager_rejects_repointed_prefix_before_read(tmp_path, monkeypatch
     assert not list(outside.iterdir())
 
 
-def test_read_only_apt_uses_private_signed_indexes(tmp_path):
+@pytest.fixture
+def signing_home():
+    # Agent socket names must fit sockaddr_un even when pytest's test path is long.
+    with tempfile.TemporaryDirectory(prefix="sign-") as directory:
+        try:
+            yield Path(directory)
+        finally:
+            subprocess.run(["gpgconf", "--homedir", directory, "--kill", "gpg-agent"], check=True)
+
+
+def test_read_only_apt_uses_private_signed_indexes(tmp_path, signing_home):
     # Use a signed flat archive to exercise real APT without a network or host hooks.
     stage = tmp_path / "apt"
     repo = tmp_path / "repository"
-    keyhome = tmp_path / "signer"
-    for d in (stage / "lists/partial", stage / "archives/partial", repo, keyhome):
+    keyhome = signing_home
+    for d in (stage / "lists/partial", stage / "archives/partial", repo):
         d.mkdir(parents=True, mode=0o700)
     now = datetime.now(UTC)
     raw = (

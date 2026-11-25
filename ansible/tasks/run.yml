@@ -31,12 +31,12 @@
           - section == 'workspace' or setup_action not in ['cleanup-plan', 'cleanup-apply']
     - name: Record validated selections
       ansible.builtin.set_fact:
-        intent: "{{ request | native_request(section, app_catalog, cleanup_catalog, setup_action) }}"
+        intent: "{{ request | to_json | native_request(section, app_catalog | to_json, cleanup_catalog | to_json, setup_action) }}"
         system_run: "{{ setup_action in ['apply', 'cleanup-apply'] }}"
         execute_run: "{{ setup_action not in ['inspect', 'plan', 'cleanup-plan'] }}"
     - name: Inspect local platform and user capabilities
       ansible.builtin.command:
-        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/facts.py"]
+        argv: ["{{ ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/facts.py", "collect"]
         stdin: "{{ {'section': section, 'intent': intent, 'inspect': setup_action == 'inspect'} | to_json }}"
       register: probe
       changed_when: false
@@ -44,7 +44,7 @@
       ansible.builtin.set_fact:
         facts: "{{ probe.stdout | from_json }}"
         blockers: "{{ (probe.stdout | from_json).blockers }}"
-        packages: "{{ intent | native_packages(base_catalog, app_catalog) }}"
+        packages: "{{ intent | to_json | native_packages(base_catalog | to_json, app_catalog | to_json) }}"
         cleanup: "{{ intent.cleanup | default([]) }}"
     - name: Inspect selected operations on a supported host
       ansible.builtin.include_tasks: plan.yml
@@ -87,12 +87,12 @@
                 'needs_user':user_changes | length > 0}) }}
     - name: Freeze validated native actions and their observed preconditions
       ansible.builtin.set_fact:
-        plan: "{{ plan | native_result }}"
+        plan: "{{ plan | to_json | native_result }}"
         system_kinds: "{{ system_actions | map(attribute='kind') | list }}"
     - name: Verify consent before any selected change
       ansible.builtin.assert:
         that:
-          - (request.expected | native_same_plan(plan))
+          - (request.expected | to_json | native_same_plan(plan | to_json))
           - not blockers
           - setup_action != 'user-apply' or not plan.observed.needs_system
           - setup_action != 'apply' or plan.observed.needs_system
@@ -113,8 +113,9 @@
       ansible.builtin.set_fact:
         outcome:
           status: >-
-            {{ 'cancelled' if cancel_requested else ('partial' if mutation_started or changed_stages
-               else ('failed' if (execute_run | default(false)) and plan is defined and (request.expected | native_same_plan(plan)) else 'blocked')) }}
+            {{ 'partial' if mutation_started or changed_stages else ('cancelled' if cancel_requested
+               else ('failed' if (execute_run | default(false)) and plan is defined
+               and (request.expected | to_json | native_same_plan(plan | to_json)) else 'blocked')) }}
           actions: "{{ changed_stages }}"
           blockers:
             - >-
@@ -140,7 +141,7 @@
         - signed_indexes.rc is defined
     - name: Publish the result as the calling user
       ansible.builtin.copy:
-        content: "{{ outcome | native_result | to_json }}\n"
+        content: "{{ outcome | to_json | native_result | to_json }}\n"
         dest: "{{ lookup('ansible.builtin.env', 'SETUP_SYSTEM_RESULT') }}"
         mode: "0600"
       become: false

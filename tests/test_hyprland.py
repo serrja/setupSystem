@@ -23,9 +23,9 @@ from setup_system.infrastructure.native_target import target
 def packages():
     native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
     return native["package_names"](
-        {"hyprland": True, "graphical_login": True},
-        tomllib.loads((ROOT / "config/base/packages.toml").read_text()),
-        {},
+        json.dumps({"hyprland": True, "graphical_login": True}),
+        json.dumps(tomllib.loads((ROOT / "config/base/packages.toml").read_text())),
+        json.dumps({}),
     )
 
 
@@ -380,7 +380,9 @@ def test_version_inspection_does_not_launch_compositor_without_runtime(
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     monkeypatch.setattr(os, "access", lambda path, mode: True)
 
-    def execute(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def execute(
+        argv: list[str], *, text: bool, capture_output: bool, check: bool, timeout: int
+    ) -> subprocess.CompletedProcess[str]:
         assert argv[0] == "/usr/bin/dpkg-query"
         assert argv[-1] == "hyprland"
         return subprocess.CompletedProcess(argv, 0, f"install ok installed\t{version}\n", "")

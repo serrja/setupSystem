@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import runpy
 import tomllib
 from pathlib import Path
@@ -40,7 +41,11 @@ def test_hyprland_manifest_fields_are_validated_before_use(tmp_path, section, fi
         data[section][field] = value
     before = copy.deepcopy(data)
     with pytest.raises(AnsibleFilterError, match="package"):
-        packages({"hyprland": True, "graphical_login": True}, data, {})
+        packages(
+            json.dumps({"hyprland": True, "graphical_login": True}),
+            json.dumps(data),
+            "{}",
+        )
     assert data == before and not list(tmp_path.iterdir())
 
 
@@ -99,9 +104,13 @@ def test_inconsistent_capability_fields_are_rejected(selection, names):
     base["hyprland"]["stable"] = names
     with pytest.raises(AnsibleFilterError, match="package"):
         if selection == "desktop":
-            packages({"hyprland": True}, base, {})
+            packages(json.dumps({"hyprland": True}), json.dumps(base), "{}")
         else:
-            packages({"apps": ["editor"], "languages": []}, {}, {"editor": {"packages": names}})
+            packages(
+                json.dumps({"apps": ["editor"], "languages": []}),
+                "{}",
+                json.dumps({"editor": {"packages": names}}),
+            )
 
 
 @pytest.mark.parametrize(
@@ -128,7 +137,18 @@ def test_package_plan_uses_declared_names_and_signed_backports_without_version_p
     expected = sorted(
         configured["stable"] + [p + "/trixie-backports" for p in configured["backports"]]
     )
-    assert packages({"hyprland": True}, base, {}) == expected
+    assert packages(json.dumps({"hyprland": True}), json.dumps(base), "{}") == expected
     assert "hyprland/trixie-backports" in expected and all("=" not in p for p in expected)
-    assert packages({"graphical_login": True}, base, {}) == sorted(base["login"]["stable"])
-    assert packages({}, base, {}) == []
+    assert packages(json.dumps({"graphical_login": True}), json.dumps(base), "{}") == sorted(
+        base["login"]["stable"]
+    )
+    assert packages("{}", json.dumps(base), "{}") == []
+
+
+def test_duplicate_packages_in_a_valid_application_are_rejected():
+    with pytest.raises(AnsibleFilterError, match="package"):
+        packages(
+            json.dumps({"apps": ["editor"]}),
+            "{}",
+            json.dumps({"editor": {"title": "Editor", "kind": "app", "packages": ["git", "git"]}}),
+        )

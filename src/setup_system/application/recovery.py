@@ -12,7 +12,12 @@ def recover(
     with journal.writer() if apply else nullcontext():
         operation = journal.load_operation(folder)
         if operation.status == "restored":
-            return [files.restored_entry(row) for row in operation.files]
+            entries = [files.restored_entry(row) for row in operation.files]
+            if apply:
+                for name, status in entries:
+                    if status == "conflict":
+                        raise ValueError(f"Rollback conflicts with a later edit: {name}")
+            return entries
         targets = []
         for row in operation.files:
             path, status = files.inspect(row)
@@ -34,7 +39,8 @@ def recover(
         for target in targets:
             if target.status == "conflict":
                 raise ValueError(files.conflict(target))
-        journal.load_operation(folder, migrate=True)
+        if journal.load_operation(folder, migrate=True) != operation:
+            raise ValueError("The operation receipt changed during recovery inspection")
         index = journal.ownership(migrate=True)
         results = []
         for target in targets:

@@ -8,16 +8,24 @@ import stat
 import subprocess
 import sys
 import tomllib
+from enum import StrEnum
 from pathlib import Path
-from urllib.request import ProxyHandler, Request, build_opener
+from typing import Annotated
 
+import typer
+from pydantic import TypeAdapter
+
+from setup_system.domain.applications import BasePackages, applications
 from setup_system.infrastructure import happ_facts
+from setup_system.infrastructure.downloads import DownloadPolicy, read_https
 from setup_system.infrastructure.native_target import current_target
 from setup_system.infrastructure.service_policy import defer_services
 from setup_system.infrastructure.system_paths import protected
 from setup_system.infrastructure.upstream_asset import github_deb
+from setup_system.layout import INSTALLED, require_installed_resource
 
-ROOT = Path("/usr/lib/setup-system")
+ROOT = INSTALLED
+APT_HELPER = Path("ansible/files/apt_apply.py")
 
 
 def reviewed(stage: Path) -> None:
@@ -34,7 +42,7 @@ def reviewed(stage: Path) -> None:
 
 
 def verify(stage: Path) -> None:
-    approved = json.loads((stage / "approved.json").read_bytes())
+    approved = TypeAdapter(list[str]).validate_json((stage / "approved.json").read_bytes())
     expected = {}
     architecture = subprocess.check_output(
         ["/usr/bin/dpkg", "--print-architecture"], text=True
@@ -117,12 +125,16 @@ def validate_deb(path: Path, key: str, verified: dict[str, str], arch: str) -> s
 
 def run(stage: Path) -> None:
     reviewed(stage)
-    args = json.loads((stage / "transaction.json").read_bytes())
-    package_config = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
-    app_config = tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
-    allow = set(package_config["hyprland"]["stable"] + package_config["login"]["stable"])
-    allow.update(p + "/trixie-backports" for p in package_config["hyprland"]["backports"])
-    allow.update(p for app in app_config.values() for p in app.get("packages", []))
+    args = TypeAdapter(list[str]).validate_json((stage / "transaction.json").read_bytes())
+    package_config = BasePackages.model_validate(
+        tomllib.loads((ROOT / "config/base/packages.toml").read_text())
+    )
+    app_config = applications(
+        tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
+    )
+    allow = set(package_config.hyprland.stable + package_config.login.stable)
+    allow.update(p + "/trixie-backports" for p in package_config.hyprland.backports)
+    allow.update(p for app in app_config.values() for p in app.packages)
     allow.update(["console-setup", "locales", "plymouth", "plymouth-themes", "xkb-data"])
     index = args.index("--")
     if args[index - 3 : index] != ["--no-remove", "--no-install-recommends", "install"]:
@@ -145,17 +157,15 @@ def run(stage: Path) -> None:
             raise ValueError("Unreviewed upstream Debian source")
         key = candidates[0]
         source = app_config[key]
-        url = "https://api.github.com/repos/" + source["github"] + "/releases/latest"
-        with build_opener(ProxyHandler({})).open(
-            Request(url, headers={"Accept": "application/vnd.github+json"}), timeout=30
-        ) as response:
-            if response.geturl() != url:
-                raise ValueError("Unexpected upstream release redirect")
-            raw = response.read(1024 * 1024 + 1)
-        if len(raw) > 1024 * 1024:
-            raise ValueError("Upstream release metadata exceeds the response limit")
+        if not source.github:
+            raise ValueError("No approved upstream source for the selected Debian archive")
+        url = "https://api.github.com/repos/" + source.github + "/releases/latest"
+        raw = read_https(
+            url,
+            DownloadPolicy(frozenset({"api.github.com"}), 1024 * 1024, 30, follow_redirects=False),
+        )
         arch = current_target()[0]
-        verified = github_deb(json.loads(raw), source, arch)
+        verified = github_deb(json.loads(raw), source.model_dump(mode="json"), arch)
         accepted = dict(records[key])
         before = accepted.pop("before", None)
         if accepted != verified:
@@ -187,9 +197,7 @@ def run(stage: Path) -> None:
         "--",
         *packages,
     ]
-    hook = "/usr/bin/python3 -I -B /usr/lib/setup-system/ansible/files/apt_apply.py verify " + str(
-        stage
-    )
+    hook = f"/usr/bin/python3 -I -B {INSTALLED / APT_HELPER} verify {stage}"
     config = [
         "-o",
         "DPkg::Pre-Install-Pkgs::=" + hook,
@@ -212,17 +220,39 @@ def run(stage: Path) -> None:
         )
 
 
-if __name__ == "__main__":
-    if sys.argv[1:] in (["sources"], ["sources", "chatgpt"]):
-        verify_sources(Path(__file__).resolve().parents[2], sys.argv[1:] == ["sources", "chatgpt"])
-        sys.exit(0)
+class Vendor(StrEnum):
+    CHATGPT = "chatgpt"
+
+
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command()
+def sources(vendor: Annotated[Vendor | None, typer.Argument()] = None) -> None:
+    """Check the signed-by keyrings selected by this stage."""
+    verify_sources(Path(__file__).absolute().parents[2], vendor == Vendor.CHATGPT)
+
+
+def system_boundary() -> None:
     if os.geteuid() != 0 or not current_target()[1]:
-        raise SystemExit("Only the installed system executor can run this boundary")
-    if len(sys.argv) == 3 and sys.argv[1] == "verify":
-        stage = Path(sys.argv[2])
-        reviewed(stage)
-        verify(stage)
-    elif len(sys.argv) == 2:
-        run(Path(sys.argv[1]))
-    else:
-        raise ValueError("Unsupported APT boundary operation")
+        raise ValueError("Only the installed system executor can run this boundary")
+    require_installed_resource(Path(__file__), str(APT_HELPER))
+
+
+@cli.command("verify")
+def verify_hook(stage: Path) -> None:
+    """Compare the actual APT pre-install protocol with the confirmed transaction."""
+    system_boundary()
+    reviewed(stage)
+    verify(stage)
+
+
+@cli.command()
+def apply(stage: Path) -> None:
+    """Execute the reviewed APT transaction."""
+    system_boundary()
+    run(stage)
+
+
+if __name__ == "__main__":
+    cli()

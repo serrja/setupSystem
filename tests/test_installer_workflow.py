@@ -1,6 +1,7 @@
 """Direct delivery and optional application selection replace the temporary proxy flow."""
 
 import asyncio
+import json
 import runpy
 import tomllib
 from pathlib import Path
@@ -24,8 +25,17 @@ def test_happ_is_not_required_for_base_or_theme_plan() -> None:
     ):
         values = settings.model_dump(mode="json")
         assert "happ" not in values.get("apps", ())
-        assert "happ" not in native["package_names"](values, base, apps)
-    assert native["package_names"](WorkspaceOptions().model_dump(mode="json"), base, apps) == []
+        assert "happ" not in native["package_names"](
+            settings.model_dump_json(), json.dumps(base), json.dumps(apps)
+        )
+    assert (
+        native["package_names"](
+            WorkspaceOptions().model_dump_json(),
+            json.dumps(base),
+            json.dumps(apps),
+        )
+        == []
+    )
 
 
 def test_happ_is_selected_only_by_explicit_workspace_intention() -> None:
@@ -33,7 +43,10 @@ def test_happ_is_selected_only_by_explicit_workspace_intention() -> None:
     validate = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["validate_request"]
     for selected in ([], ["happ"]):
         plan = validate(
-            {"schema": 1, "settings": {"apps": selected}, "expected": None}, "workspace", apps, {}
+            json.dumps({"schema": 1, "settings": {"apps": selected}, "expected": None}),
+            "workspace",
+            json.dumps(apps),
+            "{}",
         )
         assert ("happ" in plan["apps"]) == bool(selected)
         assert "subscription" not in plan

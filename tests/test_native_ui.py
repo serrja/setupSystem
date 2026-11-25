@@ -25,7 +25,7 @@ class Tasks:
     async def check_authorization(self):
         return Path("/usr/lib/setup-system")
 
-    async def run(self, command, *, password=None, cancel=None, on_event=None):
+    async def execute(self, command, *, password=None, cancel=None, on_event=None):
         target = command.target
         payload = json.loads(command.request_json)
         return TaskResult.model_validate(
@@ -114,7 +114,9 @@ def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
             await pilot.click("#plan")
             await idle(app, pilot)
             assert app.pending is not None
-            field.value = "Europe/Paris"
+            await pilot.press("ctrl+2")
+            assert app.pending is not None
+            await pilot.press("ctrl+1")
             await pilot.click("#apply")
             assert isinstance(app.screen, Consent)
             assert not list(app.screen.query("#password"))
@@ -132,6 +134,7 @@ def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
             tasks.gate = asyncio.Event()
             await pilot.click("#authorize")
             assert password.value == ""
+            field.value = "Europe/Paris"
             await pilot.pause()
             assert tasks.calls[-1] == (
                 Target.BASE_APPLY,
@@ -168,6 +171,85 @@ def test_plan_uses_reviewed_snapshot_and_supports_tab_switch_cancel(tmp_path):
             await idle(app, pilot)
             assert str(app.query_one("#feedback", Static).render()).find("Partial") >= 0
             assert not app.settings.directory.exists()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["preview", "consent", "password"])
+def test_changed_live_selection_requires_a_new_preview(tmp_path, phase):
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            field = app.query_one("#timezone", Input)
+            field.value = "UTC"
+            await press_plan(app, pilot, "#plan", "base")
+            if phase != "preview":
+                await pilot.click("#apply")
+                assert isinstance(app.screen, Consent)
+            if phase == "password":
+                await pilot.click("#confirm")
+                assert isinstance(app.screen, Password)
+                app.screen.query_one("#password", Input).value = "synthetic fixture"
+            field.value = "Europe/Paris"
+            if phase != "preview":
+                await pilot.click("#confirm" if phase == "consent" else "#authorize")
+            await idle(app, pilot)
+            assert app.pending is None and app.query_one("#apply", Button).disabled
+            assert [entry[0] for entry in tasks.calls] == [Target.BASE_PLAN]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("admin-account", " alice "),
+        ("admin-account", "alice\n"),
+        ("timezone", " UTC "),
+        ("timezone", "  "),
+        ("project", "/tmp/selected\n"),
+    ],
+)
+def test_forms_preserve_invalid_input_until_validation(tmp_path, name, value):
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            if name == "project":
+                await pilot.press("ctrl+2")
+            field = app.query_one("#" + name, Input)
+            field.value = value
+            app.query_one(
+                {"admin-account": "#admin-plan", "project": "#project-check", "timezone": "#plan"}[
+                    name
+                ],
+                Button,
+            ).press()
+            await pilot.pause()
+            assert not tasks.calls and field.value == value
+            assert app.pending is None
+
+    asyncio.run(scenario())
+
+
+def test_expanded_project_path_preserves_directory_name_and_home(tmp_path):
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.press("ctrl+2")
+            field = app.query_one("#project", Input)
+            field.value = "~//Example Project "
+            app.query_one("#project-check", Button).press()
+            await idle(app, pilot)
+            assert (
+                tasks.calls[-1][1]["settings"]["project"]
+                == f"{app.suggestions.home}//Example Project "
+            )
 
     asyncio.run(scenario())
 
@@ -241,7 +323,7 @@ def test_completion_refresh_modes_paths_and_keyboard(tmp_path):
             form.update_layout(False)
             assert form.options().monitors[0].output == "DP-1"
             await app.suggestions.refresh("workspace", NativeObservations(outputs=()))
-            assert not app.suggestions.outputs.values
+            assert not app.suggestions.modes
             assert await app.suggestions.project_values("") == ()
             project = app.settings.home / "Архив 2"
             project.mkdir()
@@ -328,6 +410,7 @@ def test_only_base_user_files_use_unprivileged_make_after_consent(tmp_path):
 
 
 def test_base_user_apply_enters_real_play_without_a_become_prompt(tmp_path, monkeypatch):
+    from setup_system.infrastructure.operation_outcome import read_last_outcome
     from setup_system.runner import AsyncMakeRunner, Command
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -340,14 +423,19 @@ def test_base_user_apply_enters_real_play_without_a_become_prompt(tmp_path, monk
         "observed": {"needs_system": False, "needs_user": True},
     }
     reply = asyncio.run(
-        runner.run(
+        runner.execute(
             Command.capture(
                 Target.BASE_USER_APPLY, {"schema": 1, "settings": {}, "expected": expected}
             )
         )
     )
     assert reply.status == "blocked" and reply.blockers
-    assert not list(tmp_path.iterdir())
+    recorded = asyncio.run(read_last_outcome())
+    assert recorded is not None
+    assert recorded.target is Target.BASE_USER_APPLY and recorded.status is reply.status
+    state = tmp_path / "state"
+    folder = state / "setup-system"
+    assert set(tmp_path.rglob("*")) == {state, folder, folder / "last-operation.json"}
 
 
 def test_administrative_consent_precedes_the_dedicated_root_prompt(tmp_path):
@@ -439,5 +527,49 @@ def test_settings_change_after_password_prompt_expires_the_response(tmp_path):
             with pytest.raises(RuntimeError, match="expired"):
                 answer.take()
             assert tasks.calls[-1][0] == Target.BASE_PLAN and app.pending is None
+
+    asyncio.run(scenario())
+
+
+def test_reload_requires_explicit_discard_and_cancel_preserves_invalid_edits(tmp_path):
+    async def scenario():
+        app = app_for(tmp_path, Tasks())
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            field = app.query_one("#timezone", Input)
+            field.value = "unfinished value"
+            await pilot.click("#reload")
+            assert app.screen.query("#discard-edits")
+            await pilot.press("escape")
+            assert field.value == "unfinished value"
+            await pilot.click("#reload")
+            await pilot.click("#discard-edits")
+            await app.workers.wait_for_complete()
+            assert field.value == ""
+
+    asyncio.run(scenario())
+
+
+def test_apply_from_another_tab_identifies_the_stage_and_runs_only_once(tmp_path):
+    async def scenario():
+        tasks = Tasks()
+        app = app_for(tmp_path, tasks)
+        async with app.run_test(size=(110, 42)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.click("#plan")
+            await idle(app, pilot)
+            await pilot.press("ctrl+2")
+            apply = app.query_one("#apply", Button)
+            assert "base" in str(apply.label).lower()
+            apply.press()
+            apply.press()
+            await pilot.pause()
+            assert isinstance(app.screen, Consent)
+            assert "base" in str(app.screen.query_one("Label").render()).lower()
+            await pilot.click("#confirm")
+            app.screen.query_one("#password", Input).value = "fixture"
+            await pilot.click("#authorize")
+            await idle(app, pilot)
+            assert [target for target, *_ in tasks.calls].count(Target.BASE_APPLY) == 1
 
     asyncio.run(scenario())
