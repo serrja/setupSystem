@@ -150,20 +150,20 @@ def test_plan_snapshot_freezes_inputs_and_requires_privilege_scope():
 
 
 def test_recovery_preserves_permission_change_racing_the_exchange(tmp_path, monkeypatch):
-    from setup_system import settings as storage
+    from setup_system.infrastructure import user_storage as storage
 
     settings = store(tmp_path)
     saved = settings.save("base", BaseOptions(timezone="UTC"), settings.load("base").revision)
     target = settings.directory / "base.toml"
     before = target.read_bytes()
-    exchange = storage._exchange
+    exchange = storage.exchange
 
     def chmod_before_publication(fd, backup, name):
-        monkeypatch.setattr(storage, "_exchange", exchange)
+        monkeypatch.setattr(storage, "exchange", exchange)
         target.chmod(0o666)
         exchange(fd, backup, name)
 
-    monkeypatch.setattr(storage, "_exchange", chmod_before_publication)
+    monkeypatch.setattr(storage, "exchange", chmod_before_publication)
     with pytest.raises(ValueError):
         settings.save("base", BaseOptions(timezone="Europe/Paris"), saved.revision)
     assert target.read_bytes() == before
@@ -171,20 +171,21 @@ def test_recovery_preserves_permission_change_racing_the_exchange(tmp_path, monk
 
 
 def test_legacy_settings_edit_during_migration_keeps_the_owner_version(tmp_path, monkeypatch):
-    import os
+    from setup_system.infrastructure import user_storage as storage
 
     settings = store(tmp_path)
     settings.directory.mkdir(parents=True)
     original = settings.directory / "system-intentions.toml"
     original.write_text('timezone = "UTC"\n')
     before = settings.load("base")
-    link = os.link
+    publish = storage.rename_new
 
     def late_edit(*args, **kwargs):
-        link(*args, **kwargs)
+        publish(*args, **kwargs)
+        monkeypatch.setattr(storage, "rename_new", publish)
         original.write_text('timezone = "Europe/Berlin"\n')
 
-    monkeypatch.setattr(os, "link", late_edit)
+    monkeypatch.setattr(storage, "rename_new", late_edit)
     with pytest.raises(ValueError, match="Concurrent"):
         settings.save("base", BaseOptions(timezone="Europe/Paris"), before.revision)
     assert original.read_text() == 'timezone = "Europe/Berlin"\n'
@@ -211,3 +212,40 @@ def test_packaged_examples_load_from_an_alternate_xdg_home(tmp_path, monkeypatch
         assert choices.timezone == "Europe/Paris"
     else:
         assert choices.apps == ("firefox",) and choices.languages == ("python",)
+
+
+def test_replaced_settings_inode_rejected_even_if_contents_match(tmp_path, monkeypatch):
+    from setup_system.infrastructure import user_storage as storage
+
+    settings = store(tmp_path)
+    saved = settings.save("base", BaseOptions(timezone="UTC"), settings.load("base").revision)
+    target = settings.directory / "base.toml"
+    original = target.read_bytes()
+    replacement = target.with_suffix(".tmp")
+    replacement.write_bytes(original)
+    replacement.chmod(0o600)
+    expected_inode = replacement.stat().st_ino
+    exchange = storage.exchange
+
+    def replace_before_publication(fd, staged, name):
+        monkeypatch.setattr(storage, "exchange", exchange)
+        replacement.replace(target)
+        exchange(fd, staged, name)
+
+    monkeypatch.setattr(storage, "exchange", replace_before_publication)
+    with pytest.raises(ValueError, match="Concurrent"):
+        settings.save("base", BaseOptions(timezone="Europe/Paris"), saved.revision)
+    assert target.read_bytes() == original and target.stat().st_ino == expected_inode
+
+
+def test_reload_revision_detects_replacement_with_the_same_settings(tmp_path):
+    settings = store(tmp_path)
+    saved = settings.save("base", BaseOptions(timezone="UTC"), settings.load("base").revision)
+    target = settings.directory / "base.toml"
+    replacement = target.with_suffix(".tmp")
+    replacement.write_bytes(target.read_bytes())
+    replacement.chmod(0o600)
+    replacement.replace(target)
+    with pytest.raises(ValueError, match="changed"):
+        settings.save("base", BaseOptions(timezone="Europe/Paris"), saved.revision)
+    assert settings.load("base").options.timezone == "UTC"

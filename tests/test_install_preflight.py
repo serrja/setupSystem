@@ -1,5 +1,6 @@
 """Reject unsupported sources, privileged execution paths and arbitrary native task input."""
 
+import json
 import runpy
 import subprocess
 import tomllib
@@ -60,6 +61,9 @@ def test_caller_cannot_inject_package_options_or_a_command(tmp_path):
     ):
         with pytest.raises((ValueError, AnsibleFilterError)):
             filters["native_request"](
-                {"schema": 1, "settings": settings, "expected": None}, "workspace", apps, {}
+                json.dumps({"schema": 1, "settings": settings, "expected": None}),
+                "workspace",
+                json.dumps(apps),
+                "{}",
             )
     assert not list(tmp_path.iterdir())

@@ -98,15 +98,12 @@ def actual(setting: str) -> str | None:
 def _command(args: list[str]) -> str:
     return processes.run_command(
         args,
-        check=True,
-        capture_output=True,
-        text=True,
         timeout=90,
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LC_ALL": "C"},
     ).stdout
 
 
-def validate(setting: str, value: object) -> str:
+def validate(setting: str, value: str | None) -> str:
     if not isinstance(value, str):
         raise ValueError(f"Select an explicit {setting}")
     if setting == "timezone" and validate_timezone(value) == value:
@@ -130,7 +127,7 @@ def validate(setting: str, value: object) -> str:
     raise ValueError(f"Unsupported {setting} selection")
 
 
-def apply(setting: RegionalKind, value: object, expected: object) -> None:
+def apply(setting: RegionalKind, value: str | None, expected: str | None) -> None:
     desired = validate(setting, value)
     before = actual(setting)
     if equivalent(setting, before, desired):

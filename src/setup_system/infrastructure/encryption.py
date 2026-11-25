@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import errno
-import json
 import os
 import re
 import stat
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
+
+from pydantic import BaseModel, Field
 
 from setup_system.domain.system_facts import EncryptionInfo, EncryptionState
 from setup_system.infrastructure.inspection_commands import (
@@ -25,21 +25,24 @@ FS_ENCRYPT_FL = 0x00000800
 DirectoryFlags = Callable[[Path], int | None]
 
 
-@dataclass(frozen=True)
-class _Mount:
+class _Mount(BaseModel):
     source: str
-    filesystem: str
+    filesystem: str = Field(alias="fstype")
 
 
-def _object(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ValueError("Invalid inspection object")
-    result: dict[str, object] = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            raise ValueError("Invalid inspection key")
-        result[key] = item
-    return result
+class _FindMount(BaseModel):
+    filesystems: tuple[_Mount] = Field(min_length=1, max_length=1)
+
+
+class _Device(BaseModel):
+    name: str = Field(min_length=1)
+    kind: str = Field(alias="type")
+    fstype: str | None = None
+    children: tuple[_Device, ...] = ()
+
+
+class _BlockDevices(BaseModel):
+    blockdevices: tuple[_Device, ...] = Field(min_length=1)
 
 
 def _mount(path: Path, run: InspectionRunner) -> _Mount | None:
@@ -50,15 +53,8 @@ def _mount(path: Path, run: InspectionRunner) -> _Mount | None:
     if output is None:
         return None
     try:
-        filesystems = _object(json.loads(output)).get("filesystems")
-        if not isinstance(filesystems, list) or len(filesystems) != 1:
-            return None
-        value = _object(filesystems[0])
-        source, filesystem = value.get("source"), value.get("fstype")
-        if not isinstance(source, str) or not isinstance(filesystem, str):
-            return None
-        return _Mount(source, filesystem.lower())
-    except (ValueError, TypeError, RecursionError):
+        return _FindMount.model_validate_json(output).filesystems[0]
+    except ValueError:
         return None
 
 
@@ -87,37 +83,22 @@ def _block_layers(source: str, run: InspectionRunner) -> tuple[str, ...] | None:
     if output is None:
         return None
     try:
-        devices = _object(json.loads(output)).get("blockdevices")
-        if not isinstance(devices, list) or not devices:
-            return None
-        pending = [(item, frozenset[str]()) for item in devices]
+        devices = _BlockDevices.model_validate_json(output).blockdevices
+        pending = [(device, frozenset[str]()) for device in devices]
         layers: set[str] = set()
         count = 0
         while pending:
-            item, ancestors = pending.pop()
-            value = _object(item)
+            node, ancestors = pending.pop()
             count += 1
-            name, kind, filesystem = value.get("name"), value.get("type"), value.get("fstype")
-            if (
-                count > 4096
-                or len(ancestors) >= 64
-                or not isinstance(name, str)
-                or not name
-                or name in ancestors
-                or not isinstance(kind, str)
-                or (filesystem is not None and not isinstance(filesystem, str))
-            ):
+            if count > 4096 or len(ancestors) >= 64 or node.name in ancestors:
                 return None
-            if kind == "crypt":
+            if node.kind == "crypt":
                 layers.add("dm-crypt")
-            if isinstance(filesystem, str) and filesystem.lower() == "crypto_luks":
+            if node.fstype and node.fstype.lower() == "crypto_luks":
                 layers.add("LUKS")
-            children = value.get("children", [])
-            if not isinstance(children, list):
-                return None
-            pending.extend((child, ancestors | {name}) for child in children)
+            pending.extend((child, ancestors | {node.name}) for child in node.children)
         return tuple(sorted(layers))
-    except (ValueError, TypeError, RecursionError):
+    except ValueError:
         return None
 
 
@@ -130,7 +111,7 @@ def _mount_encryption(mount: _Mount | None, run: InspectionRunner) -> Encryption
         return EncryptionInfo(
             state=EncryptionState.UNKNOWN, layers=(), detail="Mount information is unavailable"
         )
-    if mount.filesystem == "ecryptfs":
+    if mount.filesystem.lower() == "ecryptfs":
         return EncryptionInfo(
             state=EncryptionState.ENCRYPTED, layers=("eCryptfs",), detail="Existing eCryptfs mount"
         )
@@ -196,7 +177,7 @@ def home_encryption(
             detail="HOME protection could not be inspected",
         )
     mount = _mount(home, run)
-    if ecryptfs_marker and (mount is None or mount.filesystem != "ecryptfs"):
+    if ecryptfs_marker and (mount is None or mount.filesystem.lower() != "ecryptfs"):
         return EncryptionInfo(
             state=EncryptionState.LOCKED if mount is not None else EncryptionState.UNKNOWN,
             layers=("eCryptfs",),
@@ -204,7 +185,7 @@ def home_encryption(
             "the existing local login before setup",
         )
     result = _mount_encryption(mount, run)
-    if mount is not None and mount.filesystem == "ecryptfs":
+    if mount is not None and mount.filesystem.lower() == "ecryptfs":
         return result
     try:
         flags = home_flags(home)

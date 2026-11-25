@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
+from pydantic import JsonValue
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import BindingType
@@ -18,7 +19,7 @@ from setup_system.runner import Target
 @dataclass(frozen=True)
 class ToolChoice:
     target: Target
-    values: dict[str, object]
+    values: dict[str, JsonValue]
 
 
 class ProjectTools(ModalScreen[ToolChoice | None]):
@@ -105,7 +106,7 @@ class ProjectTools(ModalScreen[ToolChoice | None]):
         if event.button.id is None:
             return
         target = Target(event.button.id)
-        values: dict[str, object] = {}
+        values: dict[str, JsonValue] = {}
 
         def selected(widget: str) -> str:
             item = self.query_one(widget, Select).value

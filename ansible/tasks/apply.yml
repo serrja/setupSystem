@@ -100,7 +100,7 @@
   when: apt_changes | length > 0 and not cleanup and not (boot_facts.unlock.packages | default([]))
 - name: Apply the native, signed Debian transaction with service start deferral
   ansible.builtin.command:
-    argv: ["/usr/bin/python3", "-I", "-B", "{{ playbook_dir }}/files/apt_apply.py", "{{ apt_work.path }}"]
+    argv: ["/usr/bin/python3", "-I", "-B", "{{ playbook_dir }}/files/apt_apply.py", "apply", "{{ apt_work.path }}"]
   become: true
   changed_when: true
   when: apt_changes | length > 0 and not cleanup and not (boot_facts.unlock.packages | default([]))

@@ -107,7 +107,7 @@
 - name: Check the complete removal closure against reviewed metadata
   ansible.builtin.command:
     argv: ["{{ '/usr/bin/python3' if system_run else ansible_playbook_python }}", "-I", "-B", "{{ playbook_dir }}/files/removals.py"]
-    stdin: "{{ {'selected': cleanup, 'closure': apt_changes, 'catalog': cleanup_catalog, 'mode': intent.cleanup_mode, 'home': facts.home,
+    stdin: "{{ {'selected': cleanup, 'closure': apt_changes, 'mode': intent.cleanup_mode, 'home': facts.home,
       'xdg': facts.xdg} | to_json
       }}"
   become: "{{ system_run }}"

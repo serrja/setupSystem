@@ -14,7 +14,7 @@ from pathlib import Path
 
 import setup_system
 from setup_system.infrastructure.palette import palette
-from setup_system.runner import resource_root
+from setup_system.layout import resource_root
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--wheel", type=Path)

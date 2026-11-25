@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-from typing import Any
+from collections.abc import Mapping
+from types import FrameType
 
 
 def run_command(
@@ -14,20 +15,17 @@ def run_command(
     timeout: int = 180,
     termination_grace: int = 5,
     check: bool = True,
-    capture_output: bool = True,
-    text: bool = True,
     input: str | None = None,
-    **kwargs: Any,
+    env: Mapping[str, str] | None = None,
+    stdin: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Bound each process group and propagate cancellation through nested supervisors."""
-    if not capture_output or not text:
-        raise ValueError("Installer command capture must be textual")
     if input is not None:
-        if "stdin" in kwargs:
+        if stdin is not None:
             raise ValueError("Installer input cannot be combined with a separate stdin")
-        kwargs["stdin"] = subprocess.PIPE
+        stdin = subprocess.PIPE
 
-    def interrupted(signum: int, frame: Any) -> None:
+    def interrupted(signum: int, frame: FrameType | None) -> None:
         raise KeyboardInterrupt("Installer command interrupted")
 
     previous = signal.signal(signal.SIGTERM, interrupted)
@@ -39,7 +37,8 @@ def run_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            **kwargs,
+            env=env,
+            stdin=stdin,
         )
         try:
             stdout, stderr = process.communicate(input=input, timeout=timeout)

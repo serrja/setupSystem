@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import io
+import asyncio
 import math
-import ssl
-import time
 from dataclasses import dataclass
 from enum import StrEnum
-from http.client import HTTPException
-from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
+from urllib.parse import urljoin, urlsplit
+
+import httpx
 
 USER_AGENT = "setupSystem"
 GITHUB_RELEASE_HOSTS = frozenset(
@@ -75,6 +71,7 @@ class DownloadPolicy:
     max_bytes: int
     timeout: float
     total_timeout: float = 600
+    follow_redirects: bool = True
 
     def __post_init__(self) -> None:
         if (
@@ -96,57 +93,46 @@ class DownloadPolicy:
             raise ValueError("Download origins must be explicit HTTPS hostnames")
 
 
-class HTTPSRedirects(HTTPRedirectHandler):
-    """Reject each redirect before urllib can request an unapproved next origin."""
-
-    def __init__(self, policy: DownloadPolicy) -> None:
-        super().__init__()
-        self.policy = policy
-
-    def redirect_request(
-        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
-    ) -> Any:
-        validate_https_url(newurl, self.policy.allowed_hosts)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+async def download_https(url: str, policy: DownloadPolicy) -> bytes:
+    """Read a bounded response. Validate each redirect before making its request."""
+    host = validate_https_url(url, policy.allowed_hosts)
+    try:
+        async with (
+            asyncio.timeout(policy.total_timeout),
+            httpx.AsyncClient(
+                timeout=policy.timeout,
+                trust_env=False,
+                follow_redirects=False,
+                headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"},
+            ) as client,
+        ):
+            for _ in range(11):
+                async with client.stream("GET", url) as response:
+                    if response.is_redirect and policy.follow_redirects:
+                        location = response.headers.get("Location")
+                        if not location:
+                            raise DownloadError(DownloadFailure.URL)
+                        url = urljoin(url, location)
+                        host = validate_https_url(url, policy.allowed_hosts)
+                        continue
+                    if response.status_code != 200:
+                        raise DownloadError(
+                            DownloadFailure.HTTP, host=host, status=response.status_code
+                        )
+                    data = bytearray()
+                    async for block in response.aiter_raw(
+                        chunk_size=min(CHUNK_BYTES, policy.max_bytes + 1)
+                    ):
+                        if len(data) + len(block) > policy.max_bytes:
+                            raise DownloadError(DownloadFailure.SIZE, host=host)
+                        data.extend(block)
+                    return bytes(data)
+            raise DownloadError(DownloadFailure.URL)
+    except (httpx.HTTPError, httpx.InvalidURL, OSError, ValueError, TimeoutError):
+        pass
+    raise DownloadError(DownloadFailure.NETWORK, host=host)
 
 
 def read_https(url: str, policy: DownloadPolicy) -> bytes:
-    """Return only a complete response within the per-source budget."""
-    safe_host = validate_https_url(url, policy.allowed_hosts)
-    output = io.BytesIO()
-    total = 0
-    deadline = time.monotonic() + policy.total_timeout
-    try:
-        opener = build_opener(
-            ProxyHandler({}),
-            HTTPSRedirects(policy),
-            HTTPSHandler(context=ssl.create_default_context()),
-        )
-        with opener.open(
-            Request(url, headers={"User-Agent": USER_AGENT}), timeout=policy.timeout
-        ) as source:
-            safe_host = validate_https_url(source.geturl(), policy.allowed_hosts)
-            if source.status != 200:
-                raise DownloadError(DownloadFailure.HTTP, host=safe_host, status=source.status)
-            while True:
-                if time.monotonic() >= deadline:
-                    raise DownloadError(DownloadFailure.NETWORK, host=safe_host)
-                block = source.read(min(CHUNK_BYTES, policy.max_bytes - total + 1))
-                if time.monotonic() >= deadline:
-                    raise DownloadError(DownloadFailure.NETWORK, host=safe_host)
-                if not block:
-                    break
-                total += len(block)
-                if total > policy.max_bytes:
-                    raise DownloadError(DownloadFailure.SIZE, host=safe_host)
-                output.write(block)
-    except HTTPError as exc:
-        try:
-            safe_host = validate_https_url(exc.url, policy.allowed_hosts)
-        except DownloadError:
-            pass
-        exc.close()
-        raise DownloadError(DownloadFailure.HTTP, host=safe_host, status=exc.code) from None
-    except (URLError, OSError, ValueError, HTTPException):
-        raise DownloadError(DownloadFailure.NETWORK, host=safe_host) from None
-    return output.getvalue()
+    """Synchronous entry for standalone Make and Ansible helper processes."""
+    return asyncio.run(download_https(url, policy))

@@ -2,8 +2,9 @@
 
 import os
 import subprocess
-import sys
 from pathlib import Path
+
+import typer
 
 from setup_system.infrastructure.tool_paths import personal_path
 
@@ -42,5 +43,10 @@ def observe(path: Path, repo: str) -> str:
     return git("rev-parse", "HEAD")
 
 
+def inspect(path: Path, repo: str) -> None:
+    """Print the clean checkout identity for the selected Git source."""
+    typer.echo(observe(path, repo))
+
+
 if __name__ == "__main__":
-    print(observe(Path(sys.argv[1]), sys.argv[2]))
+    typer.run(inspect)

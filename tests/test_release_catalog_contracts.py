@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from setup_system import runner
+from setup_system import layout
 from setup_system.domain.applications import applications
 from setup_system.domain.displays import MonitorLayout
 from setup_system.models import BaseOptions, PlanSnapshot, WorkspaceOptions
@@ -23,11 +23,11 @@ def test_explicit_source_and_wheel_roots_do_not_fall_back_to_installed_data(tmp_
     ):
         module.mkdir(parents=True)
         bundle.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(runner, "__file__", str(module / "runner.py"))
+        monkeypatch.setattr(layout, "__file__", str(module / "runner.py"))
         with pytest.raises(RuntimeError, match="missing"):
-            runner.resource_root()
+            layout.resource_root()
         (bundle / "Makefile").write_text("run:\n")
-        assert runner.resource_root() == bundle
+        assert layout.resource_root() == bundle
 
 
 @pytest.mark.parametrize(
@@ -106,9 +106,9 @@ def test_locator_refuses_symlinked_data_and_release_ancestors(tmp_path, monkeypa
     (bundle / "Makefile").write_text("all:")
     source = tmp_path / "source"
     source.symlink_to(bundle)
-    monkeypatch.setattr(runner, "__file__", str(source / "src/setup_system/runner.py"))
+    monkeypatch.setattr(layout, "__file__", str(source / "src/setup_system/runner.py"))
     with pytest.raises(ValueError, match="symlink"):
-        runner.resource_root()
+        layout.resource_root()
     with pytest.raises(ValueError, match="symlink"):
         Catalog(source / "config")
 

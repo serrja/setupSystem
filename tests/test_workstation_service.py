@@ -22,13 +22,13 @@ from setup_system.ui.dialogs import Password
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def native_main(name, monkeypatch, action, data, **fixtures):
-    main = runpy.run_path(str(ROOT / "ansible/files" / (name + ".py")))["main"]
+def system_task(monkeypatch, action, data, **fixtures):
+    scope = runpy.run_path(str(ROOT / "ansible/files/system_contract.py"))
+    command = scope["run"]
     for key, value in fixtures.items():
-        monkeypatch.setitem(main.__globals__, key, value)
-    monkeypatch.setattr(sys, "argv", [name, action])
+        monkeypatch.setitem(command.__globals__, key, value)
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(data)))
-    return main()
+    return command(scope["SystemTask"](action))
 
 
 @pytest.fixture(scope="module")
@@ -63,6 +63,7 @@ def outcomes(tmp_path_factory):
             [],
             True,
         ),
+        "cancel_before": ({"apps": ["firefox"]}, False, True, [], [], True),
         "unsupported": (
             {"desktop_theme": True},
             False,
@@ -106,7 +107,7 @@ def outcomes(tmp_path_factory):
                     "ansible.builtin.copy": {
                         "dest": str(run / key),
                         "mode": "0600",
-                        "content": "{{ outcome | native_result | to_json }}",
+                        "content": "{{ outcome | to_json | native_result | to_json }}",
                     }
                 },
             ]
@@ -150,7 +151,7 @@ def test_plan_never_calls_executor_or_creates_files(tmp_path, monkeypatch):
     for key in ("CONFIG", "DATA", "STATE", "CACHE"):
         monkeypatch.setenv("XDG_" + key + "_HOME", str(home / key.lower()))
     result = asyncio.run(
-        AsyncMakeRunner(ROOT).run(
+        AsyncMakeRunner(ROOT).execute(
             Command.capture(Target.WORKSPACE_PLAN, {"schema": 1, "settings": {}, "expected": None})
         )
     )
@@ -179,9 +180,14 @@ def test_unsupported_platform_blocks_apply_but_not_navigation(tmp_path, outcomes
 
 
 def test_cancel_is_observed_between_completed_stages(outcomes):
-    assert outcomes["cancel"]["status"] == "cancelled"
+    assert outcomes["cancel"]["status"] == "partial"
     assert outcomes["cancel"]["actions"] == [{"kind": "packages_verified", "label": "Packages"}]
     assert "Prepare next stage" in outcomes["cancel"]["blockers"][0]
+
+
+def test_cancel_before_mutation_has_no_partial_stages(outcomes):
+    assert outcomes["cancel_before"]["status"] == "cancelled"
+    assert outcomes["cancel_before"]["actions"] == []
 
 
 def test_partial_failure_never_reports_success(outcomes):
@@ -230,8 +236,7 @@ def test_region_changes_have_independent_operations_without_desktop(monkeypatch,
     from setup_system.infrastructure import regional
 
     monkeypatch.setattr(regional, "actual", lambda kind: None)
-    native_main(
-        "system_contract",
+    system_task(
         monkeypatch,
         "plan",
         {
@@ -339,8 +344,7 @@ def test_confirmed_happ_upgrade_passes_the_observed_package_version(monkeypatch,
     monkeypatch.setattr(
         happ_facts, "require_idle", lambda old, new, facts: calls.append((old, new, facts))
     )
-    native_main(
-        "system_contract",
+    system_task(
         monkeypatch,
         "happ-inspect",
         {"settings": {"apps": ["happ"]}, "version": "5.0"},
@@ -386,14 +390,14 @@ def test_invalid_release_record_blocks_only_privileged_operations(tmp_path, monk
             "observed": {"needs_system": True, "needs_user": False},
         }
         asyncio.run(
-            runner.run(
+            runner.execute(
                 Command.capture(
                     Target.BASE_APPLY, {"schema": 1, "settings": {}, "expected": expected}
                 )
             )
         )
     answer = asyncio.run(
-        runner.run(
+        runner.execute(
             Command.capture(
                 Target.PROJECT_CHECK,
                 {"schema": 1, "settings": {"project": str(tmp_path)}, "expected": None},
@@ -443,7 +447,7 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
         "settings": {"hyprland": True, "graphical_login": True},
         "xdg": user_xdg,
     }
-    native_main("system_contract", monkeypatch, "plan", request, desktop=desktop)
+    system_task(monkeypatch, "plan", request, desktop=desktop)
     plan = json.loads(capsys.readouterr().out)
     assert "login" in plan["observed"] and plan["actions"]
     inspecting = False
@@ -456,21 +460,19 @@ def test_login_rejects_drift_between_confirmation_and_root_execution(
         system.paths.display_manager.symlink_to(system.paths.vendor_unit)
     elif change == "readable_grub_input":
         system.paths.grub_default.write_text("GRUB_TIMEOUT=15\n")
-    installed = Path("/usr/lib/setup-system")
 
-    def guard(path):
-        assert path == installed
+    def guard(path, relative):
+        assert path == ROOT / relative
+        assert relative == "ansible/files/system_contract.py"
         assert system.paths.boundary.is_relative_to(tmp_path)
 
     def apply():
-        native_main(
-            "system_contract",
+        system_task(
             monkeypatch,
             "login",
             request | {"observed": plan["observed"], "actions": plan["actions"]},
             desktop=desktop,
-            protected=guard,
-            ROOT=installed,
+            require_installed_resource=guard,
             current_target=lambda: ("amd64", True),
             os=SimpleNamespace(geteuid=lambda: 0),
         )

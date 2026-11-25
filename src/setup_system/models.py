@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal, Self, get_args
+from typing import Annotated, Any, Literal, Self, get_args
 
 from pydantic import (
     AfterValidator,
@@ -140,7 +140,7 @@ _PROJECT_MODELS: dict[str, type[Model]] = {
 }
 
 
-def validate_project_settings(task: str, fields: object) -> dict[str, object]:
+def validate_project_settings(task: str, fields: dict[str, JsonValue]) -> dict[str, JsonValue]:
     """Validate native project input before any command, network or filesystem access."""
     model = _PROJECT_MODELS.get(task)
     if model is None:
@@ -159,6 +159,7 @@ class Status(StrEnum):
     COMPLETE = "complete"
     NEEDS_REBOOT = "needs_reboot"
     PARTIAL = "partial"
+    UNKNOWN = "unknown"
     FAILED = "failed"
     CANCELLED = "cancelled"
     REQUIRES_USER_LOGIN = "requires_user_login"
@@ -173,28 +174,28 @@ class AdminObservations(Observations):
     boot_identity: Digest
 
 
-def bounded_json(value: object) -> object:
+def bounded_json(value: Any) -> Any:
     """Bound nesting and object cardinality for direct callers as well as process input."""
     work = [(value, 0)]
     count = 0
-    characters = 0
+    text_bytes = 0
     while work:
         node, depth = work.pop()
         count += 1
-        if count > 48000 or depth > 24 or characters > MAX_MESSAGE_BYTES:
+        if count > 48000 or depth > 24 or text_bytes > MAX_MESSAGE_BYTES:
             raise ValueError("Operation payload exceeds the supported structure limits")
         if isinstance(node, dict):
             if len(node) > 8192 or any(not isinstance(k, str) or len(k) > 4096 for k in node):
                 raise ValueError("Invalid operation data keys")
-            characters += sum(len(k) for k in node)
+            text_bytes += sum(len(k.encode()) for k in node)
             work.extend((v, depth + 1) for v in node.values())
         elif isinstance(node, (tuple, list)):
             if len(node) > 8192:
                 raise ValueError("Operation collection exceeds the limit")
             work.extend((v, depth + 1) for v in node)
         elif isinstance(node, str):
-            characters += len(node)
-            if len(node) > 16384 or characters > MAX_MESSAGE_BYTES:
+            text_bytes += len(node.encode())
+            if len(node) > 16384 or text_bytes > MAX_MESSAGE_BYTES:
                 raise ValueError("Operation text exceeds the limit")
     return value
 
@@ -209,7 +210,7 @@ class TaskResult(Model):
 
     @model_validator(mode="before")
     @classmethod
-    def bounded(cls, value: object) -> object:
+    def bounded(cls, value: Any) -> Any:
         return bounded_json(value)
 
     def describe(self) -> str:
@@ -264,7 +265,7 @@ class RequestEnvelope(Model):
 
     @model_validator(mode="before")
     @classmethod
-    def bounded(cls, value: object) -> object:
+    def bounded(cls, value: Any) -> Any:
         return bounded_json(value)
 
     def for_target(self, target: str) -> Self:
@@ -321,8 +322,8 @@ class PlanSnapshot(Model):
     def capture(
         cls,
         task: PlanTask,
-        settings: Mapping[str, object],
-        reply: Mapping[str, object],
+        settings: Mapping[str, JsonValue],
+        reply: Mapping[str, JsonValue],
         revision: str | None,
     ) -> Self:
         bounded_json(dict(settings))
@@ -380,13 +381,17 @@ class PlanSnapshot(Model):
         return self
 
     @property
+    def section(self) -> Section:
+        return "base" if self.task in {"base", "admin"} else "workspace"
+
+    @property
     def needs_password(self) -> bool:
         return self.task in {"cleanup", "admin"} or (
             self.task in {"base", "workspace"}
             and json.loads(self.expected_json)["observed"]["needs_system"]
         )
 
-    def payload(self) -> dict[str, object]:
+    def payload(self) -> dict[str, JsonValue]:
         return {
             "schema": 1,
             "settings": json.loads(self.settings_json),

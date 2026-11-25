@@ -1,6 +1,6 @@
 """Validate the finite native source declarations shipped with the workspace."""
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, TypeAdapter, model_validator
 
@@ -24,6 +24,8 @@ class Application(ContractModel):
 
     @model_validator(mode="after")
     def executable_source(self) -> Self:
+        if len(set(self.packages)) != len(self.packages):
+            raise ValueError("Duplicate Debian package in application")
         if self.github:
             if not self.asset or self.packages or self.npm or self.pypi:
                 raise ValueError("An upstream Debian archive requires one reviewed source")
@@ -39,9 +41,36 @@ class Application(ContractModel):
 APPLICATIONS = TypeAdapter(dict[Slug, Application])
 
 
-def applications(data: object) -> dict[str, Application]:
+def applications(data: Any) -> dict[str, Application]:
     catalog = APPLICATIONS.validate_python(data)
     for key, item in catalog.items():
         if item.github and key not in {"happ", "obsidian"}:
             raise ValueError("Unknown upstream Debian adapter")
     return catalog
+
+
+class StablePackages(ContractModel):
+    stable: tuple[Package, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def distinct(self) -> Self:
+        if len(set(self.stable)) != len(self.stable):
+            raise ValueError("Duplicate stable Debian package")
+        return self
+
+
+class DesktopPackages(StablePackages):
+    backports: tuple[Package, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def distinct_sources(self) -> Self:
+        if len(set(self.backports)) != len(self.backports) or set(self.stable).intersection(
+            self.backports
+        ):
+            raise ValueError("Conflicting stable or backports Debian package selections")
+        return self
+
+
+class BasePackages(ContractModel):
+    hyprland: DesktopPackages
+    login: StablePackages

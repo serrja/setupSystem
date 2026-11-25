@@ -81,10 +81,19 @@ class ReceiptAction(LabeledAction):
     backup_id: RunId
 
 
+RestoreOperation = Literal[
+    "would-create",
+    "would-restore",
+    "would-remove",
+    "would-remove-directory",
+    "would-return-displaced",
+]
+
+
 class RestoreAction(LabeledAction):
     kind: Literal["restore"]
     path: AbsoluteName
-    operation: Literal["would-restore", "would-remove", "would-remove-directory"]
+    operation: RestoreOperation
 
 
 class ProjectAction(LabeledAction):

@@ -96,8 +96,6 @@ def _status(row: FileChange, path: Path) -> str:
     interrupted = _interrupted_apply(row, path)
     if interrupted is not None:
         return interrupted[1]
-    if prepared_target(row, path) and observe(path) == row.after:
-        row.verified = True
     holding = _holding(row.restore_directory, path)
     if holding is not None and (holding / "after").exists():
         if observe(holding / "after") != row.after:
@@ -114,7 +112,8 @@ def _status(row: FileChange, path: Path) -> str:
         ):
             return "would-restore"
         return "unchanged" if observe(path) == row.before else "conflict"
-    return rollback_status(row, observe(path))
+    published = row.verified or prepared_target(row, path)
+    return rollback_status(row, observe(path), published=published)
 
 
 def _publish_original(path: Path, staged: Path, content: bytes, state: FileState) -> None:
@@ -197,6 +196,8 @@ def _restore_file(
 class LocalRecoveryFiles:
     def restored_entry(self, row: FileChange) -> tuple[str, str]:
         path = target_path(row.relative, validate_file=False)
+        if path.is_symlink() or observe(path) != row.before:
+            return str(path), "conflict"
         retained = _holding(row.retained_after, path)
         status = "already restored"
         if retained is not None:
