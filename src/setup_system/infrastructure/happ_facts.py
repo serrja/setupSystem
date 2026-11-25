@@ -4,6 +4,9 @@ import re
 import subprocess
 from pathlib import Path
 
+from pydantic import JsonValue
+
+from setup_system.domain.observations import HappBefore, HappUnit
 from setup_system.infrastructure.system_paths import protected
 
 UNIT_PATHS = (
@@ -81,10 +84,12 @@ def require_idle(old: str | None, new: str, unit: dict[str, str]) -> None:
             raise ValueError("Close Happ and disconnect the active session before updating")
 
 
-def verify_before(confirmed: object, new_version: str) -> None:
+def verify_before(confirmed: JsonValue, new_version: str) -> None:
     """Recheck the actual installed version and systemd state before dpkg runs."""
     unit = unit_info()
     installed = installed_version()
-    if confirmed != {"unit": unit, "installed": installed}:
+    if HappBefore.model_validate(confirmed) != HappBefore(
+        unit=HappUnit.model_validate(unit), installed=installed
+    ):
         raise ValueError("Happ package or service changed after confirmation")
     require_idle(installed, new_version, unit)

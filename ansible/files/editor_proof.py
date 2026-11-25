@@ -5,9 +5,14 @@ import json
 import os
 import re
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import TypedDict
 
+import typer
+from pydantic import ConfigDict, TypeAdapter, with_config
+
+from setup_system.domain.contracts import MAX_MESSAGE_BYTES
 from setup_system.infrastructure.tool_paths import personal_path
 from setup_system.infrastructure.user_storage import (
     atomic_write,
@@ -17,6 +22,7 @@ from setup_system.infrastructure.user_storage import (
 )
 
 
+@with_config(ConfigDict(extra="forbid", strict=True))
 class EditorInputs(TypedDict):
     profiles: list[str]
     parsers: list[str]
@@ -77,5 +83,22 @@ def run(action: str, request: EditorInputs) -> bool:
     return value is not None and value == previous
 
 
+class EditorTask(StrEnum):
+    CHECK = "check"
+    RECORD = "record"
+
+
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command()
+def verify(action: EditorTask) -> None:
+    """Verify or record an editor receipt."""
+    raw = sys.stdin.buffer.read(MAX_MESSAGE_BYTES + 1)
+    if len(raw) > MAX_MESSAGE_BYTES:
+        raise ValueError("Editor proof exceeds the supported size")
+    print(json.dumps(run(action, TypeAdapter(EditorInputs).validate_json(raw))))
+
+
 if __name__ == "__main__":
-    print(json.dumps(run(sys.argv[1], json.load(sys.stdin))))
+    cli()

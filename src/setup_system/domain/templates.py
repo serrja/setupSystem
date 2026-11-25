@@ -24,7 +24,7 @@ def answer_values(encoded: bytes) -> dict[str, JsonValue]:
     return _JSON_ANSWERS.validate_json(encoded, strict=True)
 
 
-def snapshot_answers(value: object) -> bytes:
+def snapshot_answers(value: bytes | dict[str, JsonValue]) -> bytes:
     values = (
         answer_values(value)
         if isinstance(value, bytes)

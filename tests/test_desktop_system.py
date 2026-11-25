@@ -13,6 +13,7 @@ import tomllib
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -38,10 +39,19 @@ class Commands:
         self.calls: list[list[str]] = []
         self.break_grub = False
 
-    def __call__(self, argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def __call__(
+        self,
+        argv: list[str],
+        *,
+        env: dict[str, str],
+        text: bool,
+        capture_output: bool,
+        timeout: int,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
-        assert kwargs["timeout"] == 120
-        assert kwargs["env"] == {
+        assert timeout == 120 and text and capture_output
+        assert env == {
             "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
             "LANG": "C",
             "LC_ALL": "C",
@@ -252,7 +262,7 @@ def test_postplan_conflict_and_missing_user_launcher_cannot_apply(
     assert not system.paths.config.exists()
 
 
-def load_bridge() -> dict[str, object]:
+def load_bridge() -> dict[str, Any]:
     return runpy.run_path(
         str(ROOT / "assets/login/login_session.py"), run_name="fixture_login_bridge"
     )
@@ -532,10 +542,10 @@ def test_partial_recovery_failure_still_attempts_service_recovery(
             raise OSError("fixture receipt failure")
         original_write(source, path)
 
-    def command(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def command(argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
         if argv[-2:] == ["set-default", "multi-user.target"]:
             raise subprocess.CalledProcessError(1, argv)
-        return original_command(argv, **kwargs)
+        return original_command(argv, check=check)
 
     monkeypatch.setattr(system.files, "move_new", move)
     monkeypatch.setattr(system, "_command", command)
@@ -581,7 +591,7 @@ def test_login_bridge_retains_only_an_existing_owned_user_bus(
     )
     original_lstat = Path.lstat
 
-    def lstat(path: Path, **kwargs: object) -> os.stat_result:
+    def lstat(path: Path) -> os.stat_result:
         if path == runtime / "bus":
             if kind == "missing":
                 raise FileNotFoundError("fixture user bus absent")
@@ -589,7 +599,7 @@ def test_login_bridge_retains_only_an_existing_owned_user_bus(
             return SimpleNamespace(
                 st_mode=mode | 0o600, st_uid=account.uid + (kind == "wrong-owner")
             )
-        return original_lstat(path, **kwargs)
+        return original_lstat(path)
 
     monkeypatch.setattr(Path, "lstat", lstat)
     _, child = namespace["session"](registry, owner=os.getuid(), boundary=registry)

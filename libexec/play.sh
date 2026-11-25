@@ -4,11 +4,13 @@ set -eu
 PATH=/usr/bin:/bin
 export PATH
 umask 077
-root=$(pwd -P)
+# shellcheck source=libexec/runtime.sh
+. "$(dirname -- "$0")/runtime.sh"
 [ "$(id -u)" != 0 ] || { echo 'Run the configurator as a normal user.' >&2; exit 2; }
 case "$1/$2" in
     admin/apply|base/apply|workspace/apply|workspace/cleanup-apply)
-        [ "$root" = /usr/lib/setup-system ] || { echo 'Install the Debian package before system Apply.' >&2; exit 2; }
+        [ "$root" = "$installed_root" ] || { echo 'Install the Debian package before system Apply.' >&2; exit 2; }
+        /usr/bin/python3 -I -B -c 'from pathlib import Path; from setup_system.layout import verify_installation; verify_installation(Path.cwd())'
         set -- "$1" "$2" --ask-become-pass
         if [ "$1" = admin ]; then set -- "$@" --become-method su; fi
         ;;
@@ -29,13 +31,8 @@ stage=$(dirname -- "$request")
 if [ "$section/$action" != admin/apply ]; then
     [ "$(stat -c '%u:%a:%F' -- "$request")" = "$(id -u):600:regular file" ] || exit 2
 fi
-interpreter=/usr/bin/python3
 playbook=/usr/bin/ansible-playbook
-if [ "$root" != /usr/lib/setup-system ] && [ -x "$root/.venv/bin/ansible-playbook" ]; then
-    interpreter="$root/.venv/bin/python"
-    playbook="$root/.venv/bin/ansible-playbook"
-elif [ "$root" != /usr/lib/setup-system ] && [ -n "${SETUP_SYSTEM_INTERPRETER:-}" ]; then
-    interpreter=$SETUP_SYSTEM_INTERPRETER
+if [ "$root" != "$installed_root" ] && [ "$interpreter" != /usr/bin/python3 ]; then
     playbook=$(dirname -- "$interpreter")/ansible-playbook
 fi
 [ -f "$playbook" ] || { echo 'Ansible is missing. Install the package or prepare the development dependencies.' >&2; exit 2; }

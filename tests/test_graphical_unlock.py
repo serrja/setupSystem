@@ -40,7 +40,7 @@ def boot_tree(tmp_path, monkeypatch):
         "validate_system_path",
         lambda path: (path.relative_to(tmp_path), path.parent.stat().st_uid == real_euid),
     )
-    monkeypatch.setattr(unlock, "PACKAGE_ROOT", Path(__file__).resolve().parents[1])
+    monkeypatch.setattr(unlock, "INSTALLED", Path(__file__).resolve().parents[1])
     return tmp_path
 
 
@@ -75,7 +75,7 @@ def test_rebuild_retains_backup_verifies_recovery_and_is_idempotent(boot_tree, m
     theme = unlock.THEMES / unlock.THEME / (unlock.THEME + ".plymouth")
     config = unlock.configparser.ConfigParser()
     config.read(theme)
-    colors = unlock.palette(unlock.PACKAGE_ROOT)
+    colors = unlock.palette(unlock.INSTALLED)
     assert config["Plymouth Theme"]["ModuleName"] == "two-step"
     assert config["two-step"]["ProgressBarForegroundColor"] == "0x" + colors["green"][1:]
     assert config["two-step"]["ImageDir"] == "/usr/share/plymouth/themes/spinner"

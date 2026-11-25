@@ -1,16 +1,23 @@
-"""Transport policy is exercised with urllib handlers and no external requests."""
+"""Transport policy is exercised with HTTPX mock transports and no external requests."""
 
 from __future__ import annotations
 
-import io
-from email.message import Message
-from urllib.error import HTTPError, URLError
-from urllib.request import HTTPSHandler, ProxyHandler, build_opener
-from urllib.response import addinfourl
+import asyncio
 
+import httpx
 import pytest
 
 from setup_system.infrastructure import downloads
+
+
+def mock_https(monkeypatch, handler):
+    client = httpx.AsyncClient
+
+    def isolated_client(**kwargs):
+        assert not kwargs["trust_env"] and not kwargs["follow_redirects"]
+        return client(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(downloads.httpx, "AsyncClient", isolated_client)
 
 
 def scripted_https(
@@ -18,27 +25,14 @@ def scripted_https(
 ):
     visited: list[str] = []
 
-    class SyntheticHTTPS(HTTPSHandler):
-        def https_open(self, request):
-            visited.append(request.full_url)
-            assert request.get_header("User-agent") == downloads.USER_AGENT
-            headers = Message()
-            if len(visited) <= len(destinations):
-                headers["Location"] = destinations[len(visited) - 1]
-                code, content = 302, b""
-            else:
-                code, content = status, body
-            response = addinfourl(io.BytesIO(content), headers, request.full_url, code)
-            response.msg = "Synthetic fixture response"
-            return response
+    def respond(request):
+        visited.append(str(request.url))
+        assert request.headers["User-Agent"] == downloads.USER_AGENT
+        if len(visited) <= len(destinations):
+            return httpx.Response(302, headers={"Location": destinations[len(visited) - 1]})
+        return httpx.Response(status, stream=httpx.ByteStream(body))
 
-    def opener(*handlers):
-        return build_opener(
-            *[handler for handler in handlers if not isinstance(handler, HTTPSHandler)],
-            SyntheticHTTPS(),
-        )
-
-    monkeypatch.setattr(downloads, "build_opener", opener)
+    mock_https(monkeypatch, respond)
     return visited
 
 
@@ -91,19 +85,16 @@ def test_stream_is_bounded_and_only_a_complete_payload_is_returned(monkeypatch, 
 def test_transport_error_keeps_only_typed_safe_diagnostics(monkeypatch, problem):
     secret = "SYNTHETIC_PRIVATE_VALUE"
 
-    class Opener:
-        def open(self, *args, **kwargs):
-            if isinstance(problem, int):
-                raise HTTPError(
-                    "https://name:" + secret + "@github.com/private", problem, secret, {}, None
-                )
-            if problem == "network":
-                raise URLError(secret)
-            if problem == "os":
-                raise OSError(secret)
-            raise ValueError(secret)
+    def respond(request):
+        if isinstance(problem, int):
+            return httpx.Response(problem)
+        if problem == "network":
+            raise httpx.ReadError(secret)
+        if problem == "os":
+            raise OSError(secret)
+        raise ValueError(secret)
 
-    monkeypatch.setattr(downloads, "build_opener", lambda *handlers: Opener())
+    mock_https(monkeypatch, respond)
     with pytest.raises(downloads.DownloadError) as caught:
         downloads.read_https("https://github.com/private?token=" + secret, policy())
     assert secret not in str(caught.value) and "token=" not in str(caught.value)
@@ -124,7 +115,9 @@ def test_transport_error_keeps_only_typed_safe_diagnostics(monkeypatch, problem)
     ],
 )
 def test_invalid_initial_origin_stops_before_opener_creation(monkeypatch, url):
-    monkeypatch.setattr(downloads, "build_opener", lambda *args: pytest.fail("network started"))
+    monkeypatch.setattr(
+        downloads.httpx, "AsyncClient", lambda **kwargs: pytest.fail("network started")
+    )
     with pytest.raises(downloads.DownloadError):
         downloads.read_https(url, policy())
 
@@ -134,33 +127,33 @@ def test_direct_policy_ignores_all_ambient_proxies(monkeypatch, proxy):
     monkeypatch.setenv("HTTP_PROXY", proxy)
     monkeypatch.setenv("HTTPS_PROXY", proxy)
     monkeypatch.setenv("ALL_PROXY", "socks://remote.example:1234")
-    seen = []
-
-    def opener(*handlers):
-        seen.extend(h for h in handlers if isinstance(h, ProxyHandler))
-        raise URLError("fixture stop before any socket")
-
-    monkeypatch.setattr(downloads, "build_opener", opener)
-    with pytest.raises(downloads.DownloadError):
-        downloads.read_https("https://github.com/asset", policy())
-    assert len(seen) == 1 and seen[0].proxies == {}
+    seen = scripted_https(monkeypatch, [])
+    assert downloads.read_https("https://github.com/asset", policy()) == b"fixture"
+    assert seen == ["https://github.com/asset"]
 
 
 def test_elapsed_download_budget_fails_without_returning_partial_success(monkeypatch):
-    scripted_https(monkeypatch, [], b"fixture")
-    values = iter([0, 0, 31])
-    monkeypatch.setattr(downloads.time, "monotonic", lambda: next(values))
+    async def delayed(request):
+        await asyncio.sleep(1)
+        return httpx.Response(200, stream=httpx.ByteStream(b"late"))
+
+    mock_https(monkeypatch, delayed)
     with pytest.raises(downloads.DownloadError) as caught:
-        downloads.read_https("https://github.com/asset", policy(total_timeout=30))
+        downloads.read_https("https://github.com/asset", policy(total_timeout=0.02))
     assert caught.value.kind == downloads.DownloadFailure.NETWORK
 
 
 def test_artifact_total_budget_is_separate_from_per_socket_timeout(monkeypatch):
     scripted_https(monkeypatch, [], b"fixture")
-    values = iter([0, 90, 91, 91, 92])
-    monkeypatch.setattr(downloads.time, "monotonic", lambda: next(values))
     assert downloads.read_https("https://github.com/asset", policy()) == b"fixture"
     assert policy().timeout == 30 and policy().total_timeout == 600
+
+
+def test_exact_source_rejects_redirect_without_contact(monkeypatch):
+    seen = scripted_https(monkeypatch, ["https://github.com/elsewhere"])
+    with pytest.raises(downloads.DownloadError):
+        downloads.read_https("https://github.com/asset", policy(follow_redirects=False))
+    assert seen == ["https://github.com/asset"]
 
 
 @pytest.mark.parametrize("total", [True, 0, -1, float("inf"), float("nan")])

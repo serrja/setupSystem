@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import fcntl
-import json
 import os
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -17,13 +17,18 @@ from setup_system.domain.receipts import (
     ReceiptRecord,
     digest,
 )
+from setup_system.infrastructure.atomic_rename import rename_new
 from setup_system.infrastructure.receipt_migrations import migrate_user_files
 from setup_system.infrastructure.user_storage import (
+    FileSnapshot,
     atomic_write,
+    capture_receipt,
     checked_directory,
     private_directory,
+    publish_revision,
     read_object,
     safe_file,
+    staged_file,
     state_root,
     target_path,
 )
@@ -40,13 +45,31 @@ def write_record(path: Path, record: ReceiptRecord) -> None:
     )
 
 
-def _backup_original(path: Path) -> None:
+def _backup_original(path: Path, data: bytes) -> None:
     backup = path.with_name(path.stem + ".v0.json")
-    safe_file(backup, os.getuid())
-    data = path.read_bytes()
-    if backup.exists() and backup.read_bytes() != data:
-        raise ValueError(f"Conflicting previous migration backup: {backup}")
-    atomic_write(backup, data)
+    with private_directory(path.parent, create=False) as parent:
+        with staged_file(parent, backup.name, data, 0o600) as candidate:
+            try:
+                rename_new(parent, candidate, parent, backup.name)
+            except FileExistsError:
+                if FileSnapshot.read(parent, backup.name).data != data:
+                    raise ValueError(f"Conflicting previous migration backup: {backup}") from None
+            os.fsync(parent)
+
+
+def _publish_migration(
+    source: Path, captured: FileSnapshot, target: Path, record: ReceiptRecord
+) -> None:
+    wire = (record.model_dump_json(indent=2) + "\n").encode()
+    retained = None
+    if source == target:
+        _backup_original(source, captured.data)
+        retained = f"{target.stem}.v0.retained-{uuid.uuid4().hex}"
+    with (
+        private_directory(source.parent, create=False) as origin,
+        private_directory(target.parent, create=False) as parent,
+    ):
+        publish_revision(origin, source.name, captured, parent, target.name, wire, retained)
 
 
 def ownership(*, migrate: bool = False) -> Ownership:
@@ -54,9 +77,8 @@ def ownership(*, migrate: bool = False) -> Ownership:
     safe_file(path, os.getuid())
     if not path.is_file():
         return Ownership()
-    data = json.loads(path.read_bytes())
-    if not isinstance(data, dict):
-        raise ValueError("Unknown ownership receipt format")
+    captured = capture_receipt(path)
+    data = captured.json()
     if "schema_version" in data:
         return Ownership.model_validate(data)
     # v0.4.0 tracked absolute filenames, plus an optional private backup folder.
@@ -72,9 +94,11 @@ def ownership(*, migrate: bool = False) -> Ownership:
         relative = path_key.relative_to(Path.home().resolve()).as_posix()
         if target_path(relative) != path_key:
             raise ValueError("Invalid legacy managed path")
-    index = Ownership(files=data, last_operation=Path(last).name if last else None)
+    index = Ownership.model_validate(
+        {"files": data, "last_operation": Path(last).name if last else None}
+    )
     if migrate:
-        _backup_original(path)
+        _publish_migration(path, captured, path, index)
     return index
 
 
@@ -147,7 +171,8 @@ def load_operation(folder: Path, *, migrate: bool = False) -> Operation:
     path = receipt_source(folder)
     if path is None:
         raise ValueError("File operation receipt is missing")
-    data = read_object(path)
+    captured = capture_receipt(path)
+    data = captured.json()
     if "schema_version" in data:
         if path.name != "operation.json":
             raise ValueError("Unknown legacy file receipt version")
@@ -158,9 +183,7 @@ def load_operation(folder: Path, *, migrate: bool = False) -> Operation:
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValueError("Invalid v0.4.0 file receipt") from exc
         if migrate:
-            if path.name == "operation.json":
-                _backup_original(path)
-            save_operation(folder, operation)
+            _publish_migration(path, captured, folder / "operation.json", operation)
     if folder.name != operation.run_id:
         raise ValueError("Invalid or duplicate operation targets")
     return operation

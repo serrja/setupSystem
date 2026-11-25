@@ -6,8 +6,9 @@ import os
 import signal
 import subprocess
 import time
+from types import FrameType
 
-from pydantic import ConfigDict, Field, StrictBool, StrictFloat, StrictInt, TypeAdapter
+from pydantic import ConfigDict, Field, JsonValue, StrictBool, StrictFloat, StrictInt, TypeAdapter
 
 from setup_system.domain.contracts import ContractModel
 from setup_system.domain.displays import DisplayOutput, MonitorLayout
@@ -50,7 +51,9 @@ def _hyprctl(*args: str) -> str:
 def discover_outputs() -> tuple[DisplayOutput, ...]:
     """Expose only active, addressable outputs with advertised modes."""
     result: list[DisplayOutput] = []
-    for row in TypeAdapter(tuple[dict[str, object], ...]).validate_json(_hyprctl("-j", "monitors")):
+    for row in TypeAdapter(tuple[dict[str, JsonValue], ...]).validate_json(
+        _hyprctl("-j", "monitors")
+    ):
         status = OutputStatus.model_validate(row)
         if status.disabled or status.mirror != "none":
             continue
@@ -122,7 +125,7 @@ def _preview(layouts: tuple[MonitorLayout, ...]) -> None:
 def preview_layout(layouts: tuple[MonitorLayout, ...]) -> None:
     """Restore the previous layout even on interruption of the dedicated Make task."""
 
-    def interrupted(_number: int, _frame: object) -> None:
+    def interrupted(_number: int, _frame: FrameType | None) -> None:
         raise RuntimeError("Monitor preview interrupted")
 
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGHUP)}

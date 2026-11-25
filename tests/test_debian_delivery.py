@@ -106,9 +106,16 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
     }.items():
         assert command("dpkg-deb", "-f", str(package), field) == value
     dependencies = command("dpkg-deb", "-f", str(package), "Depends")
-    assert {"ansible-core", "make", "python3-textual", "git", "ca-certificates"} <= {
-        part.split(" (")[0] for part in dependencies.split(", ")
-    }
+    assert {
+        "ansible-core",
+        "make",
+        "python3-textual",
+        "python3-typer",
+        "python3-aiofiles",
+        "python3-httpx",
+        "git",
+        "ca-certificates",
+    } <= {part.split(" (")[0] for part in dependencies.split(", ")}
     raw = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(package)])
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         names = set(archive.getnames())
@@ -178,31 +185,34 @@ def executable(directory: Path, name: str, content: str) -> Path:
     return path
 
 
-def test_fixed_make_entrypoint_rejects_caller_flags(tmp_path: Path) -> None:
-    destination = tmp_path / "record"
-    script = (ROOT / "debian/setup-system.sh").read_text()
-    make = executable(
-        tmp_path, "make", '#!/bin/sh\nenv > "$RECORD"\nprintf "%s\\n" "$@" >> "$RECORD"\n'
-    )
-    launch = executable(
-        tmp_path,
-        "setup-system",
-        script.replace("/usr/bin/make", shlex.quote(str(make))).replace(
-            "/usr/bin/id -u", "echo 1000"
-        ),
-    )
-    env = dict(os.environ, RECORD=str(destination), MAKEFLAGS="--eval=bad", MAKEFILES="/untrusted")
-    run = subprocess.run([launch, "base-apply"], env=env, check=False)
-    assert run.returncode == 2 and not destination.exists()
-    subprocess.run([launch], env=env, check=True)
-    text = destination.read_text()
-    assert "MAKEFLAGS=" not in text and "MAKEFILES=" not in text
-    assert text.endswith("/usr/lib/setup-system/Makefile\nrun\n")
+def test_fixed_make_entrypoint_rejects_caller_flags(tmp_path: Path, monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    from setup_system import entrypoint
+
+    wrapper = (ROOT / "debian/setup-system.sh").read_text()
+    assert 'exec /usr/bin/python3 -I -B -m setup_system "$@"' in wrapper
+    monkeypatch.setenv("MAKEFLAGS", "--eval=bad")
+    monkeypatch.setenv("MAKEFILES", "/untrusted")
+    monkeypatch.setenv("BASH_ENV", "/untrusted")
+    monkeypatch.setenv("ENV", "/untrusted")
+    monkeypatch.setenv("PYTHONPATH", "/untrusted")
+    observed = []
+    monkeypatch.setattr(os, "execve", lambda *arguments: observed.append(arguments))
+    monkeypatch.setattr(entrypoint, "resource_root", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    cli = CliRunner()
+    assert cli.invoke(entrypoint.cli, ["base-apply"]).exit_code == 2 and not observed
+    assert cli.invoke(entrypoint.cli, []).exit_code == 0
+    [(executable, args, env)] = observed
+    assert executable == "/usr/bin/make" and args[-2:] == [str(tmp_path / "Makefile"), "run"]
+    assert not {"MAKEFLAGS", "MAKEFILES", "BASH_ENV", "ENV", "PYTHONPATH"} & env.keys()
 
 
 def test_guard_admits_owner_ancestor_and_refuses_parallel_writer(tmp_path: Path) -> None:
     lock = tmp_path / "lock"
     lock.mkdir(mode=0o755)
+    lock.chmod(0o755)
     content = (
         (ROOT / "debian/guard.sh")
         .read_text()
@@ -664,6 +674,7 @@ def test_package_transaction_checks_exact_bytes_and_version(
     tools.mkdir()
     lock = tmp_path / "runtime"
     lock.mkdir(mode=0o755)
+    lock.chmod(0o755)
     source = tmp_path / FILENAME
     source.write_bytes(package.read_bytes())
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -762,7 +773,7 @@ printf 'installed 1.2.3' > "$STATE"
         "HOME=/root LANG=C flock",
         'HOME=/nonexistent LANG=C SCENARIO="$SCENARIO" SUDO_UID="$SUDO_UID" SUDO_GID="$SUDO_GID" '
         'PACKAGE_SOURCE="$PACKAGE_SOURCE" STATE="$STATE" SHA="$SHA" '
-        'INVOKED="$INVOKED" LOCK="$LOCK" flock',
+        'INVOKED="$INVOKED" LOCK="$LOCK" TMPDIR="$LOCK" flock',
     )
     (tmp_path / "install.sh").write_text(content)
     env = dict(

@@ -1,20 +1,20 @@
-"""Grant only a confirmed local sudo membership through the Debian Ansible user backend."""
+"""Grant only a confirmed local sudo membership with an existing-account-only group append."""
 
 import json
 import os
+import subprocess
 import sys
-from collections import defaultdict
+from enum import StrEnum
 from pathlib import Path
-from typing import Never, Self
+from tempfile import TemporaryDirectory
+from typing import Annotated
 
-from ansible.modules.user import User
+import typer
 from pydantic import ValidationError
 
-from ansible import __version__ as ansible_version
 from setup_system.domain.actions import AdminAction
 from setup_system.domain.administration import ADMIN_REQUEST_BYTES, AdminAccount, AdminIntent
 from setup_system.infrastructure.admin_account import (
-    checked_output,
     current_boot_identity,
     read_account,
     verify_effective_access,
@@ -22,66 +22,65 @@ from setup_system.infrastructure.admin_account import (
 )
 from setup_system.infrastructure.native_target import current_target
 from setup_system.infrastructure.operation_io import read_admin_request
-from setup_system.infrastructure.system_paths import protected
+from setup_system.layout import INSTALLED, PYTHON_PACKAGE, require_installed_resource
+from setup_system.machine_io import write_model
 from setup_system.models import AdminObservations, RequestEnvelope, Status, TaskResult
 
 
-class ExistingLogin(User):
-    """Use the existing-user Debian backend without its account-creation dispatcher."""
-
-    def __new__(cls, module: "SudoAppend") -> Self:
-        return object.__new__(cls)
-
-    # Group append needs ordinary identity fields. Avoid the default shadow lookup.
-    user_info = User.get_pwd_info
+class Operation(StrEnum):
+    INSPECT = "inspect"
+    PLAN = "plan"
+    APPLY = "apply"
 
 
-class SudoAppend:
-    check_mode = False
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 
-    def __init__(self, account: AdminAccount) -> None:
-        self.account = account
-        self.attempted = False
-        self.params: defaultdict[str, object] = defaultdict(
-            lambda: None,
-            {
-                "name": account.username,
-                "state": "present",
-                "groups": ["sudo"],
-                "append": True,
-                "create_home": False,
-                "ssh_key_type": "rsa",
+
+def append_sudo(account: AdminAccount) -> None:
+    """Run the single existing-account operation from a root-owned Ansible context."""
+    arguments = {
+        "argv": ["/usr/sbin/usermod", "--append", "--groups", "sudo", "--", account.username],
+        "expand_argument_vars": False,
+    }
+    # su cannot pipeline modules. Stage this command under root's private /run directory.
+    python = str(INSTALLED / "libexec/isolated-python.sh")
+    with TemporaryDirectory(prefix="setup-system-admin-", dir="/run") as stage:
+        result = subprocess.run(
+            [
+                python,
+                "-c",
+                "import runpy, sys; sys.path.append(sys.argv.pop(1));"
+                " runpy.run_path(sys.argv.pop(1), run_name='__main__')",
+                str(PYTHON_PACKAGE.parent),
+                "/usr/bin/ansible",
+                "localhost",
+                "-i",
+                "localhost,",
+                "-c",
+                "local",
+                "-m",
+                "ansible.builtin.command",
+                "-a",
+                json.dumps(arguments),
+            ],
+            cwd=INSTALLED,
+            env={
+                "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": stage,
+                "LANG": "C.UTF-8",
+                "ANSIBLE_CONFIG": str(INSTALLED / "ansible.cfg"),
+                "ANSIBLE_PYTHON_INTERPRETER": python,
+                "ANSIBLE_HOME": "/usr/share/ansible",
+                "ANSIBLE_LOCAL_TEMP": stage + "/local",
+                "ANSIBLE_REMOTE_TEMP": stage + "/remote",
             },
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
-
-    def get_bin_path(self, name: str, required: bool) -> str:
-        if name != "usermod" or not required:
-            raise ValueError("Unsupported account backend")
-        return "/usr/sbin/usermod"
-
-    def fail_json(self, **_details: object) -> Never:
-        raise ValueError("The native user module could not verify the local group")
-
-    def run_command(
-        self, argv: list[str], *, use_unsafe_shell: bool = False, data: bytes | None = None
-    ) -> tuple[int, str, str]:
-        if use_unsafe_shell or data is not None:
-            raise ValueError("Unexpected user-module invocation")
-        if argv == ["/usr/sbin/usermod", "--help"]:
-            return 0, checked_output(*argv), ""
-        if argv != ["/usr/sbin/usermod", "-a", "-G", "sudo", self.account.username]:
-            raise ValueError("This Ansible backend did not request an append-only sudo membership")
-        if read_account(AdminIntent(username=self.account.username)) != self.account:
-            raise ValueError("The account changed before the native append. Preview again")
-        self.attempted = True
-        return 0, checked_output(*argv), ""
-
-
-def require_packaged_source() -> None:
-    source = Path(__file__)
-    if source != Path("/usr/lib/setup-system/ansible/files/admin.py") or not source.is_file():
-        raise ValueError("Root Apply requires the installed Debian account helper")
-    protected(source, directory=False)
+    if result.returncode:
+        raise ValueError("The native append to the local sudo group failed")
 
 
 def plan(account: AdminAccount, boot_identity: str) -> TaskResult:
@@ -116,14 +115,12 @@ def run(action: str, raw: bytes) -> TaskResult:
     intent = AdminIntent.model_validate(request.settings)
     if not current_target()[1]:
         raise ValueError("Administrative onboarding requires supported Debian 13 (trixie)")
-    if tuple(ansible_version.split(".")[:2]) not in {("2", "19"), ("2", "20")}:
-        raise ValueError("This version of the Ansible user backend has not been reviewed")
     if action == "apply":
         if os.geteuid() != 0:
             raise ValueError(
                 "The packaged administrative operation requires root authentication via su"
             )
-        require_packaged_source()
+        require_installed_resource(Path(__file__), "ansible/files/admin.py")
     account = read_account(intent)
     boot_identity = current_boot_identity()
     observed = plan(account, boot_identity)
@@ -134,21 +131,20 @@ def run(action: str, raw: bytes) -> TaskResult:
     verify_policy()
     if read_account(intent) != account:
         raise ValueError("The account changed during the policy check. Preview again")
-    backend = SudoAppend(account)
     try:
-        ExistingLogin(backend).modify_user_usermod()
+        append_sudo(account)
         after = read_account(intent)
         if after != account.validated(member=True):
             raise ValueError("The account no longer matches the expected identity and membership")
         verify_policy()
         verify_effective_access(after)
-    except (ValueError, OSError, KeyError, TypeError) as error:
+    except (ValueError, OSError) as error:
         try:
             unchanged = read_account(intent) == account
         except (ValueError, OSError):
             unchanged = False
         return TaskResult(
-            status=Status.BLOCKED if unchanged or not backend.attempted else Status.PARTIAL,
+            status=Status.BLOCKED if unchanged else Status.PARTIAL,
             blockers=(
                 f"{error}. Membership or its effective policy could not be confirmed."
                 " Inspect the account again.",
@@ -170,38 +166,37 @@ def run(action: str, raw: bytes) -> TaskResult:
     )
 
 
-def preflight(request: str) -> int:
+@cli.command()
+def preflight(request: str) -> None:
+    """Check the private Apply request and emit its pre-prompt digest."""
     if os.geteuid() == 0:
-        raise ValueError("Validate administrative consent as the unprivileged caller")
+        typer.echo("Validate administrative consent as the unprivileged caller", err=True)
+        raise typer.Exit(2)
     try:
-        print(read_admin_request(request, "apply")["digest"])
+        typer.echo(read_admin_request(request, "apply")["digest"])
     except (OSError, ValueError):
         result = TaskResult(
             status=Status.BLOCKED,
             blockers=("Invalid or changed administrative request. Preview a new account plan.",),
         )
         path = Path(request).with_name("result.json")
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, "w") as stream:
-            stream.write(result.model_dump_json(exclude_unset=True))
-        return 2
-    return 0
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, "w") as stream:
+                write_model(result, stream)
+        except OSError:
+            typer.echo("Could not publish the blocked administrative result", err=True)
+        raise typer.Exit(2) from None
 
 
-def main() -> None:
-    if len(sys.argv) == 3 and sys.argv[1] == "preflight":
-        raise SystemExit(preflight(sys.argv[2]))
+@cli.command()
+def account(operation: Operation, wire: Annotated[str | None, typer.Argument()] = None) -> None:
+    """Inspect, plan or apply one confirmed existing-account change."""
     try:
-        if len(sys.argv) not in {2, 3}:
-            raise ValueError("Expected one packaged administration operation")
-        raw = (
-            sys.argv[2].encode()
-            if len(sys.argv) == 3
-            else sys.stdin.buffer.read(ADMIN_REQUEST_BYTES + 1)
-        )
+        raw = wire.encode() if wire is not None else sys.stdin.buffer.read(ADMIN_REQUEST_BYTES + 1)
         if len(raw) > ADMIN_REQUEST_BYTES:
             raise ValueError("Administrative request is too large")
-        outcome = run(sys.argv[1], raw)
+        outcome = run(operation.value, raw)
     except ValidationError:
         outcome = TaskResult(
             status=Status.BLOCKED,
@@ -209,8 +204,8 @@ def main() -> None:
         )
     except (ValueError, OSError) as error:
         outcome = TaskResult(status=Status.BLOCKED, blockers=(str(error),))
-    print(json.dumps(outcome.model_dump(mode="json", exclude_unset=True)))
+    write_model(outcome)
 
 
 if __name__ == "__main__":
-    main()
+    cli()

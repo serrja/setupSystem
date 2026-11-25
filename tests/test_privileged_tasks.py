@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_untrusted_settings_rejected_before_source_or_package_side_effects(tmp_path, settings):
     validate = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["validate_request"]
     with pytest.raises((ValueError, AnsibleFilterError)):
-        validate({"schema": 1, "settings": settings, "expected": None}, "workspace", {}, {})
+        validate(
+            json.dumps({"schema": 1, "settings": settings, "expected": None}),
+            "workspace",
+            "{}",
+            "{}",
+        )
     assert not list(tmp_path.iterdir())
 
 
@@ -47,18 +52,17 @@ def test_xdg_cannot_select_privileged_resources(tmp_path, path):
                 },
             },
         )
-        asyncio.run(runner.run(command))
+        asyncio.run(runner.execute(command))
     assert not list(tmp_path.iterdir())
 
 
 def test_base_apply_requires_the_installed_program_before_any_system_write(tmp_path, monkeypatch):
-    operation = runpy.run_path(str(ROOT / "ansible/files/system_contract.py"))["main"]
-    monkeypatch.setattr(sys, "argv", ["system_contract.py", "login"])
+    operation = runpy.run_path(str(ROOT / "ansible/files/system_contract.py"))["run"]
     monkeypatch.setattr(
         sys, "stdin", io.StringIO(json.dumps({"settings": {"graphical_login": True}}))
     )
     with pytest.raises(ValueError, match="authenticated Debian"):
-        operation()
+        operation("login")
     assert not list(tmp_path.iterdir())
 
 

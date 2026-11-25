@@ -57,6 +57,31 @@ def play(args, env):
     )
 
 
+@pytest.mark.parametrize(
+    ("section", "settings"),
+    [
+        ("base", {"hyprland": True}),
+        ("workspace", {"apps": ["neovim"], "languages": ["python"], "theme": {"rounding": 4}}),
+    ],
+)
+def test_make_inspect_retains_observations_from_the_packaged_catalogs(run_env, section, settings):
+    request = Path(run_env["SETUP_SYSTEM_REQUEST"])
+    request.write_text(json.dumps({"schema": 1, "settings": settings, "expected": None}))
+    completed = subprocess.run(
+        ["/usr/bin/make", "-rR", "-j1", f"{section}-inspect"],
+        cwd=ROOT,
+        env=run_env,
+        text=True,
+        capture_output=True,
+        timeout=90,
+    )
+    assert completed.returncode == 0, completed.stderr
+    reply = json.loads(Path(run_env["SETUP_SYSTEM_RESULT"]).read_text())
+    assert reply["observed"].get("architecture"), reply
+    assert reply["observed"]["section"] == section
+    assert not any(Path(run_env["HOME"]).iterdir())
+
+
 def test_private_plan_never_changes_home_or_requests_become(run_env):
     task = play(["ansible/base.yml", "-e", "setup_action=plan"], run_env)
     assert task.returncode == 0, task.stdout + task.stderr

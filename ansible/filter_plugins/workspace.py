@@ -5,9 +5,9 @@ import json
 import os
 import re
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from pydantic import Field
 
@@ -26,7 +26,7 @@ class RenderSelection(TypedDict, total=False):
     hyprland: bool
     desktop_theme: bool
     keyboard: str
-    monitors: list[dict[str, object]]
+    monitors: list[dict[str, str | int | float]]
     languages: list[str]
     theme: dict[str, bool | int | float]
 
@@ -137,7 +137,9 @@ def editor_specs(
 
 def context(
     palette: dict[str, str], settings: RenderSelection, info: RenderFacts
-) -> dict[str, object]:
+) -> dict[
+    str, str | int | float | dict[str, str | int] | list[dict[str, str | int | float]] | None
+]:
     selected = settings.get("theme", {})
     colors = {
         k: v for k, v in palette.items() if isinstance(v, str) and re.fullmatch(r"#[a-f0-9]{6}", v)
@@ -217,13 +219,20 @@ def missing_parsers(data: str, parsers: list[str]) -> list[str]:
     return missing
 
 
+class EditorProof(TypedDict):
+    profiles: list[str]
+    parsers: list[str]
+    versions: dict[str, str]
+    files: dict[str, list[str | int]]
+
+
 def editor_proof(
     info: RenderFacts,
     profiles: list[str],
     parsers: list[str],
     tools: dict[str, dict[str, str]],
     preview: FilePreview,
-) -> dict[str, object]:
+) -> EditorProof:
     prefix = Path(info["xdg"]["config"]).relative_to(info["home"]) / "nvim"
     return {
         "profiles": sorted(profiles),
@@ -251,7 +260,7 @@ def stable_tag(rows: Iterable[dict[str, str]], major: int) -> str:
 
 
 class FilterModule:
-    def filters(self) -> dict[str, object]:
+    def filters(self) -> dict[str, Callable[..., Any]]:
         return {
             "editor_globs_lua": editor_globs_lua,
             "editor_proof": editor_proof,

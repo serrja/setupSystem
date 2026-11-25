@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from setup_system import file_tasks
 from setup_system.infrastructure.managed_files import apply_files
@@ -24,8 +25,8 @@ def test_root_user_configuration_is_rejected_before_writes(tmp_path, monkeypatch
         sys, "stdin", io.StringIO(json.dumps({"section": "base", "intent": {}, "inspect": False}))
     )
     with pytest.raises(ValueError, match="ordinary account"):
-        facts["main"]()
+        facts["collect"]()
     monkeypatch.setattr(os, "getuid", lambda: 0)
-    with pytest.raises(SystemExit, match="normal user"):
-        file_tasks.main()
+    result = CliRunner().invoke(file_tasks.cli, ["backups"])
+    assert result.exit_code == 2 and "normal user" in result.stderr
     assert not list(tmp_path.iterdir())

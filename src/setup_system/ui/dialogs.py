@@ -9,8 +9,31 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from setup_system.models import PlanSnapshot, TaskResult
+from setup_system.models import PlanSnapshot, Section, TaskResult
 from setup_system.runner import BecomePassword
+
+
+class DiscardEdits(ModalScreen[bool]):
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "keep", "Keep editing")]
+
+    def __init__(self, section: Section) -> None:
+        super().__init__()
+        self.section = section
+
+    def compose(self) -> ComposeResult:
+        with Container(id="dialog"):
+            yield Label(f"Reload saved {self.section} settings and discard your edits?")
+            with Horizontal(classes="buttons"):
+                yield Button("Keep editing", id="keep-edits")
+                yield Button("Discard edits and reload", variant="warning", id="discard-edits")
+
+    @on(Button.Pressed)
+    def choose(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(event.button.id == "discard-edits")
+
+    def action_keep(self) -> None:
+        self.dismiss(False)
 
 
 class Consent(ModalScreen[bool]):
@@ -22,7 +45,7 @@ class Consent(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Container(id="dialog"):
-            yield Label("Apply the reviewed plan?")
+            yield Label(f"Apply the reviewed {self.plan.section} plan?")
             with VerticalScroll(id="review"):
                 yield Static(
                     TaskResult.model_validate_json(self.plan.expected_json).describe(), markup=False

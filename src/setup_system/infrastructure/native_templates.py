@@ -6,7 +6,7 @@ from pathlib import Path
 from jinja2 import Environment, StrictUndefined
 
 
-def render_asset(source: Path, context: Mapping[str, object]) -> bytes:
+def render_asset(source: Path, context: Mapping[str, str | Mapping[str, str | int]]) -> bytes:
     environment = Environment(
         undefined=StrictUndefined,
         variable_start_string="@{",

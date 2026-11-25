@@ -13,6 +13,14 @@ sh -c 'loader=$(curl -qfsSL --proto =https --proto-redir =https "$1") && exec /b
 
 The loader verifies the stable Debian package and its build attestation before asking for permission to install it. Installation ends when APT finishes.
 
+## 🔄 Update
+
+Run the installed package’s update recipe as your regular user. It verifies the new release and finishes after APT completes.
+
+```sh
+make -C /usr/lib/setup-system update
+```
+
 ## 🚀 Run
 
 Open the installed app from any directory.

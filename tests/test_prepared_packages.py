@@ -1,7 +1,6 @@
 """Verify actual staged Debian archives, signed stable metadata and current target identity."""
 
 import hashlib
-import io
 import json
 import runpy
 import subprocess
@@ -137,20 +136,16 @@ def test_happ_change_after_plan_stops_before_apt(tmp_path, monkeypatch, change):
     if change == "stale-release":
         release["assets"][0]["digest"] = "sha256:" + "0" * 64
 
-    class Response(io.BytesIO):
-        def geturl(self):
-            return f"https://api.github.com/repos/{entry['github']}/releases/latest"
-
-    class Opener:
-        def open(self, request, **kwargs):
-            assert request.full_url.endswith("/releases/latest")
-            return Response(json.dumps(release).encode())
+    def release_metadata(url, policy):
+        assert url == f"https://api.github.com/repos/{entry['github']}/releases/latest"
+        assert policy.allowed_hosts == {"api.github.com"} and not policy.follow_redirects
+        return json.dumps(release).encode()
 
     monkeypatch.setitem(globals_, "ROOT", ROOT)
     monkeypatch.setitem(globals_, "reviewed", lambda stage: None)
     monkeypatch.setitem(globals_, "protected", lambda path, **kw: None)
     monkeypatch.setitem(globals_, "current_target", lambda: ("amd64", True))
-    monkeypatch.setitem(globals_, "build_opener", lambda *args: Opener())
+    monkeypatch.setitem(globals_, "read_https", release_metadata)
     monkeypatch.setitem(
         globals_, "defer_services", lambda path: pytest.fail("APT reached a stale vendor archive")
     )

@@ -3,6 +3,7 @@
 import base64
 import binascii
 import re
+from collections.abc import Callable
 from typing import TypedDict
 from urllib.parse import urlsplit
 
@@ -98,5 +99,5 @@ def registry_release(info: RegistryMetadata, name: str, series: dict[str, int]) 
 
 
 class FilterModule:
-    def filters(self) -> dict[str, object]:
+    def filters(self) -> dict[str, Callable[..., RegistryMetadata | dict[str, str]]]:
         return {"package_artifact": package_artifact, "registry_release": registry_release}

@@ -8,21 +8,20 @@ import pwd
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 import aiofiles
 import aiofiles.tempfile
-from pydantic import Field, ValidationError, ValidationInfo, field_validator
+from pydantic import Field, JsonValue, ValidationError, ValidationInfo, field_validator
 
 from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
 from setup_system.infrastructure.operation_io import read_wire
-from setup_system.infrastructure.system_paths import verify_program_tree
+from setup_system.infrastructure.operation_outcome import record_outcome
+from setup_system.layout import INSTALLED, resource_root, verify_installation
 from setup_system.make_transport import FOREGROUND as FOREGROUND
 from setup_system.make_transport import SYSTEM, Phase, TransportError, execute_make
 from setup_system.make_transport import Target as Target
 from setup_system.models import RequestEnvelope, Status, TaskResult
-
-INSTALLED = Path("/usr/lib/setup-system")
 
 
 class BecomePassword:
@@ -45,23 +44,6 @@ class BecomePassword:
 
     def discard(self) -> None:
         self._response = b""
-
-
-def resource_root() -> Path:
-    """Prefer resources beside the executing module in source and wheel builds."""
-    module = Path(__file__).absolute()
-    if module.parent.parent.name == "src":
-        root = module.parents[2]
-    elif module.parent.parent == Path("/usr/lib/python3/dist-packages"):
-        root = INSTALLED
-    else:
-        root = module.parent / "bundle"
-    makefile = root / "Makefile"
-    if any(parent.is_symlink() for parent in (makefile, *makefile.parents)):
-        raise ValueError("Program resources cannot traverse symlinks")
-    if makefile.is_file():
-        return root
-    raise RuntimeError("The configurator resources are missing")
 
 
 def _environment() -> dict[str, str]:
@@ -92,7 +74,7 @@ class Command(ContractModel):
 
     @field_validator("request_json", mode="before")
     @classmethod
-    def freeze_request(cls, value: object, info: ValidationInfo) -> str:
+    def freeze_request(cls, value: Any, info: ValidationInfo) -> str:
         target = info.data.get("target")
         if not isinstance(target, Target):
             raise ValueError("Unknown operation target")
@@ -108,7 +90,7 @@ class Command(ContractModel):
         return wire
 
     @classmethod
-    def capture(cls, target: Target | str, envelope: dict[str, object]) -> Self:
+    def capture(cls, target: Target | str, envelope: dict[str, JsonValue]) -> Self:
         """Snapshot the wire values before scheduling the operation."""
         return cls.model_validate({"target": target, "request_json": envelope})
 
@@ -129,7 +111,7 @@ class RunEvent(ContractModel):
         }[self.phase]
 
 
-def _result(path: Path, code: int) -> TaskResult | None:
+def _result(path: Path, code: int, target: Target) -> TaskResult | None:
     try:
         data = read_wire(path)
     except FileNotFoundError:
@@ -138,9 +120,12 @@ def _result(path: Path, code: int) -> TaskResult | None:
         result = TaskResult.model_validate_json(data)
     except ValidationError:
         raise ValueError("The native operation returned an invalid result") from None
+    if target.mutating and result.status.allows_confirmation:
+        raise ValueError("The mutation returned a preview instead of a final outcome")
     if code and result.status not in {
         Status.FAILED,
         Status.PARTIAL,
+        Status.UNKNOWN,
         Status.BLOCKED,
         Status.CANCELLED,
     }:
@@ -157,10 +142,10 @@ class AsyncMakeRunner:
         root = self.root if self.root is not None else await asyncio.to_thread(resource_root)
         if root != INSTALLED:
             raise ValueError("System changes require the installed Debian package")
-        await asyncio.to_thread(verify_program_tree, root)
+        await asyncio.to_thread(verify_installation, root)
         return root
 
-    async def run(
+    async def execute(
         self,
         command: Command,
         *,
@@ -210,7 +195,12 @@ class AsyncMakeRunner:
     ) -> TaskResult:
         target = command.target
 
+        mutation_possible = False
+
         def report(phase: Phase) -> None:
+            nonlocal mutation_possible
+            if phase is Phase.RUNNING and target.mutating:
+                mutation_possible = True
             if on_event is not None:
                 on_event(RunEvent(target=target, phase=phase))
 
@@ -252,17 +242,45 @@ class AsyncMakeRunner:
                     take_password=password.take if password is not None else None,
                 )
             except TransportError as exc:
-                native_result = await asyncio.to_thread(_result, result, 0)
-                if native_result is None:
+                try:
+                    outcome = await asyncio.to_thread(_result, result, 0, target)
+                except (OSError, ValueError):
+                    outcome = None
+                if outcome is not None and not target.mutating:
+                    raise type(exc)(
+                        f"{exc}. Recorded native outcome: {outcome.describe()}"
+                    ) from None
+                if outcome is None and not mutation_possible:
                     raise
-                raise type(exc)(
-                    f"{exc}. Recorded native outcome: {native_result.describe()}"
-                ) from None
-            recorded = await asyncio.to_thread(_result, result, code)
-            if recorded is not None:
-                return recorded
-            if code == 130:
-                return TaskResult(status=Status.CANCELLED)
-            raise TransportError(
-                f"Make exited with status {code} before returning an operation result."
-            )
+            else:
+                try:
+                    outcome = await asyncio.to_thread(_result, result, code, target)
+                except (OSError, ValueError, TransportError):
+                    if not mutation_possible:
+                        raise
+                    outcome = None
+                if outcome is None and not mutation_possible:
+                    if code == 130:
+                        return TaskResult(status=Status.CANCELLED)
+                    raise TransportError(
+                        f"Make exited with status {code} before returning an operation result."
+                    )
+            if outcome is None:
+                outcome = TaskResult(
+                    status=Status.UNKNOWN,
+                    blockers=(
+                        f"{target.value} ended without a verifiable outcome. "
+                        "Inspect the current state and recovery records before another Apply.",
+                    ),
+                )
+            if target.mutating:
+                try:
+                    await record_outcome(target.value, outcome.status)
+                except (OSError, ValueError):
+                    outcome = outcome.validated(
+                        blockers=(
+                            *outcome.blockers,
+                            "Could not save the outcome. Inspect the state before another Apply.",
+                        )
+                    )
+            return outcome

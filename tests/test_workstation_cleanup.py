@@ -214,7 +214,7 @@ def editor_fixture(tmp_path, monkeypatch, selected, fallback_owner, metadata):
     def run(argv, **options):
         if argv[:2] == ["/usr/bin/dpkg-query", "-W"]:
             return SimpleNamespace(stdout=f"{selected}|installed|install|no|no\n")
-        if argv[0] == "/usr/bin/python3":
+        if argv[0] == "/usr/bin/grep":
             assert argv[-1] == str(editor)
             return subprocess.run(argv, **options)
         assert argv == ["/usr/bin/nvim", "--clean", "--headless", "-n", "-i", "NONE", "+q"]

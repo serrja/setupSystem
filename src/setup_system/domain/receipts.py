@@ -78,9 +78,9 @@ class Ownership(ReceiptRecord):
     publishing: dict[str, RunId] = Field(default_factory=dict)
 
 
-def rollback_status(row: FileChange, current: FileState | None) -> str:
+def rollback_status(row: FileChange, current: FileState | None, *, published: bool) -> str:
     if current == row.before:
         return "unchanged"
-    if not row.verified or current != row.after:
+    if not published or current != row.after:
         return "conflict"
     return "would-remove" if row.before is None else "would-restore"

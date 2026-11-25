@@ -20,6 +20,7 @@ from setup_system.infrastructure.boot_recovery import BootRecovery, digest
 from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
 from setup_system.infrastructure.system_paths import protected
+from setup_system.layout import INSTALLED
 
 BOOT = Path("/boot")
 SYS = Path("/sys")
@@ -27,7 +28,6 @@ ETC = Path("/etc")
 STATE = Path("/var/lib/setup-system/boot")
 THEMES = Path("/usr/share/plymouth/themes")
 THEME = "setup-system-mocha"
-PACKAGE_ROOT = Path("/usr/lib/setup-system")
 MIN_SPACE = 64 * 1024 * 1024
 
 
@@ -195,7 +195,7 @@ def inspect_unlock() -> UnlockPlan:
 
 
 def _theme(root: Path | None = None) -> bytes:
-    root = root or PACKAGE_ROOT
+    root = root or INSTALLED
     return render_asset(root / "assets/plymouth/mocha.plymouth", palette(root))
 
 
@@ -312,10 +312,10 @@ def is_current(root: Path | None) -> bool:
 
 
 def apply_unlock(
-    expected: object,
+    expected: str | None,
     *,
     root: Path | None = None,
-    packages: object = (),
+    packages: tuple[str, ...] | list[str] = (),
     install: Callable[[tuple[str, ...]], None] | None = None,
 ) -> bool:
     if os.geteuid() != 0 or _identity() != expected:
