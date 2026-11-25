@@ -82,6 +82,8 @@ def test_private_file_preview_emits_one_json_record(tmp_path, monkeypatch):
 
     from setup_system.file_tasks import cli
 
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     request = tmp_path / "request.json"
     request.write_text('{"schema":1,"settings":{},"expected":null}')
     (tmp_path / "files").mkdir()
@@ -113,3 +115,44 @@ def test_wheel_version_and_short_help_are_read_only(monkeypatch):
     runner = CliRunner()
     assert runner.invoke(entrypoint.cli, ["--version"]).stdout.strip() == version("setup-system")
     assert "Textual" in runner.invoke(entrypoint.cli, ["-h"]).stdout
+
+
+def test_run_forwards_application_options_and_literal_paths_only(tmp_path, monkeypatch):
+    import os
+    import shutil
+
+    from typer.testing import CliRunner
+
+    root = Path(__file__).resolve().parents[1]
+    shutil.copyfile(root / "Makefile", tmp_path / "Makefile")
+    shutil.copytree(root / "mk", tmp_path / "mk")
+    (tmp_path / "libexec").mkdir()
+    (tmp_path / "libexec/run.sh").write_text(
+        'printf "%s\\0" "$SETUP_SYSTEM_SUGGESTION_RESULTS" "$XDG_CONFIG_HOME" '
+        '"${SETUP_SYSTEM_RESULT-unset}" > received\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(entrypoint, "resource_root", lambda: tmp_path)
+    path = "/tmp/配置 '$(MAKE_VERSION)'\n-literal"
+    monkeypatch.setenv("XDG_CONFIG_HOME", path)
+    monkeypatch.setenv("SETUP_SYSTEM_SUGGESTION_RESULTS", "9")
+    monkeypatch.setenv("SETUP_SYSTEM_RESULT", "/caller/result")
+    monkeypatch.setenv("MAKEFILES", "/unknown/file.mk")
+
+    def run(executable, args, env):
+        subprocess.run(args, executable=executable, env=env, check=True)
+
+    monkeypatch.setattr(os, "execve", run)
+    result = CliRunner().invoke(entrypoint.cli, [])
+    assert result.exit_code == 0, result.exception
+    assert (tmp_path / "received").read_bytes().split(b"\0") == [b"9", path.encode(), b"unset", b""]
+
+
+def test_launcher_validates_numeric_preferences_before_make(monkeypatch):
+    from typer.testing import CliRunner
+
+    monkeypatch.setenv("SETUP_SYSTEM_SUGGESTION_RESULTS", "invalid-private-value")
+    monkeypatch.setattr(entrypoint.os, "execve", lambda *args: pytest.fail("unexpected launcher"))
+    result = CliRunner().invoke(entrypoint.cli, [])
+    assert result.exit_code == 1
+    assert "application settings" in result.output and "invalid-private-value" not in result.output

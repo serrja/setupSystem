@@ -14,6 +14,7 @@ from uuid import UUID
 from setup_system.domain.administration import AdminAccount, AdminIntent
 from setup_system.domain.identity import TargetUser
 from setup_system.infrastructure.identity import validate_home
+from setup_system.infrastructure.processes import run_command
 
 ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/"}
 DEFAULT_POLICY = "root ALL=(ALL:ALL) ALL\n%sudo ALL=(ALL:ALL) ALL\n"
@@ -26,11 +27,11 @@ def current_boot_identity() -> str:
 
 def checked_output(*argv: str, input_text: str | None = None) -> str:
     try:
-        result = subprocess.run(
-            argv,
+        result = run_command(
+            list(argv),
             input=input_text,
-            text=True,
-            capture_output=True,
+            discard_output=argv[0] != "/usr/bin/cvtsudoers",
+            discard_stderr=True,
             env=ENVIRONMENT,
             timeout=20,
             check=True,

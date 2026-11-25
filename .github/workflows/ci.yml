@@ -38,16 +38,7 @@ jobs:
         run: make native-ci
       - name: Read release identity from canonical native metadata
         id: release-target
-        run: |
-          uv run --locked python - <<'PYTHON' >> "$GITHUB_OUTPUT"
-          import tomllib
-          from pathlib import Path
-          from packaging.utils import canonicalize_name
-          from packaging.version import Version
-          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
-          print("package-name=" + canonicalize_name(project["name"]))
-          print("version-target=" + Version(project["version"]).base_version)
-          PYTHON
+        run: uv run --locked python -I docker/release_target.py >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -159,12 +150,8 @@ jobs:
         run: |
           set -euo pipefail
           unset GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_RUNTIME_TOKEN
-          python3 - <<'PYTHON'
-          import os
-          from pathlib import Path
-          (Path(os.environ["RUNNER_TEMP"]) / "allocation.json").write_text(os.environ["ALLOCATION_JSON"])
-          (Path(os.environ["RUNNER_TEMP"]) / "source-pyproject.toml").write_bytes(Path("pyproject.toml").read_bytes())
-          PYTHON
+          printf '%s' "$ALLOCATION_JSON" > "$RUNNER_TEMP/allocation.json"
+          cp -- pyproject.toml "$RUNNER_TEMP/source-pyproject.toml"
           "$UV_PROJECT_ENVIRONMENT/bin/python" docker/python_release.py build \
             --allocation "$RUNNER_TEMP/allocation.json" --allocation-sha256 "$ALLOCATION_SHA256" \
             --provider-ref e5cac33af228224af9deaef308e39c1b9f788033 \

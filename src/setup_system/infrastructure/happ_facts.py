@@ -1,12 +1,12 @@
 """Observe the reviewed vendor unit and Debian package before an explicit Happ action."""
 
 import re
-import subprocess
 from pathlib import Path
 
 from pydantic import JsonValue
 
 from setup_system.domain.observations import HappBefore, HappUnit
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.system_paths import protected
 
 UNIT_PATHS = (
@@ -17,10 +17,9 @@ UNIT_PATHS = (
 
 
 def installed_version() -> str | None:
-    result = subprocess.run(
+    result = run_command(
         ["/usr/bin/dpkg-query", "-W", "-f=${Status}|${Version}", "happ"],
-        capture_output=True,
-        text=True,
+        check=False,
         timeout=15,
         env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
     )
@@ -55,7 +54,7 @@ def unit_info() -> dict[str, str]:
         "happd.service",
         "--property=LoadState,ActiveState,FragmentPath",
     ]
-    result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+    result = run_command(args, discard_stderr=True, check=False, timeout=15)
     facts = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     if not (
         facts.get("LoadState") in {"loaded", "not-found"}
@@ -77,8 +76,8 @@ def require_idle(old: str | None, new: str, unit: dict[str, str]) -> None:
     if unit["ActiveState"] == "active":
         raise ValueError("Disconnect Happ and stop its active service before updating")
     for name in ("Happ", "happ"):
-        result = subprocess.run(
-            ["/usr/bin/pgrep", "-x", name], stdout=subprocess.DEVNULL, timeout=10
+        result = run_command(
+            ["/usr/bin/pgrep", "-x", name], discard_output=True, check=False, timeout=10
         )
         if result.returncode != 1:
             raise ValueError("Close Happ and disconnect the active session before updating")

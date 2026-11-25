@@ -173,7 +173,11 @@ def test_apt_hook_rejects_changed_actual_dpkg_transaction(tmp_path, monkeypatch)
     (tmp_path / "approved.json").write_text(
         json.dumps(["Inst example [1] (2 stable [amd64])", "Conf example (2 stable [amd64])"])
     )
-    monkeypatch.setattr(subprocess, "check_output", lambda *a, **kw: "amd64")
+    monkeypatch.setitem(
+        scope["verify"].__globals__,
+        "run_command",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "amd64", ""),
+    )
     prefix = "VERSION 3\nAPT::Architecture=amd64\n\n"
     accepted = (
         "example 1 amd64 none < 2 amd64 none /var/cache/example.deb\n"
@@ -208,9 +212,9 @@ def test_incompatible_or_unavailable_userspace_abi_blocks_root(monkeypatch, kern
         assert argv == ["/usr/bin/dpkg", "--print-architecture"]
         if dpkg is None:
             raise FileNotFoundError("no dpkg")
-        return dpkg
+        return subprocess.CompletedProcess(argv, 0, dpkg, "")
 
-    monkeypatch.setattr(subprocess, "check_output", check)
+    monkeypatch.setattr(native_target, "run_command", check)
     assert not native_target.current_target(
         {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
     )[1]

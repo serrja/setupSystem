@@ -14,6 +14,7 @@ import aiofiles
 import aiofiles.tempfile
 from pydantic import Field, JsonValue, ValidationError, ValidationInfo, field_validator
 
+from setup_system.configuration import ApplicationOptions, Settings
 from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
 from setup_system.infrastructure.operation_io import read_wire
 from setup_system.infrastructure.operation_outcome import record_outcome
@@ -134,8 +135,11 @@ def _result(path: Path, code: int, target: Target) -> TaskResult | None:
 
 
 class AsyncMakeRunner:
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(
+        self, root: Path | None = None, *, options: ApplicationOptions | None = None
+    ) -> None:
         self.root = root
+        self.options = options
 
     async def check_authorization(self) -> Path:
         """Identify the packaged program before requesting or transmitting a password."""
@@ -239,6 +243,9 @@ class AsyncMakeRunner:
                     env,
                     stop,
                     report,
+                    options=self.options
+                    if self.options is not None
+                    else await asyncio.to_thread(Settings.application),
                     take_password=password.take if password is not None else None,
                 )
             except TransportError as exc:

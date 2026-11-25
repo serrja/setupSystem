@@ -19,6 +19,7 @@ from setup_system.domain.applications import BasePackages, applications
 from setup_system.infrastructure import happ_facts
 from setup_system.infrastructure.downloads import DownloadPolicy, read_https
 from setup_system.infrastructure.native_target import current_target
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.service_policy import defer_services
 from setup_system.infrastructure.system_paths import protected
 from setup_system.infrastructure.upstream_asset import github_deb
@@ -44,9 +45,12 @@ def reviewed(stage: Path) -> None:
 def verify(stage: Path) -> None:
     approved = TypeAdapter(list[str]).validate_json((stage / "approved.json").read_bytes())
     expected = {}
-    architecture = subprocess.check_output(
-        ["/usr/bin/dpkg", "--print-architecture"], text=True
-    ).strip()
+    architecture = run_command(
+        ["/usr/bin/dpkg", "--print-architecture"],
+        stdin=subprocess.DEVNULL,
+        discard_stderr=True,
+        timeout=5,
+    ).stdout.strip()
     for line in approved:
         match = re.match(r"(Inst|Conf) (\S+)(?: \[([^]]+)\])? \((\S+)", line)
         if not match:
@@ -108,15 +112,17 @@ def validate_deb(path: Path, key: str, verified: dict[str, str], arch: str) -> s
     with path.open("rb") as stream:
         if "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest() != verified["checksum"]:
             raise ValueError("Upstream package changed after confirmation")
-    header = subprocess.check_output(
+    header = run_command(
         [
             "/usr/bin/dpkg-deb",
             "--show",
             "--showformat=${Package}|${Architecture}|${Version}",
             str(path),
         ],
-        text=True,
-    )
+        stdin=subprocess.DEVNULL,
+        discard_stderr=True,
+        timeout=30,
+    ).stdout
     name, deb_arch, version = header.split("|")
     if name != key or arch != deb_arch or version.split("-")[0] != verified["version"]:
         raise ValueError("Unexpected Debian package identity")
@@ -132,10 +138,8 @@ def run(stage: Path) -> None:
     app_config = applications(
         tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
     )
-    allow = set(package_config.hyprland.stable + package_config.login.stable)
-    allow.update(p + "/trixie-backports" for p in package_config.hyprland.backports)
+    allow = package_config.allowed()
     allow.update(p for app in app_config.values() for p in app.packages)
-    allow.update(["console-setup", "locales", "plymouth", "plymouth-themes", "xkb-data"])
     index = args.index("--")
     if args[index - 3 : index] != ["--no-remove", "--no-install-recommends", "install"]:
         raise ValueError("Expected a native nonremoving install")
@@ -209,6 +213,9 @@ def run(stage: Path) -> None:
         subprocess.run(
             [args[0], *config, *args[1:]],
             check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env={
                 "LC_ALL": "C",
                 "HOME": "/root",

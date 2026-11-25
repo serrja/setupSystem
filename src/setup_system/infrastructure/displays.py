@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, JsonValue, StrictBool, StrictFloat, Stri
 
 from setup_system.domain.contracts import ContractModel
 from setup_system.domain.displays import DisplayOutput, MonitorLayout
+from setup_system.infrastructure.processes import run_command
 
 PREVIEW_SECONDS = 12
 
@@ -38,11 +39,11 @@ def _hyprctl(*args: str) -> str:
     if os.geteuid() == 0 or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         raise ValueError("Monitor layout needs a running user Hyprland session")
     try:
-        result = subprocess.run(
-            ["/usr/bin/hyprctl", *args], capture_output=True, text=True, timeout=4
-        )
+        result = run_command(["/usr/bin/hyprctl", *args], timeout=4, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError("Hyprland monitor control is unavailable") from exc
+    except subprocess.SubprocessError as exc:
+        raise RuntimeError("Hyprland did not return the requested monitor information") from exc
     if result.returncode or len(result.stdout) > 262144:
         raise RuntimeError("Hyprland did not return the requested monitor information")
     return result.stdout.strip()

@@ -1,27 +1,27 @@
 /* Rendered from the shared font policy; colors belong to the managed desktop theme. */
 * {
-  font-family: "@{ fonts.family }@", "@{ fonts.emoji_fallback }@";
-  font-size: @{ fonts.panel_size }@px;
+  font-family: "@{ render_ctx.fonts.family }@", "@{ render_ctx.fonts.emoji_fallback }@";
+  font-size: @{ render_ctx.fonts.panel_size }@px;
   letter-spacing: 0px;
   border: none;
   border-radius: 0;
 }
-window#waybar { background: rgba(@{ mantle_rgb }@, @{ opacity }@); color: @{ text }@; border-radius: @{ rounding }@px; }
-#custom-launcher, #custom-power { color: @{ green }@; padding: 0 14px; font-size: 20px; }
-#clock { color: @{ rosewater }@; font-weight: bold; padding: 0 14px; }
-.workspace { color: @{ subtext0 }@; min-width: 20px; margin: 5px 1px; padding: 0 5px; border-radius: 9px; }
-.workspace.occupied { color: @{ text }@; }
-.workspace.active { color: @{ crust }@; background: @{ green }@; font-weight: bold; }
-#language, #pulseaudio, #network, #backlight, #battery { background: @{ surface0 }@; padding: 0 10px; margin: 5px 2px; border-radius: 9px; }
-#battery.charging, #battery.full { color: @{ green }@; }
-#battery.warning { color: @{ yellow }@; }
-#battery.critical { color: @{ red }@; }
-#network.disconnected, #pulseaudio.muted { color: @{ subtext0 }@; }
+window#waybar { background: rgba(@{ render_ctx.mantle_rgb }@, @{ render_ctx.opacity }@); color: @{ render_ctx.text }@; border-radius: @{ render_ctx.rounding }@px; }
+#custom-launcher, #custom-power { color: @{ render_ctx.green }@; padding: 0 14px; font-size: 20px; }
+#clock { color: @{ render_ctx.rosewater }@; font-weight: bold; padding: 0 14px; }
+.workspace { color: @{ render_ctx.subtext0 }@; min-width: 20px; margin: 5px 1px; padding: 0 5px; border-radius: 9px; }
+.workspace.occupied { color: @{ render_ctx.text }@; }
+.workspace.active { color: @{ render_ctx.crust }@; background: @{ render_ctx.green }@; font-weight: bold; }
+#language, #pulseaudio, #network, #backlight, #battery { background: @{ render_ctx.surface0 }@; padding: 0 10px; margin: 5px 2px; border-radius: 9px; }
+#battery.charging, #battery.full { color: @{ render_ctx.green }@; }
+#battery.warning { color: @{ render_ctx.yellow }@; }
+#battery.critical { color: @{ render_ctx.red }@; }
+#network.disconnected, #pulseaudio.muted { color: @{ render_ctx.subtext0 }@; }
 #tray { padding: 0 10px; }
-tooltip { background: @{ mantle }@; border: 1px solid @{ surface1 }@; border-radius: 10px; }
-window#window { background: @{ base }@; color: @{ text }@; border: 2px solid @{ green }@; border-radius: @{ rounding }@px; }
+tooltip { background: @{ render_ctx.mantle }@; border: 1px solid @{ render_ctx.surface1 }@; border-radius: 10px; }
+window#window { background: @{ render_ctx.base }@; color: @{ render_ctx.text }@; border: 2px solid @{ render_ctx.green }@; border-radius: @{ render_ctx.rounding }@px; }
 #outer-box { padding: 16px; }
-#input { background: @{ surface0 }@; color: @{ text }@; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; }
+#input { background: @{ render_ctx.surface0 }@; color: @{ render_ctx.text }@; padding: 10px 14px; margin-bottom: 12px; border-radius: 10px; }
 #entry { padding: 10px; border-radius: 10px; }
-#entry:selected { background: @{ surface1 }@; color: @{ green }@; }
+#entry:selected { background: @{ render_ctx.surface1 }@; color: @{ render_ctx.green }@; }
 #img { margin-right: 12px; }

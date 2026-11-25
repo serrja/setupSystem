@@ -51,7 +51,7 @@ for key, method in pairs({ ["<leader>ff"]="files", ["<leader>fg"]="live_grep", [
 end
 vim.keymap.set("n","-",function() require("oil").open() end,{desc="Project files"})
 
-local selected = @{ selected_lua }@
+local selected = @{ render_ctx.selected_lua }@
 local conform = require("conform")
 local formatters = {
   python = { python = "ruff_format" }, cpp = { c = "clang_format", cpp = "clang_format" },

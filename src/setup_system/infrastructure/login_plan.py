@@ -12,7 +12,6 @@ import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from setup_system.domain.auth_screen import AuthScreen
 from setup_system.domain.identity import TargetUser
 from setup_system.domain.login import DesktopFile, DesktopPlan, LoginConsent
 from setup_system.domain.system_facts import EncryptionState, SystemSnapshot
@@ -20,14 +19,15 @@ from setup_system.infrastructure.inspection import inspect_system
 from setup_system.infrastructure.login_boot import grub_fingerprints, manager_enabled
 from setup_system.infrastructure.login_files import LoginFiles
 from setup_system.infrastructure.native_templates import render_asset
-from setup_system.infrastructure.palette import palette
+from setup_system.infrastructure.palette import desktop_style, palette
 
 XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
 
 
 def greeter_style(root: Path) -> bytes:
     return render_asset(
-        root / "assets/login/greeter.css", {"auth_screen": AuthScreen().tokens(palette(root))}
+        root / "assets/login/greeter.css",
+        {"auth_screen": desktop_style(root).auth_screen.tokens(palette(root))},
     )
 
 

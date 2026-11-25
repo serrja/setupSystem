@@ -5,3 +5,15 @@ backports = ["hyprland", "hyprland-guiutils", "hypridle", "hyprlock", "hyprpolki
 
 [login]
 stable = ["greetd", "gtkgreet", "cage"]
+
+[locale]
+stable = ["locales"]
+
+[keyboard]
+stable = ["console-setup", "xkb-data"]
+
+# Package ownership probes for a recoverable initramfs rebuild.
+[unlock_probes]
+plymouth = "/usr/share/initramfs-tools/hooks/plymouth"
+plymouth-themes = "/usr/share/plymouth/themes/spinner/spinner.plymouth"
+console-setup = "/usr/bin/setupcon"

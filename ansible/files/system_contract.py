@@ -25,16 +25,14 @@ from setup_system.infrastructure.identity import resolve_target, user_environmen
 from setup_system.infrastructure.login import DesktopSystem
 from setup_system.infrastructure.native_target import current_target
 from setup_system.infrastructure.system_paths import protected
-from setup_system.layout import require_installed_resource
+from setup_system.layout import require_installed_resource, resource_root
 from setup_system.machine_io import write_model
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def desktop(xdg: dict[str, str]) -> tuple[DesktopSystem, TargetUser, dict[str, str]]:
     target = resolve_target(None)
     env = user_environment(target, {k: Path(v) for k, v in xdg.items()})
-    return DesktopSystem(ROOT, run=subprocess.run), target, env
+    return DesktopSystem(resource_root()), target, env
 
 
 def policy_stamp(
@@ -151,7 +149,7 @@ def run(op: SystemTask) -> None:
                 observations["unlock"] = unlock.model_dump(mode="json", exclude={"description"})
                 reasons.extend(unlock.blockers)
                 if not unlock.blockers:
-                    observations["unlock_current"] = graphical_unlock.is_current(ROOT)
+                    observations["unlock_current"] = graphical_unlock.is_current(resource_root())
                     if not observations["unlock_current"]:
                         actions.append(SystemAction(kind="plymouth", label=unlock.description))
         elif isinstance(settings, WorkspaceOptions) and "firefox" in settings.apps:
@@ -224,15 +222,21 @@ def run(op: SystemTask) -> None:
                     "/usr/bin/python3",
                     "-I",
                     "-B",
-                    str(ROOT / "ansible/files/apt_apply.py"),
+                    str(resource_root() / "ansible/files/apt_apply.py"),
                     "apply",
                     str(apt_stage),
                 ],
                 check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
 
         changed = graphical_unlock.apply_unlock(
-            accepted_unlock.identity, root=ROOT, packages=accepted_unlock.packages, install=install
+            accepted_unlock.identity,
+            root=resource_root(),
+            packages=accepted_unlock.packages,
+            install=install,
         )
         print(json.dumps({"changed": changed}))
     else:

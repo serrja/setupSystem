@@ -1,0 +1,9 @@
+# Timing and I/O preferences for the normal-user configurator.
+suggestion_debounce_seconds = 0.075
+suggestion_cache_directories = 32
+suggestion_scan_entries = 2048
+suggestion_results = 128
+prompt_timeout_seconds = 30.0
+idle_timeout_seconds = 90.0
+termination_grace_seconds = 2.0
+read_only_timeout_seconds = 900.0

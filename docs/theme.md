@@ -4,6 +4,8 @@ In **Working environment**, choose the desktop theme and adjust panel density, e
 
 ## 🎨 Desktop appearance
 
+Base and Working environment both start with desktop effects disabled. Enable effects in Working environment to include them in the next confirmed desktop plan.
+
 Hyprland uses 6-pixel inner gaps, 12-pixel outer gaps, 12-pixel default corners and a 2-pixel green active border. The floating top bar is normally 36 pixels high and 30 in compact mode. The launcher and workspace buttons are on the left. The center shows the clock, with the date available on click. Keyboard layout, audio, network and tray appear on the right. The panel discovers batteries and backlights in sysfs and adds their controls when present.
 
 The session's Waybar helper listens for Hyprland workspace events and translates workspace button clicks to the compositor's Lua dispatcher. On a target with updated native packages, verify workspace switching, hotplug and scale on each output before replacing this integration. The installed helper is `/usr/lib/setup-system/assets/hyprland/panel.py`.

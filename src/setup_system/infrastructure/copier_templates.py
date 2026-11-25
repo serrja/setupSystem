@@ -30,6 +30,7 @@ from setup_system.domain.templates import (
     TemplateSource,
     answer_values,
 )
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.user_storage import safe_file
 
 
@@ -55,7 +56,7 @@ def _git_environment() -> dict[str, str]:
 
 
 def _git(repository: Path, *args: str) -> str:
-    result = subprocess.run(
+    result = run_command(
         [
             "git",
             "-c",
@@ -68,8 +69,7 @@ def _git(repository: Path, *args: str) -> str:
             str(repository),
             *args,
         ],
-        text=True,
-        capture_output=True,
+        discard_output=args[0] in {"fetch", "init", "fsck"},
         timeout=120,
         check=False,
         env=_git_environment(),
@@ -196,7 +196,7 @@ def available_versions(
     if offline:
         rows = [v for cached, _ in _cached_sources(cache, source) for v in cached.metadata.versions]
     else:
-        result = subprocess.run(
+        result = run_command(
             [
                 "git",
                 "-C",
@@ -208,8 +208,6 @@ def available_versions(
                 source.url,
                 "refs/tags/v*",
             ],
-            capture_output=True,
-            text=True,
             env=_git_environment(),
             timeout=60,
             check=False,
@@ -381,27 +379,42 @@ def _run_copier(plan: TemplatePlan, repository: Path, destination: Path) -> None
             argv.append(plan.source.url)
         else:
             argv += ["--skip-answered"]
-        result = subprocess.run(
-            [*argv, str(destination)],
-            env=env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=300,
-            check=False,
-        )
-        if result.returncode:
-            changed = destination.is_dir() and (
-                any(destination.iterdir())
-                if plan.operation == "create"
-                else bool(_git(destination, "status", "--porcelain"))
+        before_head = _git(destination, "rev-parse", "HEAD") if plan.operation == "update" else None
+        try:
+            result = run_command(
+                [*argv, str(destination)],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                discard_output=True,
+                timeout=300,
+                check=False,
             )
-            if changed:
-                raise PartialApplyError(
-                    "Copier stopped with project changes; inspect the working tree"
+            if not result.returncode:
+                return
+            reason = f"exit {result.returncode}"
+        except subprocess.TimeoutExpired:
+            reason = "timed out"
+        except KeyboardInterrupt:
+            reason = "interrupted"
+        try:
+            _no_symlinks(destination)
+            if before_head is None:
+                changed = destination.exists() and (
+                    not destination.is_dir() or any(destination.iterdir())
                 )
-            raise ValueError(
-                f"Copier {plan.operation} failed (exit {result.returncode}); inspect the project"
-            )
+            else:
+                changed = (
+                    not destination.is_dir()
+                    or _git(destination, "rev-parse", "HEAD") != before_head
+                    or bool(_git(destination, "status", "--porcelain"))
+                )
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise PartialApplyError(
+                "Could not verify project changes after Copier stopped"
+            ) from error
+        if changed:
+            raise PartialApplyError("Copier stopped with project changes; inspect the working tree")
+        raise ValueError(f"Copier {plan.operation} failed ({reason}); inspect the project")
 
 
 def _read_answers(destination: Path) -> dict[str, JsonValue]:

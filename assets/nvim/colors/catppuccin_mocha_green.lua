@@ -1,14 +1,14 @@
 vim.cmd("highlight clear")
 vim.g.colors_name = "catppuccin_mocha_green"
 local colors = {
-  base = "@{ base }@",
-  text = "@{ text }@",
-  green = "@{ green }@",
-  surface = "@{ surface0 }@",
-  muted = "@{ subtext0 }@",
-  red = "@{ red }@",
-  yellow = "@{ yellow }@",
-  teal = "@{ teal }@",
+  base = "@{ render_ctx.base }@",
+  text = "@{ render_ctx.text }@",
+  green = "@{ render_ctx.green }@",
+  surface = "@{ render_ctx.surface0 }@",
+  muted = "@{ render_ctx.subtext0 }@",
+  red = "@{ render_ctx.red }@",
+  yellow = "@{ render_ctx.yellow }@",
+  teal = "@{ render_ctx.teal }@",
 }
 local groups = {
   Normal = { fg = colors.text, bg = colors.base },

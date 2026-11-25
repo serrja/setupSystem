@@ -9,6 +9,7 @@ from typing import Annotated
 
 import typer
 
+from setup_system.configuration import APPLICATION_ENV_PREFIX, Settings
 from setup_system.layout import INSTALLED, PACKAGE, resource_root
 from setup_system.runner import _environment
 
@@ -28,7 +29,9 @@ def open_app(
     """Open the Textual workstation configurator."""
     if show_version:
         if resource_root() == INSTALLED:
-            subprocess.run(["/usr/bin/dpkg-query", "-W", r"-f=${Version}\n", PACKAGE], check=True)
+            subprocess.run(
+                ["/usr/bin/dpkg-query", "-W", r"-f=${Version}\n", PACKAGE], check=True, timeout=10
+            )
         else:
             typer.echo(version(PACKAGE))
         return
@@ -37,6 +40,15 @@ def open_app(
         raise typer.Exit(2)
     root = resource_root()
     env = _environment()
+    try:
+        preferences = Settings.application()
+    except (OSError, ValueError) as error:
+        typer.echo(f"Could not load application settings: {error}", err=True)
+        raise typer.Exit(1) from None
+    for field, number in preferences.model_dump().items():
+        name = APPLICATION_ENV_PREFIX + field.upper()
+        if name in os.environ:
+            env[name] = str(number)
     env["PATH"] = str(Path(sys.executable).parent) + ":/usr/bin:/bin"
     os.chdir(root)
     os.execve("/usr/bin/make", ["make", "-rR", "-j1", "-f", str(root / "Makefile"), "run"], env)
