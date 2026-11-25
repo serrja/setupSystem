@@ -143,3 +143,50 @@ def test_parent_receipt_symlink_is_preserved(tmp_path, monkeypatch):
     marker.unlink()
     original.rename(marker)
     extension_lifecycle.retire(root.parent, root.name, entries)
+
+
+@pytest.mark.parametrize("boundary", ["inner", "parent"])
+def test_receipt_published_before_process_loss_always_has_one_link(tmp_path, monkeypatch, boundary):
+    parent = tmp_path / "owned"
+    root = parent / "demo"
+    root.mkdir(parents=True, mode=0o700)
+    name = ".retiring.json"
+    payload = b'{"approved":true}'
+    native = checkpoint.rename_new
+    target = name if boundary == "inner" else "demo.json"
+
+    def interrupt(source, old, destination, new):
+        native(source, old, destination, new)
+        if new == target:
+            raise PowerLoss
+
+    if boundary == "parent":
+        checkpoint.publish(root, name, payload, parent)
+    with monkeypatch.context() as faults:
+        faults.setattr(checkpoint, "rename_new", interrupt)
+        with pytest.raises(PowerLoss):
+            if boundary == "inner":
+                checkpoint.publish(root, name, payload, parent)
+            else:
+                checkpoint.finish(root, name, payload)
+    published = root / name if boundary == "inner" else parent / checkpoint.NAMESPACE / target
+    assert published.is_file() and published.stat().st_nlink == 1
+    checkpoint.finish(root, name, payload)
+    assert not root.exists() and not checkpoint.pending(root)
+
+
+def test_staging_left_before_publication_cannot_replace_or_hide_a_receipt(tmp_path):
+    parent = tmp_path / "owned"
+    root = parent / "demo"
+    root.mkdir(parents=True, mode=0o700)
+    storage = parent / checkpoint.NAMESPACE
+    storage.mkdir(mode=0o700)
+    (storage / ".staged-partial").write_text("interrupted private write")
+    assert not checkpoint.targets(parent) and not extensions.installed(parent)
+    marker = ".retiring.json"
+    checkpoint.publish(root, marker, b"first", parent)
+    with pytest.raises(FileExistsError):
+        checkpoint.publish(root, marker, b"second", parent)
+    assert (root / marker).read_bytes() == b"first" and (root / marker).stat().st_nlink == 1
+    checkpoint.finish(root, marker, b"first")
+    assert (storage / ".staged-partial").read_text() == "interrupted private write"

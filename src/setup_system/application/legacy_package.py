@@ -1,4 +1,4 @@
-"""Read published installation history for Base inspection without opening a writer."""
+"""Decode the public stage and status from a pre-plugin package journal for offline recovery."""
 
 from __future__ import annotations
 

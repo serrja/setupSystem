@@ -5,7 +5,6 @@ import hashlib
 import os
 import re
 import stat
-import tempfile
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -162,16 +161,7 @@ def retire(env_root: Path, plugin: str, expected: tuple[str, ...]) -> None:
             )
             if removable(env_root, plugin) != expected:
                 raise ValueError("Extension changed while preparing its retirement")
-            with tempfile.NamedTemporaryFile(dir=env_root) as staged:
-                staged.write(record.model_dump_json().encode())
-                staged.flush()
-                os.fsync(staged.fileno())
-                os.link(staged.name, root / _RETIRING)
-            directory_fd = os.open(root, os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            checkpoint.publish(root, _RETIRING, record.model_dump_json().encode(), env_root)
         else:
             record = _retirement(root)
         remove_recorded(root, record.files, root / _RETIRING)

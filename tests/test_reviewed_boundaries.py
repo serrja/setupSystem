@@ -403,3 +403,39 @@ def test_interrupted_profile_removal_retains_edited_staging_copy(home):
     with pytest.raises(ValueError, match="changed"):
         reconcile_removed_profile(path, operation, existing.revision)
     assert staged.read_text() == "manual"
+
+
+def test_lost_native_response_cannot_adopt_later_generated_object(home, monkeypatch):
+    manager = PluginManager(state_root=home / "state")
+    state = activation(home)
+    row = resource(after=None)
+    plan = Plan(summary="Create unique local identity", resources=[row])
+
+    async def select(plugin):
+        return state
+
+    async def query(state, request, options):
+        if request.method == "plan":
+            return Reply(plan=plan)
+        appeared = row.model_copy(update={"after": "later-edit", "verified": True})
+        return Reply(
+            result=Result(
+                outcome=Outcome.COMPLETE, message="Current identity", resources=[appeared]
+            )
+        )
+
+    async def lost(*args):
+        raise OSError("Native result lost")
+
+    monkeypatch.setattr(manager, "activation", select)
+    monkeypatch.setattr(plugin_manager, "query", query)
+    monkeypatch.setattr(manager.runner, "execute", lost)
+
+    async def run():
+        snap = await manager.preview("demo", "configure", {}, {})
+        assert (await manager.apply(snap)).outcome is Outcome.UNKNOWN_OUTCOME
+        assert (await manager.reconcile("demo"))[0].outcome is Outcome.PARTIAL
+        assert not await manager.ledger.holdings("demo")
+        assert len(await manager.ledger.pending("demo")) == 1
+
+    asyncio.run(run())

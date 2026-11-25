@@ -1,7 +1,6 @@
 """Personal Git profiles and native GitHub CLI account inspection."""
 
 import asyncio
-import os
 from pathlib import Path
 from typing import ClassVar
 
@@ -190,18 +189,9 @@ class Plugin(DebianPackages):
 
     async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
         if isinstance(inputs, local_keys.Generate):
-            rows = await asyncio.to_thread(
-                local_keys.observed, local_keys.directory() / inputs.name, plan.resources
-            )
-            return Result(
-                outcome=Outcome.COMPLETE,
-                message="Verified the generated OpenSSH key pair",
-                resources=rows,
-            )
+            return await asyncio.to_thread(local_keys.verify_generation, inputs, plan)
         if isinstance(inputs, local_keys.RemoveLocal):
-            absent = await asyncio.to_thread(
-                lambda: all(not os.path.lexists(r.identity) for r in plan.resources)
-            )
+            absent = await asyncio.to_thread(local_keys.removed, plan)
             return Result(
                 outcome=Outcome.COMPLETE if absent else Outcome.PARTIAL,
                 message="Checked the reviewed local key files",

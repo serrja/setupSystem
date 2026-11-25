@@ -5,10 +5,10 @@ import hashlib
 import os
 import re
 import stat
-import tempfile
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager, suppress
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -59,6 +59,33 @@ def _read(directory: int, name: str, limit: int) -> tuple[bytes, Entry]:
         if len(data) > limit:
             raise ValueError("Retirement receipt exceeds its size limit")
         return data, (info.st_dev, info.st_ino, info.st_mode, hashlib.sha256(data).hexdigest())
+
+
+def _publish(destination: int, name: str, data: bytes, staging: int) -> None:
+    temporary = ".staged-" + uuid4().hex
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    fd = os.open(temporary, flags, mode=0o600, dir_fd=staging)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        rename_new(staging, temporary, destination, name)
+        os.fsync(destination)
+        os.fsync(staging)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary, dir_fd=staging)
+
+
+def publish(directory: Path, name: str, data: bytes, private_parent: Path) -> None:
+    """Stage outside the public tree, then atomically publish a single-link receipt."""
+    with _directory(private_parent) as parent:
+        with suppress(FileExistsError):
+            os.mkdir(NAMESPACE, mode=0o700, dir_fd=parent)
+        os.fsync(parent)
+    with _directory(private_parent / NAMESPACE) as staging, _directory(directory) as destination:
+        _publish(destination, name, data, staging)
 
 
 def targets(parent: Path) -> set[str]:
@@ -185,12 +212,7 @@ def finish(root: Path, marker: str, payload: bytes) -> None:
                     entry=entry,
                     payload=data.decode(),
                 )
-            with tempfile.NamedTemporaryFile(dir=storage) as staged:
-                staged.write(record.model_dump_json().encode())
-                staged.flush()
-                os.fsync(staged.fileno())
-                os.link(staged.name, receipt, dst_dir_fd=directory)
-                os.fsync(directory)
+            _publish(directory, receipt, record.model_dump_json().encode(), directory)
         name = _receipt(root)
         data, approved = _read(directory, name, 2 * _MAX + 4096)
         record = _parse(root, marker, data)

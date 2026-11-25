@@ -1,6 +1,7 @@
 """Exercise confirmed plugin operations with private state and real Make subprocesses."""
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -213,3 +214,22 @@ def test_history_is_bounded_and_plugin_filtered(home):
         assert all(p.stat().st_size <= 1050 for p in journal.directory.glob("*.jsonl"))
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("level", ["info", "warning", "error"])
+def test_log_transport_preserves_severity_and_wire_record(home, caplog, level):
+    event = Event(
+        level=level,
+        plugin_id="demo",
+        action_id="configure",
+        operation_id=uuid4(),
+        phase="verified",
+        message_code="readback",
+    )
+    journal = Journal(home / "events")
+    with caplog.at_level(logging.INFO, logger="setup_system.events"):
+        asyncio.run(journal.emit(event))
+    (record,) = caplog.records
+    assert record.levelname == level.upper()
+    assert Event.model_validate_json(record.getMessage()) == event
+    assert asyncio.run(journal.history("demo")) == [event]

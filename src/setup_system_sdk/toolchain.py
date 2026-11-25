@@ -125,16 +125,7 @@ def _remove_generation(path: Path, digest: str | None) -> None:
         if record is None:
             record = Removal(generation=path.name, files=record_tree(path))
             _checked_generation(path, digest)
-            with tempfile.NamedTemporaryFile(dir=path.parent) as temporary:
-                temporary.write(record.model_dump_json().encode())
-                temporary.flush()
-                os.fsync(temporary.fileno())
-                os.link(temporary.name, marker)
-            directory = os.open(path, os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            checkpoint.publish(path, marker.name, record.model_dump_json().encode(), path.parent)
         remove_recorded(path, record.files, marker)
         checkpoint.finish(path, marker.name, record.model_dump_json().encode())
 

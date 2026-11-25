@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import JsonValue
 
-from setup_system.infrastructure.package_journal import historical_status
+from setup_system.application.legacy_package import historical_status
 
 
 @pytest.mark.parametrize(

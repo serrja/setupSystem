@@ -26,8 +26,8 @@ from setup_system.infrastructure.encryption import validate_home_access
 from setup_system.infrastructure.operation_io import read_wire
 from setup_system.journal import Event, Journal
 from setup_system.layout import INSTALLED, verify_installation
-from setup_system.make_transport import Phase, authenticated_make
-from setup_system.resource_ledger import LocalSnapshot, ResourceLedger
+from setup_system.make_transport import Phase, authenticated_make, guard_refusal, make_command
+from setup_system.resource_ledger import LocalSnapshot, MissingPublicationProofError, ResourceLedger
 from setup_system_sdk import Action, ActionEvent, Inputs, Mutation, Outcome, Plan, Result, Values
 from setup_system_sdk.protocol import LIMIT, Reply, Request
 
@@ -76,7 +76,11 @@ async def _pipe(
                 chunks.extend(chunk)
             else:
                 overflow = True
-        if await child.wait() or overflow:
+        code = await child.wait()
+        blocked = guard_refusal(code, argv)
+        if blocked is not None:
+            return blocked.model_dump_json().encode()
+        if code or overflow:
             raise ValueError("The plugin returned no usable response")
         return bytes(chunks)
 
@@ -190,7 +194,7 @@ class AsyncMakeRunner:
         if not privileged:
             await asyncio.to_thread(validate_home_access, Path.home())
             raw = await _pipe(
-                ["/usr/bin/make", *args], wire, env, root, self.options.idle_timeout_seconds
+                make_command(args), wire, env, root, self.options.idle_timeout_seconds
             )
             return Result.model_validate_json(raw)
         assert password
@@ -206,6 +210,8 @@ class AsyncMakeRunner:
 
             await asyncio.to_thread(stage)
             env.update(
+                SETUP_SYSTEM_RELEASE_ID=state.manifest.id,
+                SETUP_SYSTEM_RELEASE_DIGEST=snapshot.digest,
                 SETUP_SYSTEM_REQUEST=str(request),
                 SETUP_SYSTEM_RESULT=str(result),
                 SETUP_SYSTEM_CANCEL=str(request.with_name("cancel")),
@@ -227,6 +233,9 @@ class AsyncMakeRunner:
                 options=self.options,
                 root_account="su" in action.permissions,
             )
+            blocked = guard_refusal(code, make_command(args, privileged=True))
+            if not started and blocked is not None:
+                return blocked
             if not result.exists() and not started:
                 return Result(
                     outcome=Outcome.BLOCKED, message="Authorization or preflight did not complete"
@@ -476,6 +485,12 @@ class PluginManager:
                         raise ValueError("Missing verification")
                     final = reply.result.model_copy(update={"recovery_id": native.recovery_id})
             else:
+                if native.outcome in (Outcome.PARTIAL, Outcome.UNKNOWN_OUTCOME) and any(
+                    r.verified for r in native.resources
+                ):
+                    await self.ledger.applied(
+                        snapshot.operation_id, native.recovery_id, tuple(native.resources)
+                    )
                 final = native
             await self.ledger.finish(snapshot.operation_id, final)
             observations = (*native.events, *(e for e in final.events if e not in native.events))
@@ -578,7 +593,13 @@ class PluginManager:
                     Result(outcome=Outcome.PARTIAL, message="Native state still needs review")
                 )
                 continue
-            await self.ledger.finish(snapshot.operation_id, result)
+            try:
+                await self.ledger.finish(snapshot.operation_id, result)
+            except MissingPublicationProofError:
+                result = Result(
+                    outcome=Outcome.PARTIAL,
+                    message="Original fingerprint missing. Ownership remains unresolved.",
+                )
             results.append(result)
         return results
 
@@ -714,16 +735,17 @@ class PluginManager:
         env["SETUP_SYSTEM_INTERPRETER"] = sys.executable
         try:
             raw = await _pipe(
-                [
-                    "/usr/bin/make",
-                    "-rRs",
-                    "-f",
-                    str(sdk / "environment.mk"),
-                    "-f",
-                    str(sdk / "recovery.mk"),
-                    "--",
-                    "restore-operation",
-                ],
+                make_command(
+                    [
+                        "-rRs",
+                        "-f",
+                        str(sdk / "environment.mk"),
+                        "-f",
+                        str(sdk / "recovery.mk"),
+                        "--",
+                        "restore-operation",
+                    ]
+                ),
                 confirmed.model_dump_json().encode(),
                 env,
                 sdk,

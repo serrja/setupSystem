@@ -17,6 +17,25 @@ import pexpect  # type: ignore[import-untyped]
 from pexpect.fdpexpect import fdspawn  # type: ignore[import-untyped]
 
 from setup_system.configuration import ApplicationOptions
+from setup_system.layout import INSTALLED, PYTHON_PACKAGE
+from setup_system_sdk import Outcome, Result
+
+
+def make_command(args: list[str], *, privileged: bool = False) -> list[str]:
+    if privileged or Path(__file__).absolute().parent == PYTHON_PACKAGE:
+        return [str(INSTALLED / "libexec/locked.sh"), *args]
+    return ["/usr/bin/make", *args]
+
+
+def guard_refusal(code: int, args: list[str]) -> Result | None:
+    # GNU Make returns 0, 1 or 2. Status 75 is reserved for the package preflight.
+    if code == 75 and args[0] == str(INSTALLED / "libexec/locked.sh"):
+        return Result(
+            outcome=Outcome.BLOCKED,
+            message="The package writer lock is unavailable or the installed release changed. "
+            "Check the Debian installation and retry after package operations finish.",
+        )
+    return None
 
 
 class Phase(StrEnum):
@@ -120,8 +139,7 @@ async def authenticated_make(
                 descriptors.callback(os.close, output)
                 child_ends.callback(os.close, writer)
                 process = await asyncio.create_subprocess_exec(
-                    "/usr/bin/make",
-                    *args,
+                    *make_command(args, privileged=True),
                     cwd=root,
                     env=env,
                     stdin=slave,

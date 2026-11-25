@@ -57,7 +57,7 @@ System recovery depends on the stage that completed. Keep original release
 artifacts. Use `dpkg --audit` to inspect an interrupted package operation and
 review APT's proposed resolution before authorizing repair.
 
-Existing package journals from older releases remain on disk for an administrator to inspect. New package transactions use native package status and logs.
+Open **Help and recovery**, then choose **Recovery** to see the last recorded stage and status from a recognized pre-plugin package journal. The original journal stays on disk. New package transactions use native package status and logs.
 
 ## 🖥️ Recover graphical login
 

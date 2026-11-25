@@ -20,3 +20,9 @@ Choose the OpenSSH public key and hosting account for Upload public SSH key. The
 Create an SSH key opens Debian's root-owned GNOME OpenSSH passphrase dialog when a graphical session and `ssh-askpass-gnome` are available. OpenSSH writes an encrypted Ed25519 pair into a dedicated directory under `~/.ssh/setup-system` and returns its public fingerprint. Choose Upload public SSH key separately. In a terminal-only session, run `ssh-keygen -t ed25519`, choose an unused filename, enter the passphrase in OpenSSH and select the resulting public file for upload. A terminal-created identity remains user-owned. [OpenSSH key generation](https://man.openbsd.org/ssh-keygen) · [Debian GNOME OpenSSH prompt](https://packages.debian.org/trixie/ssh-askpass-gnome).
 
 Full cleanup revokes reviewed plugin-created hosting keys first. The local-key step lists individual files and the public fingerprint before deleting an unchanged managed pair. Preserve any key that other hosts still use.
+
+
+An interrupted local-key deletion retains a receipt for both files. Reopen Managed resources, inspect the interrupted operation and confirm the remaining cleanup. Until it finishes, the key name stays reserved. A replacement file or mismatched fingerprint requires review.
+
+
+Preview names the private staging directory, `~/.ssh/setup-system/.generate-<key-name>`. If generation stops before publication, select the same key name to display the exact recovery path. The files there may be incomplete, and a rejected empty passphrase can leave an unencrypted private key. Keep the directory private. Check its owner and permissions and use `ssh-keygen -lf` on its public file to inspect the fingerprint. Move the entire staged directory to a private location you control before retrying. Review its contents yourself before any deletion. The manager leaves interrupted and unrecognized files in place.

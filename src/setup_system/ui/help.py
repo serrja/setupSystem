@@ -1,5 +1,6 @@
 """Read the installed workstation guides without opening a browser."""
 
+import asyncio
 from pathlib import Path
 from typing import ClassVar
 
@@ -10,6 +11,8 @@ from textual.binding import BindingType
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Markdown, Select
+
+from setup_system.application.legacy_package import historical_status
 
 TOPICS = {
     "configuration": "Configuration",
@@ -57,6 +60,9 @@ class Help(ModalScreen[None]):
                 content = await src.read()
         except (OSError, UnicodeError):
             content = "The local guide is unavailable. Check the installed package."
+        if key == "recovery":
+            status = await asyncio.to_thread(historical_status)
+            content += "\n\n## Previous package transaction\n\n" + status
         if self.app.is_running and self.is_active and markdown.is_attached:
             await markdown.update(content)
 

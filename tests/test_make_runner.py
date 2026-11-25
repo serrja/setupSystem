@@ -9,10 +9,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_installed_writer_guard import packaged_guard as packaged_guard
 
 from setup_system import make_transport as transport
 from setup_system.authorization import BecomePassword
 from setup_system.configuration import Settings
+
+pytestmark = pytest.mark.usefixtures("packaged_guard")
 
 
 def fixture_make(tmp_path: Path, body: str) -> None:

@@ -28,31 +28,36 @@ class Journal:
         self.limit = limit
 
     def _append(self, event: Event) -> None:
-        wire = event.model_dump_json()
+        wire = event.model_dump_json().encode() + b"\n"
         with private_directory(self.directory) as directory:
             fcntl.flock(directory, fcntl.LOCK_EX)
             name = "events.jsonl"
             flags = os.O_WRONLY | os.O_NOFOLLOW | os.O_APPEND | os.O_CREAT
             fd = os.open(name, flags, 0o600, dir_fd=directory)
             with os.fdopen(fd, "ab") as output:
-                if os.fstat(fd).st_size + len(wire) + 1 <= self.limit:
-                    output.write(wire.encode() + b"\n")
+                if os.fstat(fd).st_size + len(wire) <= self.limit:
+                    output.write(wire)
                     return
             os.replace(name, "previous.jsonl", src_dir_fd=directory, dst_dir_fd=directory)
             with os.fdopen(
                 os.open(name, flags | os.O_EXCL, 0o600, dir_fd=directory), "ab"
             ) as output:
-                output.write(wire.encode() + b"\n")
+                output.write(wire)
 
     async def emit(self, event: Event) -> None:
         await asyncio.to_thread(self._append, event)
-        structlog.wrap_logger(
+        logger = structlog.wrap_logger(
             logging.getLogger("setup_system.events"),
             processors=[
                 structlog.processors.EventRenamer("message_code"),
                 structlog.processors.JSONRenderer(),
             ],
-        ).info(event.message_code, **event.model_dump(mode="json", exclude={"message_code"}))
+        )
+        logger.bind(level=event.level).log(
+            logging.getLevelNamesMapping()[event.level.upper()],
+            event.message_code,
+            **event.model_dump(mode="json", exclude={"level", "message_code"}),
+        )
 
     def _history(self, plugin: str | None) -> list[Event]:
         events: list[Event] = []

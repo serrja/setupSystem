@@ -84,6 +84,8 @@ class ValueEditor(Vertical):
         self.choice_dependencies: Values | None = None
         self.choices = choices
         self.fields: list[ValueEditor] = []
+        self.selected_choices = [str(v) for v in value] if isinstance(value, list) else []
+        self.visible_choices: set[str] = set()
         self.control: Input | Switch | Select[str] | SelectionList[str] | None = None
         self.entries = Vertical(classes="entries")
         self.custom: Input | None = None
@@ -127,6 +129,7 @@ class ValueEditor(Vertical):
             if enum or provider:
                 if provider:
                     yield Input(placeholder="Filter available choices", classes="choice-query")
+                self.visible_choices = set(map(str, enum))
                 self.control = SelectionList[str](
                     *[(str(item), str(item), item in selected) for item in enum], disabled=readonly
                 )
@@ -229,23 +232,37 @@ class ValueEditor(Vertical):
         await asyncio.sleep(0.15)
         options = await self.choices(provider, query)
         if isinstance(self.control, SelectionList):
-            selected = self.control.selected or (
-                self.initial if isinstance(self.initial, list) else []
+            selected = self._selection(self.control)
+            self.visible_choices = set(options[:128])
+            self.selected_choices = (
+                selected if query else [v for v in selected if v in self.visible_choices]
             )
             self.control.clear_options()
-            self.control.add_options([(item, item, item in selected) for item in options[:128]])
+            self.control.add_options(
+                [(item, item, item in self.selected_choices) for item in options[:128]]
+            )
             return
         previous = self.control.value
         self.control.set_options([(value, value) for value in options[:128]])
         if previous in options:
             self.control.value = previous
 
+    def _selection(self, control: SelectionList[str]) -> list[str]:
+        return list(
+            dict.fromkeys(
+                [
+                    *(v for v in self.selected_choices if v not in self.visible_choices),
+                    *control.selected,
+                ]
+            )
+        )
+
     def value(self) -> JsonValue:
         spec = self.spec
         if spec.type == "object":
             return {field.key: field.value() for field in self.fields}
         if isinstance(self.control, SelectionList):
-            return list(self.control.selected)
+            return self._selection(self.control)
         if spec.type == "array":
             return [item.value() for item in self.fields]
         if isinstance(self.control, Switch):

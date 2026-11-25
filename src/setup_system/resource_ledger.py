@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS changes(
     operation TEXT NOT NULL REFERENCES operations(id), kind TEXT NOT NULL, identity TEXT NOT NULL,
     phase TEXT NOT NULL, resource TEXT NOT NULL, PRIMARY KEY(operation, kind, identity)
 );
+CREATE TABLE IF NOT EXISTS local_publications(operation TEXT PRIMARY KEY REFERENCES operations(id));
 CREATE TABLE IF NOT EXISTS native_readbacks(
     operation TEXT NOT NULL REFERENCES operations(id), kind TEXT NOT NULL, identity TEXT NOT NULL,
     resource TEXT NOT NULL, PRIMARY KEY(operation,kind,identity)
@@ -51,6 +52,10 @@ CREATE TABLE IF NOT EXISTS reservations(
     PRIMARY KEY(kind, identity)
 );
 """
+
+
+class MissingPublicationProofError(ValueError):
+    """The proposed owner cannot identify the resource it originally published."""
 
 
 class LocalSnapshot(Inputs):
@@ -141,6 +146,7 @@ class ResourceLedger:
                 and action in ("save-settings", "remove-profile", "save-secret", "remove-secret")
                 and len(plan.resources) == 1
             ):
+                await db.execute("INSERT INTO local_publications VALUES(?)", (key,))
                 snapshot = LocalSnapshot(
                     operation_id=operation, action=action, resource=plan.resources[0]
                 ).model_dump_json()
@@ -279,8 +285,25 @@ class ResourceLedger:
                 "SELECT kind,identity FROM changes WHERE operation=? AND phase='verified'", (key,)
             ) as cursor:
                 completed = set(await cursor.fetchall())
+            async with db.execute(
+                "SELECT 1 FROM local_publications WHERE operation=?", (key,)
+            ) as cursor:
+                local = bool(await cursor.fetchone())
             for identity, observation in verified.items():
                 captured = native.get(identity)
+                desired = planned[identity]
+                if (
+                    not local
+                    and identity not in completed
+                    and desired.effect == "ensure"
+                    and desired.cleanup
+                    and desired.ownership == "created"
+                    and desired.after is None
+                    and (not captured or not (captured.after or captured.remote_id))
+                ):
+                    raise MissingPublicationProofError(
+                        "No durable native evidence identifies the created resource"
+                    )
                 if captured and any(
                     value is not None and value != actual
                     for value, actual in (
@@ -292,8 +315,10 @@ class ResourceLedger:
                     raise ValueError("Resource identity changed after its native publication")
                 if identity in completed:
                     continue
-                desired = planned[identity]
-                if desired.after is not None and observation.after != desired.after:
+                if (desired.after is not None and observation.after != desired.after) or (
+                    desired.permissions is not None
+                    and observation.permissions != desired.permissions
+                ):
                     raise ValueError("Readback differs from the confirmed resource")
                 if (
                     observation.effect != desired.effect
@@ -322,7 +347,11 @@ class ResourceLedger:
                             }
                         )
                     held = desired.model_copy(
-                        update={"after": observation.after, "remote_id": observation.remote_id}
+                        update={
+                            "after": observation.after,
+                            "remote_id": observation.remote_id,
+                            "permissions": observation.permissions,
+                        }
                     )
                     await db.execute(
                         "INSERT OR REPLACE INTO holdings VALUES(?,?,?,?)",

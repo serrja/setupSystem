@@ -10,7 +10,7 @@ from setup_system.infrastructure.atomic_rename import rename_new
 
 type Entry = tuple[int, int, int, str]
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-_CLAIMS = ".setup-system-removal-claims"
+CLAIM_DIRECTORY = ".setup-system-removal-claims"
 
 
 def _record(parent: int, name: str) -> Entry:
@@ -35,10 +35,10 @@ def record_tree(root: Path, keep: Path | None = None) -> dict[str, Entry]:
     # fwalk supplies a pinned directory descriptor and never enters symlinked directories.
     checkpoint = keep is not None and keep.is_file()
     for parent, dirs, files, fd in os.fwalk(root, follow_symlinks=False):
-        if Path(parent) == root and _CLAIMS in dirs:
+        if Path(parent) == root and CLAIM_DIRECTORY in dirs:
             if not checkpoint:
                 raise ValueError("Program uses a reserved retirement directory")
-            dirs.remove(_CLAIMS)
+            dirs.remove(CLAIM_DIRECTORY)
         for name in dirs + files:
             path = Path(parent) / name
             if path != keep:
@@ -60,8 +60,8 @@ def remove_recorded(root: Path, records: dict[str, Entry], keep: Path | None = N
     root_fd = os.open(root, _DIR)
     try:
         with suppress(FileExistsError):
-            os.mkdir(_CLAIMS, 0o700, dir_fd=root_fd)
-        claims = os.open(_CLAIMS, _DIR, dir_fd=root_fd)
+            os.mkdir(CLAIM_DIRECTORY, 0o700, dir_fd=root_fd)
+        claims = os.open(CLAIM_DIRECTORY, _DIR, dir_fd=root_fd)
         try:
             info = os.fstat(claims)
             if info.st_uid != os.getuid() or info.st_mode & 0o077:
@@ -74,7 +74,7 @@ def remove_recorded(root: Path, records: dict[str, Entry], keep: Path | None = N
 
             def clear(directory: int, prefix: Path) -> None:
                 for name in os.listdir(directory):
-                    if not prefix.parts and (name == _CLAIMS or root / name == keep):
+                    if not prefix.parts and (name == CLAIM_DIRECTORY or root / name == keep):
                         continue
                     relative = prefix / name
                     expected = records.get(str(relative))
@@ -105,7 +105,7 @@ def remove_recorded(root: Path, records: dict[str, Entry], keep: Path | None = N
             clear(root_fd, Path())
         finally:
             os.close(claims)
-        os.rmdir(_CLAIMS, dir_fd=root_fd)
+        os.rmdir(CLAIM_DIRECTORY, dir_fd=root_fd)
         os.fsync(root_fd)
     finally:
         os.close(root_fd)
