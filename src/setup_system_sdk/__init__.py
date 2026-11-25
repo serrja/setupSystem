@@ -23,11 +23,19 @@ from pydantic_settings import (
 
 PLUGIN_GROUP = "setup_system.plugins"
 UI_GROUP = "setup_system.plugin_ui"
-SDK_VERSION = "1.0"
+SDK_VERSION = "1.1"
 Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 ActionId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{0,79}$")]
 EntryName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*:[A-Za-z][A-Za-z0-9_]*$")]
 Values = dict[str, JsonValue]
+
+
+class LifecycleAction(StrEnum):
+    CHECK = "check"
+    INSTALL = "install"
+    UPDATE = "update"
+    CONFIGURE = "configure"
+    UNINSTALL = "uninstall"
 
 
 class Inputs(BaseModel):

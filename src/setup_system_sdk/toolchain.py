@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import tempfile
 import uuid
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
@@ -29,6 +30,7 @@ from setup_system.infrastructure.user_storage import (
 )
 from setup_system_sdk import (
     Inputs,
+    LifecycleAction,
     Outcome,
     Plan,
     PluginSettings,
@@ -69,6 +71,10 @@ def execute(argv: list[str], stage: Path, *, capture: bool = False) -> str:
     if result.returncode:
         raise ValueError("The tool manager could not complete the reviewed action")
     return result.stdout
+
+
+class ToolAction(StrEnum):
+    REMOVE = "remove-tools"
 
 
 class Removal(Inputs):
@@ -151,9 +157,9 @@ class Toolchain(DebianPackages):
     binaries: ClassVar[dict[str, str]]
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
-        "remove-tools": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
+        ToolAction.REMOVE: Inputs,
     }
 
     def lock(self, stage: Path, settings: PluginSettings) -> bytes:
@@ -337,11 +343,11 @@ class Toolchain(DebianPackages):
         return Result(outcome=Outcome.CHANGED, message="Owned tools removed", resources=done)
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "check":
+        if action_id == LifecycleAction.CHECK:
             return self.status(settings)
-        if action_id == "remove-tools":
+        if action_id == ToolAction.REMOVE:
             return self.remove_plan()
-        if action_id != "configure":
+        if action_id != LifecycleAction.CONFIGURE:
             return super().prepare(action_id, settings, inputs)
         with tempfile.TemporaryDirectory() as stage:
             return self._plan(self.lock(Path(stage), settings), settings)
@@ -349,9 +355,9 @@ class Toolchain(DebianPackages):
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
-        if action_id == "remove-tools":
+        if action_id == ToolAction.REMOVE:
             return self.remove(plan)
-        if action_id != "configure":
+        if action_id != LifecycleAction.CONFIGURE:
             raise ValueError("Unknown toolchain mutation")
         with tempfile.TemporaryDirectory() as temporary:
             stage = Path(temporary)

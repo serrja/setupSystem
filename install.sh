@@ -131,20 +131,18 @@ done
 stable_tag() { printf '%s\n' "$1" | LC_ALL=C grep -Exq 'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)' && [ "$(printf '%s' "$1" | wc -l)" = 0 ]; }
 [ -z "$tag" ] || stable_tag "$tag" || fail 'Expected a stable tag such as v1.2.3.'
 check_platform
-for tool in curl jq gh sha256sum "$package_auth" flock dpkg-deb dpkg-query; do
+for tool in curl sha256sum "$package_auth" flock dpkg-deb dpkg-query; do
     command -v "$tool" >/dev/null || fail "Missing required delivery tool: $tool"
-done
-help=$(gh attestation verify --help) || fail 'Install the official GitHub CLI with attestation support.'
-for flag in --bundle --signer-workflow --signer-digest --source-ref --source-digest --deny-self-hosted-runners --predicate-type; do
-    printf '%s\n' "$help" | grep -Fq -- "$flag" || fail "GitHub CLI lacks $flag. Install the official GitHub CLI (tested with 2.98.0)."
 done
 repository=serrja/setupSystem
 web=https://github.com/$repository
 api=https://api.github.com/repos/$repository
 fetch() {
     url=$1
+    timeout=60
+    if [ "$3" -gt 4194304 ]; then timeout=300; fi
     for hop in 1 2 3; do
-        reply=$(curl -q --proto '=https' --silent --connect-timeout 15 --max-time 60 \
+        reply=$(curl -q --proto '=https' --silent --connect-timeout 15 --max-time "$timeout" \
             --max-filesize "$3" --output "$2" --write-out '%{http_code} %{redirect_url}' "$url") || {
             echo 'Release HTTPS request failed or exceeded its limit.' >&2; return 1;
         }
@@ -175,6 +173,28 @@ file=setup-system_${version}_all.deb
 dir=$(mktemp -d)
 trap 'rm -rf -- "$dir"' EXIT
 trap 'exit 130' HUP INT TERM
+# The reviewed loader pins the complete executable inputs before they are used.
+# A release API response or a checksum served beside an executable cannot change these pins.
+arch=$(dpkg --print-architecture)
+case "$arch" in
+    amd64)
+        gh_digest=1dac939af3e84fb3861927c984b357531341be9403b889e4aa86e8822145a09d
+        jq_digest=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f ;;
+    arm64)
+        gh_digest=d17e9b089ce0356679c9fa1898f3a7d38dccf943d529acaa94c24e8a4584e0ae
+        jq_digest=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309 ;;
+    *) fail 'Unsupported verifier architecture.' ;;
+esac
+verified_download() {
+    fetch "$1" "$2" "$3" || fail 'Could not download a pinned verification tool.'
+    actual=$(sha256sum < "$2")
+    [ "${actual%% *}" = "$4" ] || fail 'Verification tool checksum mismatch.'
+}
+verified_download "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-$arch" \
+    "$dir/jq" 4194304 "$jq_digest"
+chmod 0700 "$dir/jq"
+mkdir -m 0700 "$dir/verifier-home"
+jq() { /usr/bin/env -i PATH=/usr/bin:/bin HOME="$dir/verifier-home" "$dir/jq" "$@"; }
 commit() {
     fetch "$api/git/ref/tags/$1" "$dir/ref" 65536 || return 1
     jq -e --arg ref "refs/tags/$1" '.ref == $ref' "$dir/ref" >/dev/null || return 1
@@ -211,14 +231,14 @@ digest=$(sha256sum "$dir/$file" | cut -d ' ' -f 1)
 printf '%s  %s\n' "$digest" "$file" > "$dir/expected"
 [ "$published" = "sha256:$digest" ] || fail 'Debian asset digest mismatch.'
 cmp -s "$dir/expected" "$dir/$file.sha256" || fail 'Debian package checksum mismatch.'
-mkdir -m 0700 "$dir/gh-home"
-(
-unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_CONFIG_DIR XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME
-HOME=$dir/gh-home GH_HOST=github.com gh attestation verify "$dir/$file" --bundle "$dir/$file.sigstore.json" \
+verified_download "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_linux_$arch.deb" \
+    "$dir/gh.deb" 33554432 "$gh_digest"
+dpkg-deb -x "$dir/gh.deb" "$dir/verifier"
+/usr/bin/env -i PATH=/usr/bin:/bin HOME="$dir/verifier-home" GH_HOST=github.com GH_PROMPT_DISABLED=1 \
+    GH_NO_UPDATE_NOTIFIER=1 "$dir/verifier/usr/bin/gh" attestation verify "$dir/$file" --bundle "$dir/$file.sigstore.json" \
     --repo "$repository" --signer-workflow "$repository/.github/workflows/debian.yml" \
     --signer-digest "$sha" --source-ref refs/heads/main --source-digest "$sha" \
     --deny-self-hosted-runners --predicate-type https://slsa.dev/provenance/v1
-)
 # Additional download links inherit their identities from the attested package.
 dpkg-deb -x "$dir/$file" "$dir/proven"
 count=3

@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Self
 
@@ -23,6 +24,7 @@ from setup_system.layout import INSTALLED, require_installed_resource, resource_
 from setup_system_sdk import (
     Identifier,
     Inputs,
+    LifecycleAction,
     Outcome,
     Plan,
     PluginSettings,
@@ -75,17 +77,23 @@ class IdleRequirement(Inputs):
 
 
 class Packages(Inputs):
-    names: tuple[PackageName, ...] = Field(min_length=1, max_length=64)
+    names: tuple[PackageName, ...] = Field(max_length=64)
+    retired_names: tuple[PackageName, ...] = Field(default=(), max_length=64)
     backports: tuple[PackageName, ...] = ()
     vendor_source: bool = False
     release: DebianRelease | None = None
     requires_idle: IdleRequirement | None = None
+    removal_guard: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,47}\.py$")
     service: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]+\.service$")
 
     @model_validator(mode="after")
     def distinct_sources(self) -> Self:
+        if not self.names and (not self.retired_names or self.release or self.service):
+            raise ValueError("A removal-only package catalog requires retired package names")
         if (
             len(self.names) != len(set(self.names))
+            or len(self.retired_names) != len(set(self.retired_names))
+            or set(self.names).intersection(self.retired_names)
             or len(self.backports) != len(set(self.backports))
             or set(self.backports) - set(self.names)
             or (self.release and self.backports)
@@ -93,17 +101,56 @@ class Packages(Inputs):
             raise ValueError("Package names and optional backports must be unique and reviewed")
         return self
 
+    def accepts_removal(self, name: str) -> bool:
+        return name in self.names or name in self.retired_names
+
+    def check_retired_selection(self, rows: list[Resource]) -> None:
+        if (
+            len(rows) != 1
+            or rows[0].identity not in self.retired_names
+            or rows[0].effect != "remove"
+        ):
+            raise ValueError("Select exactly one reviewed retired package")
+
     def candidates(self) -> list[str]:
         return [
             name + "/trixie-backports" if name in self.backports else name for name in self.names
         ]
 
 
+class ServiceAction(StrEnum):
+    START = "start-system-service"
+    STOP = "stop-system-service"
+
+
+SERVICE_TRANSITIONS = {
+    ServiceAction.START: ("start", "active"),
+    ServiceAction.STOP: ("stop", "inactive"),
+}
+
+
+class PackageAction(StrEnum):
+    REMOVE_RETIRED = "remove-retired-package"
+
+
+REMOVALS = frozenset({LifecycleAction.UNINSTALL, PackageAction.REMOVE_RETIRED})
+
+
+class RetiredPackage(Inputs):
+    name: PackageName = Field(
+        title="Formerly managed package",
+        description="Choose one package removed from this plugin's install list.",
+        json_schema_extra={"ui": {"choice_provider": "retired-packages"}},
+    )
+
+
 class Approval(Inputs):
     plugin_id: Identifier
-    action_id: Literal[
-        "install", "update", "uninstall", "start-system-service", "stop-system-service"
-    ]
+    action_id: (
+        Literal[LifecycleAction.INSTALL, LifecycleAction.UPDATE, LifecycleAction.UNINSTALL]
+        | PackageAction
+        | ServiceAction
+    )
     plan: Plan
 
 
@@ -332,6 +379,8 @@ def keyring(path: Path) -> None:
 
 
 def resolve(root: Path, stage: Path, folder: Path, packages: Packages) -> Plan:
+    if not packages.names:
+        return Plan(outcome=Outcome.BLOCKED, summary="This catalog permits only package removal")
     keyring(Path("/usr/share/keyrings/debian-archive-keyring.pgp"))
     opts = options(root, stage, folder, packages)
     for name in ("lists", "archives"):
@@ -414,7 +463,7 @@ def removal(root: Path, packages: Packages, selected: list[Resource]) -> Plan:
             row.kind != "package"
             or not row.cleanup
             or row.ownership != "created"
-            or row.identity not in packages.names
+            or not packages.accepts_removal(row.identity)
             or row.before is None
             or row.effect != "remove"
         ):
@@ -464,8 +513,10 @@ def removal(root: Path, packages: Packages, selected: list[Resource]) -> Plan:
     )
 
 
-def uninstall_plan(folder: Path) -> Plan:
+def uninstall_plan(folder: Path, retired_name: str | None = None) -> Plan:
     packages = Packages.model_validate_json((folder / "apt.json").read_bytes())
+    if retired_name is not None and retired_name not in packages.retired_names:
+        raise ValueError("Select a package from the protected retired list")
     selection = [
         Resource(
             kind="package",
@@ -477,7 +528,8 @@ def uninstall_plan(folder: Path) -> Plan:
         )
         for r in owned_resources()
         if r.kind == "package"
-        and r.identity in packages.names
+        and packages.accepts_removal(r.identity)
+        and (retired_name is None or r.identity == retired_name)
         and r.ownership == "created"
         and r.cleanup
         and r.after is not None
@@ -505,24 +557,13 @@ def verify_packages(plan: Plan) -> Result:
 
 
 def apply_packages(plugin_id: str, action_id: str, plan: Plan) -> None:
-    if action_id not in {
-        "install",
-        "update",
-        "uninstall",
-        "start-system-service",
-        "stop-system-service",
-    }:
-        raise ValueError("Unapproved package action")
+    approval = Approval.model_validate(
+        {"plugin_id": plugin_id, "action_id": action_id, "plan": plan}
+    )
     run_native_play(
         plugin_id,
         "@apt",
-        {
-            "approval": {
-                "plugin_id": plugin_id,
-                "action_id": action_id,
-                "plan": plan.model_dump(mode="json"),
-            }
-        },
+        {"approval": approval.model_dump(mode="json")},
         "sudo",
     )
 
@@ -536,14 +577,14 @@ def privileged(approval: Approval) -> None:
     source = INSTALLED / relative
     require_installed_resource(source, relative)
     packages = Packages.model_validate_json(source.read_bytes())
-    if approval.action_id in {"start-system-service", "stop-system-service"}:
+    if approval.action_id in SERVICE_TRANSITIONS:
         if (
             approval.plan != service_plan(approval.action_id, packages)
             or approval.plan.outcome != Outcome.READY
             or not packages.service
         ):
             raise ValueError("Service facts changed after confirmation")
-        verb = "start" if approval.action_id == "start-system-service" else "stop"
+        verb = SERVICE_TRANSITIONS[ServiceAction(approval.action_id)][0]
         rc = run_command(
             ["/usr/bin/systemctl", "--system", "--no-ask-password", verb, packages.service],
             timeout=90,
@@ -559,7 +600,9 @@ def privileged(approval: Approval) -> None:
     with tempfile.TemporaryDirectory(prefix="setup-system-pkg-", dir="/run") as directory:
         stage = Path(directory)
         os.chmod(stage, 0o711)
-        removing = approval.action_id == "uninstall"
+        removing = approval.action_id in REMOVALS
+        if approval.action_id is PackageAction.REMOVE_RETIRED:
+            packages.check_retired_selection(approval.plan.resources)
         confirmed = (
             removal(INSTALLED, packages, approval.plan.resources)
             if removing
@@ -643,7 +686,22 @@ def check(stage: Path) -> None:
         for r in approval.plan.resources
     ):
         require_idle(packages)
+    if approval.action_id is PackageAction.REMOVE_RETIRED:
+        packages.check_retired_selection(approval.plan.resources)
     verify_hook(stage, approval)
+    if approval.action_id in REMOVALS and packages.removal_guard:
+        if any(not packages.accepts_removal(r.identity) for r in approval.plan.resources):
+            raise ValueError("Removal guard belongs to a different package")
+        guard = package_file.with_name(packages.removal_guard)
+        require_installed_resource(guard, guard.relative_to(INSTALLED).as_posix())
+        run_command(
+            ["/usr/bin/python3", "-I", "-B", str(guard)],
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+            env=apt_environment(INSTALLED),
+            cwd="/",
+            discard_output=True,
+        )
 
 
 def verify_hook(stage: Path, approval: Approval) -> None:
@@ -664,7 +722,7 @@ def verify_hook(stage: Path, approval: Approval) -> None:
             raise ValueError("Invalid package action")
         name, old, old_arch, _, direction, selected, native_arch, _, action = fields
         resource = expected.get(name)
-        if approval.action_id == "uninstall":
+        if approval.action_id in REMOVALS:
             if (
                 resource is None
                 or resource.effect != "remove"
@@ -715,15 +773,13 @@ def verify_hook(stage: Path, approval: Approval) -> None:
     if seen != {
         (name, phase)
         for name in expected
-        for phase in (
-            ("remove",) if approval.action_id == "uninstall" else ("configure", "install")
-        )
+        for phase in (("remove",) if approval.action_id in REMOVALS else ("configure", "install"))
     }:
         raise ValueError("Actual dpkg package closure differs")
 
 
 def service_plan(action: str, packages: Packages) -> Plan:
-    if not packages.service or action not in {"start-system-service", "stop-system-service"}:
+    if not packages.service or action not in SERVICE_TRANSITIONS:
         raise ValueError("Unapproved service action")
     facts = unit_info(packages.service)
     if facts["LoadState"] != "loaded":
@@ -731,7 +787,7 @@ def service_plan(action: str, packages: Packages) -> Plan:
             outcome=Outcome.BLOCKED, summary="Install and review the protected system unit first"
         )
     active = facts["ActiveState"]
-    desired = "active" if action == "start-system-service" else "inactive"
+    desired = SERVICE_TRANSITIONS[ServiceAction(action)][1]
     return Plan(
         outcome=Outcome.NO_CHANGES if active == desired else Outcome.READY,
         summary=f"Set system unit {packages.service} to {desired}",
@@ -753,20 +809,22 @@ class DebianPackages(NativeBackend):
 
     package_folder: ClassVar[Path]
     package_inputs: ClassVar[dict[str, type[Inputs]]] = {
-        "install": Inputs,
-        "update": Inputs,
-        "uninstall": Inputs,
+        LifecycleAction.INSTALL: Inputs,
+        LifecycleAction.UPDATE: Inputs,
+        LifecycleAction.UNINSTALL: Inputs,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id in {"start-system-service", "stop-system-service"}:
+        if action_id in SERVICE_TRANSITIONS:
             return service_plan(
                 action_id,
                 Packages.model_validate_json((self.package_folder / "apt.json").read_bytes()),
             )
-        if action_id in {"install", "update"}:
+        if action_id in {LifecycleAction.INSTALL, LifecycleAction.UPDATE}:
             return package_plan(self.package_folder)
-        if action_id == "uninstall":
+        if action_id == PackageAction.REMOVE_RETIRED and isinstance(inputs, RetiredPackage):
+            return uninstall_plan(self.package_folder, inputs.name)
+        if action_id == LifecycleAction.UNINSTALL:
             return uninstall_plan(self.package_folder)
         return super().prepare(action_id, settings, inputs)
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from setup_plugin_firefox import policy
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result
+from setup_system_sdk import Inputs, LifecycleAction, Outcome, Plan, PluginSettings, Result
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.native_play import run_native_play
 
@@ -16,15 +16,15 @@ class Plugin(DebianPackages):
     package_folder = Path(__file__).parent
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
-        "remove-policy": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
+        policy.PolicyAction.REMOVE_POLICY: Inputs,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "remove-policy":
+        if action_id == policy.PolicyAction.REMOVE_POLICY:
             return policy.removal()
-        if action_id == "configure" and isinstance(settings, policy.Settings):
+        if action_id == LifecycleAction.CONFIGURE and isinstance(settings, policy.Settings):
             return policy.preview(settings)
         return super().prepare(action_id, settings, inputs)
 
@@ -51,11 +51,11 @@ class Plugin(DebianPackages):
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    if action_id in ("configure", "remove-policy") and isinstance(settings, policy.Settings):
-        approved = policy.Approval(
-            action_id="configure" if action_id == "configure" else "remove-policy",
-            settings=settings,
-            plan=plan,
+    if action_id in (LifecycleAction.CONFIGURE, policy.PolicyAction.REMOVE_POLICY) and isinstance(
+        settings, policy.Settings
+    ):
+        approved = policy.Approval.model_validate(
+            {"action_id": action_id, "settings": settings, "plan": plan}
         )
         run_native_play(
             "firefox", "policy.yml", {"approval": approved.model_dump(mode="json")}, "sudo"

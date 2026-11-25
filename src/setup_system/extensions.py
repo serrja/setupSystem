@@ -35,6 +35,7 @@ from packaging.version import Version
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
 from setup_system.infrastructure import retirement_checkpoint as checkpoint
+from setup_system.infrastructure import uv_runtime
 from setup_system.infrastructure.downloads import DownloadError, validate_https_url
 from setup_system.layout import INSTALLED, verify_installation
 from setup_system_sdk import PLUGIN_GROUP, UI_GROUP, Identifier, Inputs, Manifest
@@ -723,11 +724,6 @@ async def install_release(
             or previous.manifest.settings_schema != selected.manifest.settings_schema
         ) and not validate_settings:
             raise ValueError("Settings migration or validation is required before activation")
-    uv = shutil.which("uv") or shutil.which(
-        "uv", path=os.pathsep.join((str(Path.home() / ".local/bin"), "/usr/local/bin"))
-    )
-    if not uv:
-        raise ValueError("The uv environment manager is unavailable")
     system = Path(sys.executable) == Path("/usr/bin/python3") and Path(
         __file__
     ).resolve().is_relative_to(Path("/usr/lib/python3/dist-packages"))
@@ -773,6 +769,7 @@ async def install_release(
                 raise
             venv = generation / "venv"
             python = venv / "bin/python"
+            uv = await uv_runtime.executable(stage)
             args = [
                 uv,
                 "--offline",

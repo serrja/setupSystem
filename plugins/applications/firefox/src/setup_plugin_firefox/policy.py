@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -22,7 +23,15 @@ from setup_system.infrastructure.system_publication import (
     save_backup,
 )
 from setup_system.layout import require_installed_resource
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, owned_resources
+from setup_system_sdk import (
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    owned_resources,
+)
 
 PATH = Path("/etc/firefox/policies/policies.json")
 JSON = TypeAdapter(dict[str, JsonValue])
@@ -302,8 +311,14 @@ def remove_generated(plan: Plan) -> None:
             stage.rmdir()
 
 
+class PolicyAction(StrEnum):
+    REMOVE_POLICY = "remove-policy"
+
+
 class Approval(Inputs):
-    action_id: Literal["configure", "remove-policy"] = "configure"
+    action_id: Literal[LifecycleAction.CONFIGURE, PolicyAction.REMOVE_POLICY] = (
+        LifecycleAction.CONFIGURE
+    )
     settings: Settings
     plan: Plan
 
@@ -316,7 +331,7 @@ def apply(approval: Approval) -> None:
     if os.geteuid() != 0 or not current_target()[1]:
         raise ValueError("System policy requires an authenticated Debian administrator")
     require_installed_resource(Path(__file__), "plugins/firefox/setup_plugin_firefox/policy.py")
-    if approval.action_id == "remove-policy":
+    if approval.action_id == PolicyAction.REMOVE_POLICY:
         remove_generated(approval.plan)
         return
     if preview(approval.settings) != approval.plan:

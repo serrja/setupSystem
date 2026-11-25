@@ -4,21 +4,19 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=1,<2",
+  "sdk": ">=1.1,<2",
   "entry_point": "setup_plugin_git:Plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "user-files",
-    "account-status",
     "root",
     "account-keys",
-    "ui-code",
-    "native-terminal"
+    "ui-code"
   ],
   "capabilities": [
     "author-profiles",
-    "github-auth"
+    "ssh-keys"
   ],
   "dependencies": [],
   "actions": [
@@ -48,47 +46,9 @@
     },
     {
       "cleanup_phase": null,
-      "id": "status",
-      "label": "Account status",
-      "page": "accounts",
-      "target": null,
-      "permissions": [
-        "account-status"
-      ],
-      "supports_rollback": false,
-      "read_only": false,
-      "description": ""
-    },
-    {
-      "cleanup_phase": null,
-      "id": "login",
-      "label": "Sign in",
-      "page": "accounts",
-      "target": "login",
-      "permissions": [
-        "account-status",
-        "native-terminal"
-      ],
-      "supports_rollback": false,
-      "read_only": false,
-      "description": "Open the official client in a separate terminal and verify the selected sign-in."
-    },
-    {
-      "cleanup_phase": null,
-      "id": "logout",
-      "label": "Sign out",
-      "page": "accounts",
-      "target": "logout",
-      "permissions": [],
-      "supports_rollback": false,
-      "read_only": false,
-      "description": ""
-    },
-    {
-      "cleanup_phase": null,
       "id": "generate-key",
       "label": "Create an SSH key",
-      "page": "accounts",
+      "page": "actions",
       "target": "generate-key",
       "permissions": [
         "account-keys"
@@ -140,7 +100,7 @@
       "cleanup_phase": null,
       "id": "upload-key",
       "label": "Upload public SSH key",
-      "page": "accounts",
+      "page": "actions",
       "target": "upload-key",
       "permissions": [
         "account-keys"
@@ -153,7 +113,7 @@
       "cleanup_phase": null,
       "id": "revoke-key",
       "label": "Revoke owned SSH key",
-      "page": "accounts",
+      "page": "actions",
       "target": "revoke-key",
       "permissions": [
         "account-keys"
@@ -192,7 +152,7 @@
       "cleanup_phase": "remote",
       "id": "remove-owned-keys",
       "label": "Revoke managed SSH keys",
-      "page": "accounts",
+      "page": "actions",
       "target": "remove-owned-keys",
       "permissions": [
         "account-keys"
@@ -218,7 +178,7 @@
       "cleanup_phase": null,
       "id": "verify-ssh",
       "label": "Verify SSH account access",
-      "page": "accounts",
+      "page": "actions",
       "target": null,
       "permissions": [
         "account-keys"
@@ -231,7 +191,7 @@
       "cleanup_phase": "local",
       "id": "remove-local-keys",
       "label": "Remove managed local SSH keys",
-      "page": "accounts",
+      "page": "actions",
       "target": "remove-local-keys",
       "permissions": [
         "account-keys"
@@ -239,6 +199,19 @@
       "supports_rollback": false,
       "read_only": false,
       "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "remove-retired-package",
+      "label": "Remove one formerly managed package",
+      "page": "actions",
+      "target": "remove-retired-package",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": "Migrate a package installed by a previous Git plugin. Review the selected package and its exact removal before installing from the new plugin."
     }
   ],
   "environment_fields": {},
@@ -274,6 +247,26 @@
       "additionalProperties": false,
       "properties": {},
       "title": "Inputs",
+      "type": "object"
+    },
+    "remove-retired-package": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Choose one package removed from this plugin's install list.",
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9+.-]+$",
+          "title": "Formerly managed package",
+          "type": "string",
+          "ui": {
+            "choice_provider": "retired-packages"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RetiredPackage",
       "type": "object"
     },
     "upload-key": {
@@ -510,89 +503,6 @@
       "title": "Inputs",
       "type": "object"
     },
-    "status": {
-      "additionalProperties": false,
-      "properties": {
-        "host": {
-          "default": "github.com",
-          "maxLength": 253,
-          "title": "Hosting service",
-          "type": "string",
-          "ui": {
-            "choice_provider": "hosts"
-          }
-        },
-        "account": {
-          "maxLength": 100,
-          "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
-          "title": "Local hosting account",
-          "type": "string",
-          "ui": {
-            "choice_provider": "accounts"
-          }
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "title": "Account",
-      "type": "object"
-    },
-    "login": {
-      "additionalProperties": false,
-      "description": "Read back the account selected for the native browser flow.",
-      "properties": {
-        "host": {
-          "default": "github.com",
-          "maxLength": 253,
-          "minLength": 1,
-          "title": "Host",
-          "type": "string"
-        },
-        "account": {
-          "maxLength": 100,
-          "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
-          "title": "Account",
-          "type": "string"
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "title": "SignIn",
-      "type": "object"
-    },
-    "logout": {
-      "additionalProperties": false,
-      "properties": {
-        "host": {
-          "default": "github.com",
-          "maxLength": 253,
-          "title": "Hosting service",
-          "type": "string",
-          "ui": {
-            "choice_provider": "hosts"
-          }
-        },
-        "account": {
-          "maxLength": 100,
-          "minLength": 1,
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
-          "title": "Local hosting account",
-          "type": "string",
-          "ui": {
-            "choice_provider": "accounts"
-          }
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "title": "Account",
-      "type": "object"
-    },
     "remove-owned-keys": {
       "additionalProperties": false,
       "properties": {},
@@ -626,7 +536,6 @@
   "pages": [
     "Overview",
     "Settings",
-    "Accounts",
     "Actions",
     "Managed resources",
     "History",

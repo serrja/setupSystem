@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=setupSystem
+Comment=Configure workstation applications and desktop settings
+Exec=/usr/bin/setup-system
+TryExec=/usr/bin/setup-system
+Terminal=true
+Icon=preferences-system
+Categories=Settings;
