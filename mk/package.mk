@@ -1,7 +1,8 @@
 PACKAGE_DIR ?= dist
+BUILD_PYTHON ?= $(if $(wildcard .venv/bin/python),$(CURDIR)/.venv/bin/python,python3)
 .PHONY: package
 package:
-	@/usr/bin/python3 debian/build.py --output "$(PACKAGE_DIR)" $(if $(VERSION),--version "$(VERSION)")
+	@"$(BUILD_PYTHON)" -I -B debian/build.py --output "$(PACKAGE_DIR)" $(if $(VERSION),--version "$(VERSION)")
 
 .PHONY: install update
 install:

@@ -1,23 +1,35 @@
 """Read packaged help through the normal keyboard entry point, from any directory."""
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 import pytest
 from textual.widgets import Markdown, Select, Static
 
 from setup_system.app import SetupApp
+from setup_system.application.legacy_package import historical_status
 from setup_system.ui.help import Help
 
 
 def test_help_opens_local_recovery_and_returns_to_workspace(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.chdir(home)
+    monkeypatch.setenv("HOME", str(home))
+    journal = tmp_path / "install.json"
+    journal.write_bytes(
+        b'{"schema":2,"stage":"downloads","status":"failed","error":"private diagnostic"}'
+    )
+    monkeypatch.setattr(
+        "setup_system.ui.help.historical_status",
+        lambda: historical_status(journal, owner=os.getuid()),
+    )
 
     async def exercise():
         app = SetupApp()
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+2", "f1")
+            await pilot.press("f1")
             assert isinstance(app.screen, Help)
             app.screen.query_one(Select).value = "recovery"
             await pilot.pause()
@@ -27,9 +39,11 @@ def test_help_opens_local_recovery_and_returns_to_workspace(tmp_path, monkeypatc
                     for h in app.screen.query("MarkdownH1").results(Static)
                 ):
                     await pilot.pause()
+            rendered = " ".join(str(row.render()) for row in app.screen.query("MarkdownParagraph"))
+            assert "failed (downloads)" in rendered and "private diagnostic" not in rendered
             await pilot.press("escape")
-            assert app.section == "workspace"
-            assert not list(tmp_path.iterdir())
+            assert not isinstance(app.screen, Help)
+            assert not list(home.iterdir())
 
     asyncio.run(exercise())
 

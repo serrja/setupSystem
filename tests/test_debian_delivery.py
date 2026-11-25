@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -36,10 +37,17 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # these declared product inputs are copied into the disposable repository.
     for name in (
         "README.md",
+        "hatch_build.py",
+        "uv.lock",
+        "src/setup_system/__init__.py",
+        "src/setup_system_sdk/__init__.py",
+        "pyproject.toml",
+        "docker/plugin_artifacts.py",
+        "src/setup_system_sdk/worker.py",
+        "src/setup_system_sdk/apt.yml",
+        "profiles/base.toml",
+        "config/shared/palette.toml",
         "docs/administration.md",
-        "ansible/admin.yml",
-        "ansible/files/admin.py",
-        "mk/admin.mk",
         "debian/setup-system.1",
         "debian/build.py",
         "debian/publish",
@@ -49,14 +57,8 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "debian/setup-system.conf",
         "Makefile",
         "mk/package.mk",
-        "mk/workspace.mk",
         "install.sh",
         "ansible.cfg",
-        "ansible/base.yml",
-        "ansible/workspace.yml",
-        "ansible/templates/nvim-init.lua",
-        "assets/hyprland/keys.txt",
-        "config/workspace/applications.toml",
         "libexec/run.sh",
         "src/setup_system/app.py",
         "LICENSE.md",
@@ -65,6 +67,11 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         target = fixture / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, target)
+    shutil.copytree(
+        ROOT / "plugins/applications/git",
+        fixture / "plugins/applications/git",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+    )
     command("git", "init", "--quiet", "--template=", cwd=fixture)
     command("git", "add", ".", cwd=fixture)
     command(
@@ -83,19 +90,11 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "Prepare package fixture",
         cwd=fixture,
     )
-    # Exercise the builder under the current CI interpreter as well as through Make below.
-    command(
-        sys.executable,
-        "-I",
-        "-B",
-        "debian/build.py",
-        "--version",
-        VERSION,
-        "--output",
-        str(out),
-        cwd=fixture,
-    )
-    return out / FILENAME
+    builder = runpy.run_path(str(ROOT / "debian/build.py"))
+    sha = command("git", "rev-parse", "HEAD", cwd=fixture)
+    artifact = builder["build"](fixture, out, sha, VERSION)
+    assert artifact == out / FILENAME
+    return artifact
 
 
 def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path) -> None:
@@ -124,17 +123,14 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
             "usr/share/doc/setup-system/README.md",
             "usr/share/doc/setup-system/docs/administration.md",
             "usr/share/man/man1/setup-system.1.gz",
-            "usr/lib/setup-system/ansible/admin.yml",
-            "usr/lib/setup-system/ansible/files/admin.py",
-            "usr/lib/setup-system/mk/admin.mk",
             "usr/lib/setup-system/Makefile",
+            "usr/lib/setup-system/plugin_catalog/git.json",
+            "usr/lib/setup-system/plugins/git/setup_plugin_git/Makefile",
+            "usr/lib/setup-system/sdk/apt.yml",
+            "usr/lib/python3/dist-packages/setup_system_sdk/worker.py",
+            "usr/lib/python3/dist-packages/setup_system-1.2.3.dist-info/METADATA",
             "usr/lib/setup-system/ansible.cfg",
-            "usr/lib/setup-system/ansible/base.yml",
-            "usr/lib/setup-system/ansible/workspace.yml",
-            "usr/lib/setup-system/config/workspace/applications.toml",
-            "usr/lib/setup-system/mk/workspace.mk",
             "usr/lib/setup-system/libexec/run.sh",
-            "usr/lib/setup-system/ansible/templates/nvim-init.lua",
             "usr/lib/python3/dist-packages/setup_system/app.py",
             "usr/lib/tmpfiles.d/setup-system.conf",
         ):
@@ -157,15 +153,19 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
     assert (control / "preinst").read_bytes() == (control / "prerm").read_bytes()
     assert not (control / "postinst").exists()
     (fixture / "config/private.txt").write_text("untracked user data")
-    (fixture / "ansible/templates/nvim-init.lua").write_text("dirty file without commit identity")
+    (fixture / "plugins/applications/git/src/setup_plugin_git/Makefile").write_text(
+        "dirty file without commit identity"
+    )
     (fixture / "debian/control").write_text("invalid dirty control")
     # Locally installed Git replacement objects and export attributes must not
     # alter the package while it continues to report the original commit.
-    replaced = command("git", "rev-parse", sha + ":assets/hyprland/keys.txt", cwd=fixture)
+    replaced = command("git", "rev-parse", sha + ":config/shared/palette.toml", cwd=fixture)
     changed = command("git", "hash-object", "-w", "config/private.txt", cwd=fixture)
     command("git", "replace", replaced, changed, cwd=fixture)
     (fixture / ".git/info").mkdir(exist_ok=True)
-    (fixture / ".git/info/attributes").write_text("ansible/templates/nvim-init.lua export-ignore\n")
+    (fixture / ".git/info/attributes").write_text(
+        "plugins/applications/git/src/setup_plugin_git/* export-ignore\n"
+    )
     command(
         "make",
         "-f",
@@ -173,9 +173,21 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
         "package",
         f"VERSION={VERSION}",
         f"PACKAGE_DIR={tmp_path}",
+        f"BUILD_PYTHON={sys.executable}",
         cwd=fixture,
     )
     assert (tmp_path / FILENAME).read_bytes() == package.read_bytes()
+
+
+def plugin_members(package: Path) -> dict[str, bytes]:
+    prefix = "./usr/lib/setup-system/plugin_catalog/"
+    raw = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(package)])
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        return {
+            m.name.removeprefix(prefix): stream.read()
+            for m in archive.getmembers()
+            if m.isfile() and m.name.startswith(prefix) and (stream := archive.extractfile(m))
+        }
 
 
 def executable(directory: Path, name: str, content: str) -> Path:
@@ -288,6 +300,10 @@ def test_remote_delivery_checks_precede_privilege(
                         },
                         {"name": FILENAME + ".sha256"},
                         {"name": FILENAME + ".sigstore.json"},
+                        *(
+                            {"name": n, "digest": "sha256:" + hashlib.sha256(b).hexdigest()}
+                            for n, b in plugin_members(package).items()
+                        ),
                     ],
                 }
             )
@@ -425,6 +441,14 @@ def test_reject_prerelease_and_malformed_tags_without_side_effects() -> None:
         assert result.returncode != 0 and "stable tag" in result.stderr
 
 
+def signed_subjects(package: Path) -> str:
+    subjects = {FILENAME: hashlib.sha256(package.read_bytes()).hexdigest()}
+    subjects.update(
+        {name: hashlib.sha256(data).hexdigest() for name, data in plugin_members(package).items()}
+    )
+    return json.dumps(subjects, sort_keys=True)
+
+
 @pytest.fixture
 def publication(package: Path, tmp_path: Path):
     # The service double stores real package bytes. Publication still checks dpkg
@@ -435,7 +459,7 @@ def publication(package: Path, tmp_path: Path):
     sha = command("git", "rev-parse", "HEAD", cwd=package.parent / "source")
     digest = hashlib.sha256(package.read_bytes()).hexdigest()
     (artifacts / (FILENAME + ".sha256")).write_text(f"{digest}  {FILENAME}\n")
-    (artifacts / (FILENAME + ".sigstore.json")).write_text(digest)
+    (artifacts / (FILENAME + ".sigstore.json")).write_text(signed_subjects(package))
     service = tmp_path / "service"
     service.mkdir()
     tools = tmp_path / "tools"
@@ -447,6 +471,7 @@ def publication(package: Path, tmp_path: Path):
 import hashlib
 import json
 import os
+import runpy
 import shutil
 import sys
 from pathlib import Path
@@ -457,7 +482,8 @@ state = root / "draft"
 stable = "v1.2.3"
 native = "deb-" + stable
 sha = os.environ["GITHUB_SHA"]
-names = sorted(path.name for path in root.glob("setup-system*"))
+names = sorted(p.name for p in root.iterdir() if p.name.startswith("setup-system")
+               or p.name.endswith((".json",".whl")) and p.name != "notes.json")
 def emit(value):
     print(json.dumps(value))
 def release():
@@ -478,11 +504,13 @@ def release():
             "assets": assets}
 if args[:2] == ["attestation", "verify"]:
     digest = hashlib.sha256(Path(args[2]).read_bytes()).hexdigest()
-    sys.exit(0 if Path(args[args.index("--bundle")+1]).read_text().strip() == digest else 1)
+    proof = json.loads(Path(args[args.index("--bundle")+1]).read_text())
+    sys.exit(0 if proof.get(Path(args[2]).name) == digest else 1)
 elif args[:2] == ["attestation", "download"]:
     digest = hashlib.sha256(Path(args[2]).read_bytes()).hexdigest()
-    assert digest == (root / "attested-original").read_text()
-    Path("sha256:" + digest + ".jsonl").write_text(digest + chr(10))
+    proof = (root / "attested-original").read_text()
+    assert json.loads(proof)[Path(args[2]).name] == digest
+    Path("sha256:" + digest + ".jsonl").write_text(proof + chr(10))
 elif args[0] == "api":
     endpoint = next(arg for arg in args if arg.startswith(("repos/", "https://uploads.github.com/")))
     item = endpoint.split("/")[-1]
@@ -515,12 +543,12 @@ elif args[0] == "api":
     elif endpoint == "repos/serrja/setupSystem/releases/17":
         if args[1:3] == ["-X", "PATCH"]:
             assert "draft=false" in args and "make_latest=false" in args
-            assert state.read_text() == "yes" and len(names) == 3
+            assert state.read_text() == "yes" and len(names) == int(os.environ["ASSET_COUNT"])
             state.write_text("no")
             if (root / "fault").exists() and (root / "fault").read_text().startswith("after "):
                 (root / "trigger").touch()
         response = release()
-        if args[1] != "-X" and len(names) == 3:
+        if args[1] != "-X" and len(names) == int(os.environ["ASSET_COUNT"]):
             assets_lag = root / "hide-upload-readback"
             draft_lag = root / "show-draft-readback"
             if response["draft"] and assets_lag.exists():
@@ -554,6 +582,7 @@ else:
     env = dict(
         os.environ,
         SERVICE=str(service),
+        ASSET_COUNT=str(3 + len(plugin_members(package))),
         GITHUB_SHA=sha,
         GITHUB_REF="refs/heads/main",
         GITHUB_EVENT_NAME="push",
@@ -601,7 +630,7 @@ def test_partial_debian_publication_resumes_without_overwrite(package, tmp_path,
     notes.write_text("{}")
     assert publish().returncode != 0 and notes.read_text() == "{}"
     notes.write_text(original_notes)
-    (service / "attested-original").write_text(digest)
+    (service / "attested-original").write_text(signed_subjects(package))
     # A runner upgrade can change the container encoding of the same signed
     # payload. Keep the original remote package and recover its original proof.
     unpacked = tmp_path / "older signed package"
@@ -611,7 +640,7 @@ def test_partial_debian_publication_resumes_without_overwrite(package, tmp_path,
     rebuilt_digest = hashlib.sha256(rebuilt.read_bytes()).hexdigest()
     assert rebuilt_digest != digest
     (artifacts / (FILENAME + ".sha256")).write_text(f"{rebuilt_digest}  {FILENAME}\n")
-    (artifacts / (FILENAME + ".sigstore.json")).write_text(rebuilt_digest)
+    (artifacts / (FILENAME + ".sigstore.json")).write_text(signed_subjects(rebuilt))
     for marker in ("hide-upload-readback", "show-draft-readback"):
         (service / marker).touch()
     completed = publish()
@@ -850,71 +879,76 @@ printf 'installed 1.2.3' > "$STATE"
     assert list(lock.iterdir()) == []
 
 
-@pytest.mark.parametrize("writer", ["dpkg", "frontend", "setup-system"])
-def test_apply_reports_a_live_writer_before_starting_the_operation(tmp_path, writer):
-    import sys
+def test_draft_stays_private_if_a_standalone_plugin_is_missing_from_the_bundle(publication):
+    service, artifacts, publish = publication
+    file = artifacts / (FILENAME + ".sigstore.json")
+    proof = json.loads(file.read_bytes())
+    del proof["git.json"]
+    file.write_text(json.dumps(proof))
+    result = publish()
+    assert result.returncode and (service / "draft").read_text() == "yes"
 
-    native = tmp_path / "native lock"
-    native.mkdir()
-    database = tmp_path / "db"
-    database.mkdir()
-    locks = [database / "lock", database / "lock-frontend"]
-    for item in locks:
-        item.touch(mode=0o600)
-    stage = tmp_path / "operation"
-    contents = (
-        (ROOT / "libexec/locked.sh")
-        .read_text()
-        .replace("lock=/run/setup-system", "lock=" + shlex.quote(str(native)))
+
+def test_resource_verifier_cross_checks_archives_and_rejects_changed_bytes(
+    package, tmp_path, monkeypatch
+):
+    import zipfile
+
+    import hatchling.build
+
+    # Start from the exact fixture commit even if another case dirtied its checkout.
+    source = tmp_path / "source"
+    command(
+        "git",
+        "clone",
+        "--quiet",
+        "--local",
+        "--no-hardlinks",
+        "--",
+        str(package.parent / "source"),
+        str(source),
     )
-    helper = (
-        (ROOT / "libexec/dpkg_lock.py")
-        .read_text()
-        .replace("/var/lib/dpkg/lock", str(database / "lock"))
-    )
-    (tmp_path / "dpkg_lock.py").write_text(helper)
-    task = executable(tmp_path, "locked", contents)
-    if writer == "setup-system":
-        probe = (
-            "import fcntl,os,sys; f=os.open(sys.argv[1],os.O_RDONLY); fcntl.flock(f,fcntl.LOCK_EX)"
+    monkeypatch.chdir(source)
+    output = tmp_path / "release"
+    output.mkdir()
+    wheel = output / hatchling.build.build_wheel(str(output))
+    sdist = output / hatchling.build.build_sdist(str(output))
+    verify = runpy.run_path(str(ROOT / "docker/verify_native.py"))["verify_resources"]
+    verify(source, wheel, sdist, package)
+    with zipfile.ZipFile(wheel) as valid:
+        originals = {item.filename: valid.read(item) for item in valid.infolist()}
+    for number, (target, reason) in enumerate(
+        (
+            ("setup_system/app.py", "Wheel modules"),
+            ("setup_system/bundle/config/shared/palette.toml", "Wheel runtime resources"),
+            ("setup_system/bundle/plugin_catalog/git.json", "release differs"),
         )
-        selected = native
-    else:
-        probe = "import fcntl,sys; f=open(sys.argv[1], 'r+b'); fcntl.lockf(f, fcntl.LOCK_EX)"
-        selected = locks[int(writer == "frontend")]
-    probe += "; print('ready',flush=True); input()"
-    run = tmp_path / "private request"
-    run.mkdir(mode=0o700)
-    request = run / "request.json"
-    request.write_bytes(b"{}")
-    request.chmod(0o600)
-    report = run / "result.json"
-    env = dict(os.environ, SETUP_SYSTEM_REQUEST=str(request), SETUP_SYSTEM_RESULT=str(report))
-    with subprocess.Popen(
-        [sys.executable, "-I", "-c", probe, str(selected)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-    ) as holder:
-        assert holder.stdout and holder.stdin
-        assert holder.stdout.readline() == "ready\n"
-        denied = subprocess.run(
-            [task, "/usr/bin/touch", stage], env=env, capture_output=True, text=True, check=False
-        )
-        existing = report.read_bytes()
-        repeated = subprocess.run(
-            [task, "/usr/bin/touch", stage], env=env, capture_output=True, check=False
-        )
-        holder.stdin.write("\n")
-        holder.stdin.flush()
-        assert repeated.returncode == 75 and report.read_bytes() == existing
-        assert set(run.iterdir()) == {request, report}
-        assert denied.returncode == 75
-        if writer != "setup-system":
-            assert str(holder.pid) in denied.stderr
-        response = json.loads(report.read_bytes())
-        assert response["status"] == "blocked" and "writer lock" in response["blockers"][0]
-        assert report.stat().st_mode & 0o777 == 0o600
-        assert not stage.exists()
-    subprocess.run([task, "/usr/bin/touch", stage], check=True)
-    assert stage.exists()
+    ):
+        broken = tmp_path / f"broken-{number}.whl"
+        with zipfile.ZipFile(broken, "w") as edited:
+            for name, data in originals.items():
+                if name == target:
+                    if name.endswith(".json"):
+                        document = json.loads(data)
+                        document["releases"][0]["wheels"][0]["sha256"] = "0" * 64
+                        data = json.dumps(document).encode()
+                    else:
+                        data += b"changed"
+                edited.writestr(name, data)
+        with pytest.raises(ValueError, match=reason):
+            verify(source, broken, sdist, package)
+
+    # A valid dpkg archive with an altered protected payload must fail independently.
+    tree = tmp_path / "package-tree"
+    command("dpkg-deb", "--raw-extract", str(package), str(tree))
+    asset = tree / "usr/lib/setup-system/plugins/git/setup_plugin_git/Makefile"
+    asset.chmod(0o666)
+    rewrapped = tmp_path / "changed.deb"
+    command("dpkg-deb", "--root-owner-group", "--build", str(tree), str(rewrapped))
+    with pytest.raises(ValueError, match="Invalid Debian resource"):
+        verify(source, wheel, sdist, rewrapped)
+    asset.chmod(0o644)
+    asset.write_bytes(b"changed")
+    command("dpkg-deb", "--root-owner-group", "--build", str(tree), str(rewrapped))
+    with pytest.raises(ValueError, match="Debian resources disagree"):
+        verify(source, wheel, sdist, rewrapped)

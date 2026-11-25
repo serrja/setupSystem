@@ -9,51 +9,70 @@ import sys
 import tempfile
 import tomllib
 import zipfile
-from importlib.metadata import distribution, version
+from importlib.metadata import Distribution, distribution, version
 from pathlib import Path
 
 import setup_system
+from setup_system.extensions import builtins
 from setup_system.infrastructure.palette import palette
 from setup_system.layout import resource_root
+
+
+def verify_origin(installed: Distribution, wheel: Path | None) -> None:
+    origin = json.loads(installed.read_text("direct_url.json") or "{}")
+    if origin.get("dir_info", {}).get("editable"):
+        raise ValueError("Expected an independently installed release")
+    if wheel is None:
+        return
+    wheel = wheel.resolve(strict=True)
+    if origin.get("url") != wheel.as_uri():
+        raise ValueError("Installed wheel origin differs")
+    recorded_hash = origin.get("archive_info", {}).get("hashes", {}).get("sha256")
+    if (
+        recorded_hash is not None
+        and recorded_hash != hashlib.sha256(wheel.read_bytes()).hexdigest()
+    ):
+        raise ValueError("Installed archive digest differs")
+    with zipfile.ZipFile(wheel) as archive:
+        for member in archive.infolist():
+            name = Path(member.filename)
+            if (
+                name.is_absolute()
+                or ".." in name.parts
+                or any(p.endswith(".data") for p in name.parts)
+            ):
+                raise ValueError("Unexpected installed wheel path")
+            if member.is_dir() or member.filename.endswith(".dist-info/RECORD"):
+                continue
+            target = Path(str(installed.locate_file(member.filename)))
+            if (
+                not target.is_file()
+                or target.is_symlink()
+                or target.read_bytes() != archive.read(member)
+            ):
+                raise ValueError("Installed resource differs from its release")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path)
     args = parser.parse_args()
-    installed = distribution("setup-system")
-    origin = json.loads(installed.read_text("direct_url.json") or "{}")
-    assert origin.get("dir_info", {}).get("editable") is not True
-    if args.wheel:
-        wheel = args.wheel.resolve(strict=True)
-        assert origin["url"] == wheel.as_uri()
-        recorded_hash = origin.get("archive_info", {}).get("hashes", {}).get("sha256")
-        if recorded_hash is not None:
-            assert recorded_hash == hashlib.sha256(wheel.read_bytes()).hexdigest()
-        with zipfile.ZipFile(wheel) as archive:
-            for member in archive.infolist():
-                name = Path(member.filename)
-                assert not name.is_absolute() and ".." not in name.parts
-                assert not any(part.endswith(".data") for part in name.parts)
-                if member.is_dir() or member.filename.endswith(".dist-info/RECORD"):
-                    continue
-                target = Path(str(installed.locate_file(member.filename)))
-                assert target.is_file() and not target.is_symlink()
-                assert (
-                    hashlib.sha256(target.read_bytes()).digest()
-                    == hashlib.sha256(archive.read(member)).digest()
-                )
+    verify_origin(distribution("setup-system"), args.wheel)
     expected = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
     root = Path(setup_system.__file__).parent
     assert "site-packages" in root.parts
     assert version("setup-system") == expected
     resources = resource_root()
     assert resources == root / "bundle"
-    projects = tomllib.loads((resources / "config/workspace/projects.toml").read_text())["project"]
-    assert "pokerlost/projectRules" in {item["id"] for item in projects}
-    assert (resources / "ansible/base.yml").is_file() and (
-        resources / "ansible/workspace.yml"
-    ).is_file()
+    entries = builtins(resources)
+    if not entries or any(item.reason or not item.manifest or not item.release for item in entries):
+        raise ValueError("An installed plugin lacks a valid release identity")
+    projects = next(e for e in entries if e.manifest and e.manifest.id == "projects")
+    assert projects.source and projects.manifest
+    module = projects.manifest.entry_point.partition(":")[0]
+    with zipfile.ZipFile(projects.source) as plugin:
+        catalog = tomllib.loads(plugin.read(module + "/config/workspace/projects.toml").decode())
+    assert "pokerlost/projectRules" in {item["id"] for item in catalog["project"]}
     source_palette = tomllib.loads((resources / "config/shared/palette.toml").read_text())
     assert palette(resources) == {
         key: value for key, value in source_palette.items() if key != "name"

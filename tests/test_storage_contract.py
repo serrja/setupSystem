@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from historical_receipts import historical_backup
 
+from setup_system.application.recovery import restore
 from setup_system.domain.managed_text import managed_block
-from setup_system.file_tasks import restore
 from setup_system.infrastructure import user_storage
 
 
@@ -200,39 +200,18 @@ def test_historical_restore_creates_all_missing_parents_privately(tmp_path, monk
 
 
 def test_confirmed_manifest_restore_recovers_only_missing_files(sandbox, monkeypatch, tmp_path):
-    from typer.testing import CliRunner
-
-    from setup_system.file_tasks import cli
-    from setup_system.models import TaskResult
+    from setup_system.application.rollback import RecoveryPlan
+    from setup_system_sdk import Outcome
 
     original = sandbox / "file"
     original.write_bytes(b"saved")
     backup = historical_backup([original])
     original.unlink()
-    request = tmp_path / "request.json"
-    result = tmp_path / "result.json"
-    monkeypatch.setenv("SETUP_SYSTEM_REQUEST", str(request))
-    monkeypatch.setenv("SETUP_SYSTEM_RESULT", str(result))
-
-    def invoke(target, expected=None):
-        request.write_text(
-            json.dumps(dict(schema=1, settings={"backup_id": backup.name}, expected=expected))
-        )
-        response = CliRunner().invoke(cli, [target])
-        assert response.exit_code == 0, response.exception
-        assert response.stdout == ""
-        return TaskResult.model_validate_json(result.read_bytes())
-
-    preview = invoke("restore-plan")
-    assert [action.operation for action in preview.actions] == ["would-create"]
-    consent = preview.model_dump(mode="json", exclude_unset=True)
+    preview = RecoveryPlan.inspect(backup.name)
+    assert preview.entries == ((str(original), "would-create"),)
     original.write_bytes(b"changed after preview")
-    request.write_text(
-        json.dumps(dict(schema=1, settings={"backup_id": backup.name}, expected=consent))
-    )
-    assert CliRunner().invoke(cli, ["restore-apply"]).exit_code != 0
+    assert preview.apply().outcome is Outcome.BLOCKED
     assert original.read_bytes() == b"changed after preview"
     original.unlink()
-    assert invoke("restore-apply", consent).status == "complete"
+    assert preview.apply().outcome is Outcome.COMPLETE
     assert original.read_bytes() == b"saved"
-    assert invoke("restore-plan").status == "no_changes"

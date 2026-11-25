@@ -1,6 +1,6 @@
 # Workspace projects
 
-Open **Working environment** to inspect projects, prepare their parent directories or launch Neovim or Codex in a verified checkout. The project catalog at `/usr/lib/setup-system/config/workspace/projects.toml` contains the canonical owners, project IDs, template aliases and origins, including `pokerlost/projectRules`. The default root is `$HOME/Projects`.
+Open **Projects and templates** to inspect checkouts, prepare selected directories or launch an editor. Its packaged project catalog holds the canonical owners, project IDs, Copier aliases and origins, including `pokerlost/projectRules`. The default root is `$HOME/Projects`.
 
 ## 📂 Select a checkout
 

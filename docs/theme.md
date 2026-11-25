@@ -1,15 +1,15 @@
 # Catppuccin Mocha Green
 
-In **Working environment**, choose the desktop theme and adjust panel density, effects, opacity and corner radius. The release renders native Hyprland, Waybar, Foot, Wofi, Mako and Hyprlock files from the shared palette. The greeter, Plymouth and Neovim use the same palette when their respective features are selected. The package ships `shared/palette.toml` and the asset list `base/desktop.toml` under `/usr/lib/setup-system/config`.
+The package supplies the shared palette, font roles and authentication geometry under `/usr/lib/setup-system/config/shared`. Each desktop extension renders its own configuration.
 
-## 🎨 Desktop appearance
+## ⚙️ Desktop appearance
 
-Base and Working environment both start with desktop effects disabled. Enable effects in Working environment to include them in the next confirmed desktop plan.
+Set compositor effects and window corners on the **Hyprland** page. Set compact mode, opacity and panel radius under **Waybar**. The compact panel is 30 pixels high at the top of the display. Its battery and backlight controls depend on observed hardware.
 
-Hyprland uses 6-pixel inner gaps, 12-pixel outer gaps, 12-pixel default corners and a 2-pixel green active border. The floating top bar is normally 36 pixels high and 30 in compact mode. The launcher and workspace buttons are on the left. The center shows the clock, with the date available on click. Keyboard layout, audio, network and tray appear on the right. The panel discovers batteries and backlights in sysfs and adds their controls when present.
+Choose terminal font size under **Foot**. **Hyprlock** controls the native lock screen's empty field behavior. **Greeter** uses the shared card and input geometry for new local logins. Each program has a separate Apply action. [Graphical login](desktop_login.md) · [Fonts](fonts.md)
 
-The session's Waybar helper listens for Hyprland workspace events and translates workspace button clicks to the compositor's Lua dispatcher. On a target with updated native packages, verify workspace switching, hotplug and scale on each output before replacing this integration. The installed helper is `/usr/lib/setup-system/assets/hyprland/panel.py`.
+## ⚙️ Review a monitor mode
 
-## Display preview
+In an active Hyprland session, select an observed output, mode, position and scale. **Test monitor temporarily** applies the proposed mode for twelve seconds and checks that the original layout returned. **Save monitor layout** writes the reviewed configuration for the session. The backend checks the output's advertised modes again before publishing. [Hyprland](hyprland.md)
 
-In a running Hyprland session, choose **Inspect** to refresh the connected outputs. Select an advertised mode, scale and position. **Test for 12 seconds** applies the selected layout temporarily. Its helper checks what the compositor applied, reloads the saved configuration and, if necessary, reapplies the previously observed layout. Review the result before confirming a persistent workspace plan. Unconfigured outputs use their preferred mode and automatic scale. [Hyprland](hyprland.md)
+Open the extension’s **Help** tab for offline instructions. [Waybar Help](../plugins/desktop/waybar/src/setup_plugin_waybar/help.md) · [Hyprlock Help](../plugins/desktop/hyprlock/src/setup_plugin_hyprlock/help.md)

@@ -1,8 +1,11 @@
 """Match the supported Debian distribution and kernel architecture before any system write."""
 
+import hashlib
 import platform
 import subprocess
 from collections.abc import Mapping
+from pathlib import Path
+from uuid import UUID
 
 from setup_system.infrastructure.processes import run_command
 
@@ -44,3 +47,8 @@ def current_target(release: Mapping[str, str] | None = None) -> tuple[str, bool]
         except (OSError, subprocess.SubprocessError):
             pass
     return target(facts, machine, dpkg_arch)
+
+
+def current_boot_identity() -> str:
+    identity = UUID(Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+    return hashlib.sha256(b"setup-system:admin:v1\x00" + identity.bytes).hexdigest()

@@ -7,7 +7,6 @@ import os
 import re
 import select
 import signal
-import sys
 import termios
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, suppress
@@ -18,57 +17,25 @@ import pexpect  # type: ignore[import-untyped]
 from pexpect.fdpexpect import fdspawn  # type: ignore[import-untyped]
 
 from setup_system.configuration import ApplicationOptions
+from setup_system.layout import INSTALLED, PYTHON_PACKAGE
+from setup_system_sdk import Outcome, Result
 
 
-class Target(StrEnum):
-    ADMIN_INSPECT = "admin-inspect"
-    ADMIN_PLAN = "admin-plan"
-    ADMIN_APPLY = "admin-apply"
-    BASE_INSPECT = "base-inspect"
-    BASE_PLAN = "base-plan"
-    BASE_APPLY = "base-apply"
-    BASE_USER_APPLY = "base-user-apply"
-    WORKSPACE_INSPECT = "workspace-inspect"
-    WORKSPACE_PLAN = "workspace-plan"
-    WORKSPACE_APPLY = "workspace-apply"
-    WORKSPACE_USER_APPLY = "workspace-user-apply"
-    CLEANUP_PLAN = "cleanup-plan"
-    CLEANUP_APPLY = "cleanup-apply"
-    RESTORE_PLAN = "restore-plan"
-    RESTORE_APPLY = "restore-apply"
-    DISPLAY_PREVIEW = "display-preview"
-    PROJECT_CHECK = "project-check"
-    PROJECT_LIST = "project-list"
-    TEMPLATE_VERSIONS = "template-versions"
-    GIT_INSPECT = "git-inspect"
-    PROJECT_EDITOR = "project-editor"
-    PROJECT_CODEX = "project-codex"
-    PROJECT_PREPARE_PLAN = "project-prepare-plan"
-    PROJECT_PREPARE_APPLY = "project-prepare-apply"
-    TEMPLATE_CACHE_PLAN = "template-cache-plan"
-    TEMPLATE_CACHE_APPLY = "template-cache-apply"
-    TEMPLATE_CREATE_PLAN = "template-create-plan"
-    TEMPLATE_CREATE_APPLY = "template-create-apply"
-    TEMPLATE_UPDATE_PLAN = "template-update-plan"
-    TEMPLATE_UPDATE_APPLY = "template-update-apply"
-    GIT_CONFIGURE_PLAN = "git-configure-plan"
-    GIT_CONFIGURE_APPLY = "git-configure-apply"
-    GIT_USE_PLAN = "git-use-plan"
-    GIT_USE_APPLY = "git-use-apply"
-    SHELL_CONFIGURE_PLAN = "shell-configure-plan"
-    SHELL_CONFIGURE_APPLY = "shell-configure-apply"
-    RTK_INSTALL_PLAN = "rtk-install-plan"
-    RTK_INSTALL_APPLY = "rtk-install-apply"
-
-    @property
-    def mutating(self) -> bool:
-        return self.value.endswith("-apply") or self is Target.DISPLAY_PREVIEW
+def make_command(args: list[str], *, privileged: bool = False) -> list[str]:
+    if privileged or Path(__file__).absolute().parent == PYTHON_PACKAGE:
+        return [str(INSTALLED / "libexec/locked.sh"), *args]
+    return ["/usr/bin/make", *args]
 
 
-FOREGROUND = frozenset({Target.PROJECT_EDITOR, Target.PROJECT_CODEX})
-SYSTEM = frozenset(
-    {Target.BASE_APPLY, Target.WORKSPACE_APPLY, Target.CLEANUP_APPLY, Target.ADMIN_APPLY}
-)
+def guard_refusal(code: int, args: list[str]) -> Result | None:
+    # GNU Make returns 0, 1 or 2. Status 75 is reserved for the package preflight.
+    if code == 75 and args[0] == str(INSTALLED / "libexec/locked.sh"):
+        return Result(
+            outcome=Outcome.BLOCKED,
+            message="The package writer lock is unavailable or the installed release changed. "
+            "Check the Debian installation and retry after package operations finish.",
+        )
+    return None
 
 
 class Phase(StrEnum):
@@ -137,99 +104,6 @@ async def _stop_group(pid: int, done: asyncio.Task[int], grace: float) -> None:
         _signal_group(pid, signal.SIGKILL)
 
 
-async def _plain(
-    root: Path,
-    args: list[str],
-    env: dict[str, str],
-    cancel: asyncio.Event,
-    report: Report,
-    *,
-    options: ApplicationOptions,
-    mutating: bool,
-    foreground: bool,
-) -> int:
-    if foreground and (not sys.stdin.isatty() or not sys.stdout.isatty()):
-        raise ValueError("Opening the project requires an interactive terminal")
-    read_only = not (mutating or foreground)
-    output = asyncio.subprocess.PIPE if read_only else asyncio.subprocess.DEVNULL
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "/usr/bin/make",
-            *args,
-            cwd=root,
-            env=env,
-            stdin=None if foreground else asyncio.subprocess.DEVNULL,
-            stdout=None if foreground else output,
-            stderr=None if foreground else asyncio.subprocess.STDOUT,
-            start_new_session=not foreground,
-        )
-    except OSError:
-        raise TransportError("Could not start the packaged Make operation") from None
-    finished = asyncio.create_task(process.wait())
-
-    async def observe() -> int:
-        report(Phase.RUNNING)
-        if process.stdout is not None:
-            # Discard output as it arrives; command output is never a user-visible diagnostic.
-            try:
-                async with asyncio.timeout(options.read_only_timeout_seconds):
-                    while await asyncio.wait_for(
-                        process.stdout.read(65536), options.idle_timeout_seconds
-                    ):
-                        pass
-                    return await asyncio.wait_for(
-                        asyncio.shield(finished), options.idle_timeout_seconds
-                    )
-            except TimeoutError:
-                raise ReadinessTimeoutError(
-                    "The read-only operation exceeded its time limit"
-                ) from None
-            except OSError:
-                raise TransportError("Lost the read-only command output channel") from None
-        try:
-            return await asyncio.wait_for(asyncio.shield(finished), options.idle_timeout_seconds)
-        except TimeoutError:
-            report(Phase.WAITING)
-            return await finished
-
-    stopping: asyncio.Task[None] | None = None
-
-    def stop_reader_group() -> asyncio.Task[None]:
-        nonlocal stopping
-        if stopping is None:
-            stopping = asyncio.create_task(
-                _stop_group(process.pid, finished, options.termination_grace_seconds)
-            )
-        return stopping
-
-    async def request_stop() -> None:
-        report(Phase.CANCELLING)
-        if read_only:
-            # Keep reading while the group exits, including when its deadline expires.
-            stop_reader_group()
-        else:
-            await asyncio.to_thread(_cancel_at_boundary, env)
-
-    try:
-        try:
-            code = await _supervise(observe(), cancel, request_stop)
-        except ReadinessTimeoutError:
-            if read_only and cancel.is_set():
-                return 130
-            raise
-        return 130 if read_only and cancel.is_set() else code
-    finally:
-        if process.stdout is not None and (stopping is not None or not finished.done()):
-            shutdown = stop_reader_group()
-            try:
-                with suppress(OSError):
-                    while await process.stdout.read(65536):
-                        pass
-            finally:
-                await shutdown
-        await finished
-
-
 def _drain_output(fd: int) -> None:
     """Keep servicing a live transaction if its Pexpect reader is lost."""
     while True:
@@ -241,7 +115,7 @@ def _drain_output(fd: int) -> None:
             continue
 
 
-async def _authenticated(
+async def authenticated_make(
     root: Path,
     args: list[str],
     env: dict[str, str],
@@ -265,8 +139,7 @@ async def _authenticated(
                 descriptors.callback(os.close, output)
                 child_ends.callback(os.close, writer)
                 process = await asyncio.create_subprocess_exec(
-                    "/usr/bin/make",
-                    *args,
+                    *make_command(args, privileged=True),
                     cwd=root,
                     env=env,
                     stdin=slave,
@@ -405,40 +278,3 @@ async def _authenticated(
                             with suppress(OSError):
                                 reader.close()
         raise failure
-
-
-async def execute_make(
-    root: Path,
-    target: Target,
-    env: dict[str, str],
-    cancel: asyncio.Event,
-    report: Report,
-    *,
-    options: ApplicationOptions,
-    take_password: Callable[[], bytes] | None,
-) -> int:
-    target = Target(target)
-    if (target in SYSTEM) != (take_password is not None):
-        raise ValueError("The selected target has a different authorization requirement")
-    args = ["-rR", "-j1", "--no-print-directory", "-f", str(root / "Makefile"), target.value]
-    if take_password is not None:
-        return await _authenticated(
-            root,
-            args,
-            env,
-            cancel,
-            report,
-            take_password,
-            options=options,
-            root_account=target == Target.ADMIN_APPLY,
-        )
-    return await _plain(
-        root,
-        args,
-        env,
-        cancel,
-        report,
-        options=options,
-        mutating=target.mutating,
-        foreground=target in FOREGROUND,
-    )

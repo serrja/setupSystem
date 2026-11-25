@@ -1,15 +1,7 @@
 # Git author profiles
 
-Use Workspace Tools to inspect the effective author and signing settings of one checkout.
-The report shows each setting's Git scope and origin and hides signing key values.
+## ⚙️ Plugin actions
 
-## ✍️ Save an author identity
+Configure an identity for repositories under a directory, import an existing repository’s author settings or explicitly apply an identity to one checkout. Open Git → Actions and review the fragment and target configuration path before applying.
 
-To save an identity, choose a profile name and a source checkout with a configured
-author name and email. An optional existing project directory can use this identity
-through a native Git `includeIf` rule. Applying the profile to a repository sets its
-local author fields. Git retains its credential providers and SSH configuration.
-
-Configuration uses Git's own parser and writer. Existing conflicting profiles and
-directory includes require review. Recovery previews the original files and checks
-for edits made after the selected operation. [Recovery](recovery.md)
+Use Accounts to inspect the selected hosting service, upload an SSH public key or revoke a key recorded as created by this plugin. The plan displays the host, account, remote key ID and fingerprint before revocation. [Git configuration](https://git-scm.com/docs/git-config).

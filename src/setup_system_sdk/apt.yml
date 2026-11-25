@@ -1,0 +1,11 @@
+---
+- name: Install the approved plugin package closure
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Validate the sealed approval in the protected interpreter
+      become: true
+      ansible.builtin.raw: >-
+        /usr/bin/printf %s '{{ setup_system_payload }}' | /usr/bin/base64 --decode |
+        /usr/bin/python3 -I -B -m setup_system_sdk.apt apply
+      changed_when: true

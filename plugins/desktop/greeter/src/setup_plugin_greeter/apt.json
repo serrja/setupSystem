@@ -1,0 +1,14 @@
+{
+  "names": [
+    "greetd",
+    "gtkgreet",
+    "cage"
+  ],
+  "requires_idle": {
+    "service": "greetd.service",
+    "processes": [
+      "greetd",
+      "gtkgreet"
+    ]
+  }
+}

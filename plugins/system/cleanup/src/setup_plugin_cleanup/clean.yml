@@ -1,0 +1,15 @@
+---
+- name: Remove the revalidated finite Debian package selection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check closure, protection and recovery editors before native removal
+      become: true
+      become_method: ansible.builtin.sudo
+      # A fixed raw invocation avoids staging a user-owned Python module for become.
+      ansible.builtin.raw: >-
+        /usr/bin/printf %s {{ setup_system_payload }} |
+        /usr/bin/base64 --decode |
+        /usr/bin/python3 -I -B /usr/lib/setup-system/plugins/cleanup/setup_plugin_cleanup/native.py
+      changed_when: true

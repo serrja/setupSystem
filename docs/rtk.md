@@ -1,6 +1,6 @@
 # RTK
 
-In Workspace Tools, preview and confirm an install or update of the optional RTK
+Open the RTK card to preview and confirm an install or update of the optional RTK
 output filter from its reviewed release. Apply checks the archive checksum and tests the staged
 executable's version and command identity before publishing the binary.
 

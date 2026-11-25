@@ -1,5 +1,0 @@
-# An example for a workstation in Paris with a French keyboard.
-schema_version = 1
-timezone = "Europe/Paris"
-locale = "fr_FR.UTF-8"
-keyboard = "fr"

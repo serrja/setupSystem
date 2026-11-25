@@ -1,8 +1,8 @@
 # Graphical disk unlock
 
-Select **Plymouth graphical unlock** in **Base system** for a Debian machine that already prompts for its LUKS root password at boot.
+Open the **Plymouth** extension for a Debian machine that already prompts for its LUKS root password at boot.
 
-## 🔑 Check the boot layout
+## 🔐 Check the boot layout
 
 The plan inspects the running kernel, root device stack, separate cleartext `/boot`, mounted EFI system partition, current Debian GRUB/shim boot entry and active KMS driver. It requires a working initramfs-tools/cryptsetup-initramfs boot, GRUB tools and efibootmgr on the target. The plan includes missing Plymouth, spinner or console-setup packages. Apply backs up affected boot images before installing prerequisites that may trigger a rebuild. Legacy BIOS, systemd-boot and encrypted boot volumes fall outside this profile. A password requested by GRUB to open an encrypted `/boot` belongs to the boot loader and precedes Plymouth.
 
@@ -10,11 +10,11 @@ Apply checks the existing crypttab for interactive password entries and rejects 
 
 The executor stages a new image for the **running kernel**, lists its contents to verify cryptroot, the keymap and Plymouth, and checks a generated GRUB configuration for a recovery entry. It replaces the working image only after these checks. Debian package triggers may also rebuild other installed kernel images. Their original images are backed up before prerequisite installation. A successful operation reports **Needs reboot**. The user chooses when to reboot.
 
-## Recovery
+## ⚙️ Recovery
 
 Root-owned directories under `/var/lib/setup-system/boot/unlock-*/` hold numbered backups and an `operation.json` with the original paths, modes and SHA-256 hashes. After a build failure, recovery checks the current bytes and permissions against the recorded installation before restoring the verified backup. An intervening administrator edit causes a conflict. Debian may retain package changes if installation started. After power loss, select an alternate kernel or a rescue environment, mount the target filesystems and compare the journal and backups to the current files. Keep the backups and recorded staging paths until both normal and recovery entries have booted. [System recovery](recovery.md)
 
-## Disposable target acceptance
+## ⚠️ Disposable target acceptance
 
 1. Record the Debian release, architecture, kernel, EFI loader, LUKS root topology and separate boot mounts of the approved disposable VM. Use a synthetic disk password. Create an offline VM snapshot.
 2. Boot the original kernel, verify normal text unlock and the recovery menu, and record the hashes of the running kernel's initramfs and GRUB configuration. Keep the evidence free of key material.
@@ -23,3 +23,5 @@ Root-owned directories under `/var/lib/setup-system/boot/unlock-*/` hold numbere
 5. Restore the snapshot for an insufficient-space or failed-build run. Verify the original boot hashes and boot into the original working system. Record target, artifact SHA, result and evidence for each architecture separately.
 
 The isolated native gate exercises staging, readback, rollback and conflict handling on synthetic files. A Debian boot result requires the target exercise above. Debian documents the native [Plymouth controls](https://manpages.debian.org/trixie/plymouth/plymouth-set-default-theme.8.en.html) and [initramfs keymap option](https://manpages.debian.org/trixie/initramfs-tools-core/initramfs.conf.5.en.html).
+
+Open the extension’s **Help** tab for offline instructions. [Plymouth Help](../plugins/system/plymouth/src/setup_plugin_plymouth/help.md)

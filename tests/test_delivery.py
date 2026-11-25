@@ -50,6 +50,7 @@ def test_local_make_install_requests_sudo_only_for_one_matching_package(
     elif case in {"valid", "foreign"}:
         control = tmp_path / "fixture/DEBIAN/control"
         control.parent.mkdir(parents=True)
+        control.parent.chmod(0o755)
         source_sha = sha if case == "valid" else "b" * 40
         control.write_text(
             f"Version: 1.2.3\nX-Setup-System-Source: {source_sha}\n"

@@ -1,0 +1,426 @@
+{
+  "id": "docker",
+  "name": "Docker",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_docker:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-service",
+    "client-context",
+    "remove-selected",
+    "user-files",
+    "native-terminal",
+    "account-status"
+  ],
+  "capabilities": [
+    "rootless",
+    "rootful",
+    "contexts"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Docker",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "setup-mode",
+      "label": "Select local daemon context",
+      "page": "actions",
+      "target": "setup-mode",
+      "permissions": [
+        "client-context",
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "read_only": false,
+      "description": "Select the reviewed local Docker daemon context for the current user."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "create-context",
+      "label": "Create context",
+      "page": "actions",
+      "target": "create-context",
+      "permissions": [
+        "client-context"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "start-service",
+      "label": "Start service",
+      "page": "actions",
+      "target": "start-service",
+      "permissions": [
+        "user-service"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "stop-service",
+      "label": "Stop service",
+      "page": "actions",
+      "target": "stop-service",
+      "permissions": [
+        "user-service"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "login",
+      "label": "Registry login",
+      "page": "accounts",
+      "target": "login",
+      "permissions": [
+        "account-status",
+        "native-terminal"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": "Open the official client in a separate terminal and verify the selected sign-in."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "logout",
+      "label": "Registry logout",
+      "page": "accounts",
+      "target": "logout",
+      "permissions": [],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "prune",
+      "label": "Remove one unused image",
+      "page": "actions",
+      "target": "prune",
+      "permissions": [
+        "remove-selected"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "start-system-service",
+      "label": "Start system daemon",
+      "page": "actions",
+      "target": "start-system-service",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "stop-system-service",
+      "label": "Stop system daemon",
+      "page": "actions",
+      "target": "stop-system-service",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Configure rootless daemon logs",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-owned-contexts",
+      "label": "Remove owned client contexts",
+      "page": "actions",
+      "target": "remove-owned-contexts",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "default": "rootless",
+        "description": "Rootful socket access grants root-equivalent control. Review the mode action to select an Engine. Saving this preference does not start a daemon or grant access.",
+        "enum": [
+          "rootless",
+          "rootful"
+        ],
+        "title": "Daemon mode",
+        "type": "string"
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {
+        "driver": {
+          "default": "local",
+          "enum": [
+            "local",
+            "json-file"
+          ],
+          "title": "Container log driver",
+          "type": "string"
+        },
+        "log_size_mib": {
+          "default": 10,
+          "maximum": 1024,
+          "minimum": 1,
+          "title": "Maximum log file size",
+          "type": "integer",
+          "ui": {
+            "units": "MiB"
+          }
+        },
+        "log_files": {
+          "default": 3,
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Number of rotated log files",
+          "type": "integer"
+        }
+      },
+      "title": "Daemon",
+      "type": "object"
+    },
+    "remove-owned-contexts": {
+      "additionalProperties": false,
+      "description": "Remove only unchanged, previously created local client contexts.",
+      "properties": {},
+      "title": "RemoveContexts",
+      "type": "object"
+    },
+    "create-context": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "New context name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Context",
+      "type": "object"
+    },
+    "start-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "stop-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "login": {
+      "additionalProperties": false,
+      "description": "Read back the credential helper for the server selected at confirmation.",
+      "properties": {
+        "host": {
+          "default": "docker.io",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9-]+(:[0-9]{1,5})?$",
+          "title": "Host",
+          "type": "string"
+        }
+      },
+      "title": "SignIn",
+      "type": "object"
+    },
+    "logout": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "docker.io",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9-]+(:[0-9]{1,5})?$",
+          "title": "Host",
+          "type": "string"
+        }
+      },
+      "title": "Registry",
+      "type": "object"
+    },
+    "setup-mode": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Use the rootless or default context when unselected.",
+          "title": "Existing local Docker context",
+          "ui": {
+            "choice_provider": "mode_contexts"
+          }
+        }
+      },
+      "title": "DaemonMode",
+      "type": "object"
+    },
+    "prune": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Unused image digest",
+          "type": "string",
+          "ui": {
+            "choice_provider": "unused_images"
+          }
+        }
+      },
+      "required": [
+        "digest"
+      ],
+      "title": "Image",
+      "type": "object"
+    },
+    "start-system-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "stop-system-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

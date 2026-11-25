@@ -1,8 +1,6 @@
 """Safety gates for the installer's explicit platform boundary."""
 
-import runpy
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -67,20 +65,3 @@ def test_unknown_architecture_and_release_are_rejected(tmp_path, monkeypatch):
     )
     assert native_target.current_target() == ("amd64", False)
     assert not list(tmp_path.iterdir())
-
-
-def test_planner_and_elevated_adapters_share_one_platform_policy():
-    facts = runpy.run_path(str(ROOT / "ansible/files/facts.py"))
-    assert facts["current_target"] is native_target.current_target
-    for name in ("apt_apply", "removals", "system_contract"):
-        scope = runpy.run_path(str(ROOT / f"ansible/files/{name}.py"))
-        assert scope["current_target"] is native_target.current_target
-    assert native_target.current_target.__globals__["target"] is native_target.target
-
-
-def test_elevated_removal_requires_supported_target_before_inspecting_packages(monkeypatch):
-    check = runpy.run_path(str(ROOT / "ansible/files/removals.py"))["check"]
-    monkeypatch.setitem(check.__globals__, "os", SimpleNamespace(geteuid=lambda: 0))
-    monkeypatch.setitem(check.__globals__, "current_target", lambda: ("arm64", False))
-    with pytest.raises(ValueError, match="supported Debian target"):
-        check({})

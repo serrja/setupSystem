@@ -16,5 +16,6 @@ class ApplicationOptions(ContractModel):
     suggestion_results: Annotated[StrictInt, Field(ge=1, le=512)]
     prompt_timeout_seconds: Annotated[StrictFloat, Field(ge=0.01, le=300)]
     idle_timeout_seconds: Annotated[StrictFloat, Field(ge=0.01, le=3600)]
+    terminal_timeout_seconds: Annotated[StrictFloat, Field(ge=1, le=3600)]
     termination_grace_seconds: Annotated[StrictFloat, Field(ge=0.01, le=30)]
     read_only_timeout_seconds: Annotated[StrictFloat, Field(ge=0.01, le=86400)]
