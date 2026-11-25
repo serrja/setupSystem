@@ -256,7 +256,32 @@ def verify_generation(request: Generate, plan: Plan) -> Result:
     path = directory() / request.name
     if os.path.lexists(staging(path)):
         return Result(outcome=Outcome.NEEDS_USER_ACTION, message=interrupted(path))
-    rows = observed(path, plan.resources)
+    if (
+        not os.path.lexists(path)
+        and not checkpoint.pending(path)
+        and plan.resources == template(path)
+    ):
+        return Result(
+            outcome=Outcome.CANCELLED,
+            message="Both confirmed destinations and the key staging directory are empty.",
+            resources=[
+                r.model_copy(update={"verified": True, "permissions": None}) for r in plan.resources
+            ],
+        )
+    try:
+        rows = observed(path, plan.resources)
+    except (OSError, ValueError):
+        return Result(
+            outcome=Outcome.PARTIAL, message="Inspect the incomplete or changed SSH key directory."
+        )
+    if any(
+        expected.after is not None and expected.after != actual.after
+        for expected, actual in zip(plan.resources, rows, strict=True)
+    ):
+        return Result(
+            outcome=Outcome.PARTIAL,
+            message="The generated SSH fingerprints differ from native evidence.",
+        )
     return Result(
         outcome=Outcome.COMPLETE, message="Verified the generated OpenSSH key pair", resources=rows
     )

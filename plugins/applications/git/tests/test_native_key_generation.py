@@ -208,3 +208,28 @@ def test_stopped_before_key_publication_exposes_reserved_stage_without_adopting_
     assert not result.resources and not local_keys.removal_plan().resources
     assert local_keys.generate(request, plan).outcome == Outcome.BLOCKED
     assert (stage / local_keys.PUBLIC).read_bytes() == b"owner-reviewed substitute"
+
+
+def test_manual_recovery_proves_only_the_original_empty_key_destinations(monkeypatch, tmp_path):
+    setup_prompt(monkeypatch, tmp_path)
+    request = local_keys.Generate(name="recovered")
+    path = local_keys.directory() / request.name
+    plan = local_keys.generate_plan(request)
+    stage = local_keys.staging(path)
+    stage.mkdir(parents=True)
+    (stage / "owner").write_text("preserve")
+    assert local_keys.verify_generation(request, plan).outcome == Outcome.NEEDS_USER_ACTION
+    stage.rename(tmp_path / "owner-recovered")
+    result = local_keys.verify_generation(request, plan)
+    assert result.outcome == Outcome.CANCELLED and len(result.resources) == len(plan.resources) == 2
+    for expected, absent in zip(plan.resources, result.resources, strict=True):
+        assert absent == expected.model_copy(update={"verified": True, "permissions": None})
+        assert absent.after is None and absent.before is None and absent.remote_id is None
+    assert (tmp_path / "owner-recovered/owner").read_text() == "preserve"
+    wrong = plan.model_copy(update={"resources": plan.resources[:1]})
+    assert local_keys.verify_generation(request, wrong).outcome == Outcome.PARTIAL
+    path.mkdir()
+    (path / "owner").write_text("independent")
+    result = local_keys.verify_generation(request, plan)
+    assert result.outcome == Outcome.PARTIAL and not result.resources
+    assert (path / "owner").read_text() == "independent"

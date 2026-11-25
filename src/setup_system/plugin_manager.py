@@ -580,6 +580,21 @@ class PluginManager:
                             result = verified
                     finally:
                         password.discard()
+            if result is not None and result.outcome is Outcome.CANCELLED:
+                if await self.ledger.cancel_if_unpublished(snapshot.operation_id, result):
+                    await self.journal.emit(
+                        Event(
+                            plugin_id=plugin,
+                            operation_id=snapshot.operation_id,
+                            action_id=item.action_id,
+                            phase="verified",
+                            message_code="verified_absence",
+                            outcome=result.outcome,
+                            details={"resource_count": len(result.resources)},
+                        )
+                    )
+                    results.append(result)
+                    continue
             if result is not None and result.outcome is Outcome.NEEDS_USER_ACTION:
                 results.append(result)
                 continue

@@ -267,7 +267,22 @@ def mutate(selection: Upload | Revoke, plan: Plan) -> Result:
                     outcome=Outcome.UNKNOWN_OUTCOME,
                     message="Remote key response does not match the submitted key",
                 )
-            resource = row.model_copy(update={"remote_id": str(record.id)})
+            try:
+                confirmed = RemoteKey.model_validate_json(
+                    request(api, "GET", f"user/keys/{record.id}", 200)
+                )
+                matched = (
+                    confirmed.id == record.id
+                    and public_material(confirmed.key.encode())[1] == fingerprint
+                )
+            except (ValueError, httpx.HTTPError):
+                matched = False
+            if not matched:
+                return Result(
+                    outcome=Outcome.UNKNOWN_OUTCOME,
+                    message="GitHub has not confirmed the created key ID and fingerprint.",
+                )
+            resource = row.model_copy(update={"remote_id": str(record.id), "verified": True})
         else:
             endpoint = f"user/keys/{selection.key_id}"
             record = RemoteKey.model_validate_json(request(api, "GET", endpoint, 200))

@@ -405,11 +405,12 @@ def test_interrupted_profile_removal_retains_edited_staging_copy(home):
     assert staged.read_text() == "manual"
 
 
-def test_lost_native_response_cannot_adopt_later_generated_object(home, monkeypatch):
+@pytest.mark.parametrize("remote", [False, True])
+def test_lost_native_response_cannot_adopt_later_generated_object(home, monkeypatch, remote):
     manager = PluginManager(state_root=home / "state")
     state = activation(home)
-    row = resource(after=None)
-    plan = Plan(summary="Create unique local identity", resources=[row])
+    row = resource(after="known-public-fingerprint" if remote else None)
+    plan = Plan(summary="Create unique identity", resources=[row])
 
     async def select(plugin):
         return state
@@ -417,7 +418,13 @@ def test_lost_native_response_cannot_adopt_later_generated_object(home, monkeypa
     async def query(state, request, options):
         if request.method == "plan":
             return Reply(plan=plan)
-        appeared = row.model_copy(update={"after": "later-edit", "verified": True})
+        appeared = row.model_copy(
+            update={
+                "after": row.after if remote else "later-edit",
+                "remote_id": "later-server-id" if remote else None,
+                "verified": True,
+            }
+        )
         return Reply(
             result=Result(
                 outcome=Outcome.COMPLETE, message="Current identity", resources=[appeared]
@@ -437,5 +444,55 @@ def test_lost_native_response_cannot_adopt_later_generated_object(home, monkeypa
         assert (await manager.reconcile("demo"))[0].outcome is Outcome.PARTIAL
         assert not await manager.ledger.holdings("demo")
         assert len(await manager.ledger.pending("demo")) == 1
+
+        async def absent(*args):
+            rows = [row.model_copy(update={"after": None, "verified": True})]
+            return Reply(result=Result(outcome=Outcome.CANCELLED, message="Absent", resources=rows))
+
+        monkeypatch.setattr(plugin_manager, "query", absent)
+        assert (await manager.reconcile("demo"))[0].outcome is Outcome.CANCELLED
+        assert not await manager.ledger.pending("demo")
+        assert (await manager.journal.history("demo"))[-1].message_code == "verified_absence"
+        assert not await manager.ledger.holdings("demo")
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "case", ["confirmed-absent", "partial", "present", "applied", "proof", "modified"]
+)
+def test_negative_create_readback_releases_only_a_completely_unpublished_operation(home, case):
+    ledger = ResourceLedger(home / "state" / "resources.sqlite3")
+    ident = uuid4()
+    rows = [
+        resource(after=None).model_copy(update={"identity": name, "permissions": 0o600})
+        for name in ("private", "public")
+    ]
+    if case == "modified":
+        rows[1] = rows[1].model_copy(update={"ownership": "modified", "before": "original"})
+    plan = Plan(summary="Create two files", resources=rows)
+    absent = [r.model_copy(update={"verified": True, "permissions": None}) for r in rows]
+    if case == "partial":
+        absent.pop()
+    if case == "present":
+        absent[1] = absent[1].model_copy(update={"after": "changed"})
+
+    async def run():
+        await ledger.prepare(ident, "demo", "generate", "digest", plan, snapshot="reserved")
+        if case == "applied":
+            await ledger.applied(ident, recovery="20261125T100000Z-abcdef01")
+        if case == "proof":
+            published = rows[0].model_copy(update={"verified": True, "after": "published"})
+            await ledger.applied(ident, observations=(published,))
+        await ledger.finish(ident, Result(outcome=Outcome.UNKNOWN_OUTCOME, message="Lost reply"))
+        result = Result(outcome=Outcome.CANCELLED, message="Read back absence", resources=absent)
+        released = await ledger.cancel_if_unpublished(ident, result)
+        assert released is (case == "confirmed-absent")
+        assert not await ledger.holdings("demo")
+        if released:
+            assert not await ledger.pending("demo")
+            await ledger.prepare(uuid4(), "demo", "generate", "digest", plan)
+        else:
+            assert len(await ledger.pending("demo")) == 1
 
     asyncio.run(run())

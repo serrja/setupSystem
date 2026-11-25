@@ -63,7 +63,7 @@ def test_create_verify_revoke_only_owned_key(
             ),
         )
     )
-    assert result.resources[0].remote_id == "28"
+    assert result.resources[0].remote_id == "28" and result.resources[0].verified
     checked = asyncio.run(plugin.verify(plan, Settings(), add))
     assert checked.outcome == Outcome.COMPLETE and checked.resources[0].remote_id == "28"
     delete = keys.Revoke(account="sample", key_id=28)
@@ -145,3 +145,42 @@ def test_ssh_readback_requires_named_account_and_host_verification(tmp_path, mon
     assert keys.access(selection).outcome == Outcome.NEEDS_USER_ACTION
     account["name"] = "fixture"
     assert keys.access(selection).outcome == Outcome.NO_CHANGES
+
+
+def test_remote_id_replaced_between_post_and_get_remains_unverified(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    p = tmp_path / "fixture.pub"
+    public = (
+        Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(Encoding.OpenSSH, PublicFormat.OpenSSH)
+        .decode()
+    )
+    p.write_text(public)
+    p.chmod(0o600)
+    calls = []
+
+    def handle(req):
+        calls.append((req.method, req.url.path))
+        if req.url.path == "/user/keys" and req.method == "GET":
+            return httpx.Response(200, json=[])
+        if req.url.path == "/user/keys" and req.method == "POST":
+            return httpx.Response(201, json={"id": 6, "key": public})
+        assert req.method == "GET" and req.url.path == "/user/keys/6"
+        return httpx.Response(200, json={"id": 7, "key": public})
+
+    @contextmanager
+    def account(selection):
+        with httpx.Client(
+            base_url="https://example.invalid", transport=httpx.MockTransport(handle)
+        ) as api:
+            yield api
+
+    monkeypatch.setattr(keys, "account_api", account)
+    add = keys.Upload(account="sample", public_key=p, title="Work")
+    plan = keys.prepare(add)
+    native = keys.mutate(add, plan)
+    assert native.outcome == Outcome.UNKNOWN_OUTCOME and not native.resources
+    assert calls == [("GET", "/user/keys"), ("POST", "/user/keys"), ("GET", "/user/keys/6")]

@@ -79,15 +79,15 @@ def wheel(
         ).encode()
     files.update(extras or {})
     records = ""
-    for p, data in files.items():
+    for p, data in sorted(files.items()):
         signature = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
         records += f"{p},sha256={signature},{len(data)}\n"
     record = f"{metadata}/RECORD"
     files[record] = (records + f"{record},,\n").encode()
     path = root / name
     with ZipFile(path, "w") as archive:
-        for p, blob in files.items():
-            archive.writestr(p, blob)
+        for p, blob in sorted(files.items()):
+            archive.writestr(ZipInfo(p), blob)
     return path
 
 
@@ -127,7 +127,7 @@ def sdk_wheels(root):
         path = root / (identity.removesuffix(".dist-info") + "-" + tag + ".whl")
         if not path.is_file():
             with ZipFile(path, "w") as archive:
-                for item in dist.files:
+                for item in sorted(dist.files, key=str):
                     relative = Path(item)
                     if (
                         relative.is_absolute()
@@ -139,7 +139,7 @@ def sdk_wheels(root):
                         continue
                     source = Path(dist.locate_file(item))
                     if source.is_file():
-                        archive.write(source, str(item))
+                        archive.writestr(ZipInfo(str(item)), source.read_bytes())
         archives.append(path)
     return archives
 
@@ -182,6 +182,20 @@ def activate(release, root, *, validate_settings=None):
             validate_settings=validate_settings,
         )
     )
+
+
+def test_offline_fixture_wheels_have_reproducible_metadata_and_digests(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    release, _ = fixture_release(first, "rebuild", "1.0")
+    rebuilt, _ = fixture_release(second, "rebuild", "1.0")
+    assert rebuilt.payload == release.payload
+    for artifact in release.selected().wheels:
+        with ZipFile(first / artifact.name) as archive:
+            assert all(member.date_time == (1980, 1, 1, 0, 0, 0) for member in archive.infolist())
+        assert (first / artifact.name).read_bytes() == (second / artifact.name).read_bytes()
 
 
 def test_conflicting_distributions_run_outside_the_host_and_failed_migration_keeps_old(tmp_path):

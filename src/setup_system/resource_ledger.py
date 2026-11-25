@@ -245,8 +245,61 @@ class ResourceLedger:
                 "UPDATE changes SET phase='applied' WHERE operation=?", (str(operation),)
             )
 
+    async def cancel_if_unpublished(self, operation: UUID, result: Result) -> bool:
+        """Release a create-only reservation after verifying every resource is still absent."""
+        if result.outcome is not Outcome.CANCELLED or not result.resources or result.recovery_id:
+            return False
+        key = str(operation)
+        async with self.connection() as db:
+            async with db.execute(
+                "SELECT c.resource,c.phase FROM changes c JOIN operations o ON o.id=c.operation "
+                "WHERE c.operation=? AND o.phase IN ('prepared','unresolved') "
+                "AND NOT EXISTS (SELECT 1 FROM native_readbacks WHERE operation=o.id) "
+                "AND NOT EXISTS (SELECT 1 FROM confirmations WHERE operation=o.id "
+                "AND recovery IS NOT NULL)",
+                (key,),
+            ) as cursor:
+                planned = list(await cursor.fetchall())
+            if len(planned) != len(result.resources):
+                return False
+            observed = {(r.kind, r.identity): r for r in result.resources}
+            for wire, phase in planned:
+                desired = Resource.model_validate_json(wire)
+                if (
+                    phase != "prepared"
+                    or desired.effect != "ensure"
+                    or desired.ownership != "created"
+                    or desired.before is not None
+                    or desired.before_permissions is not None
+                    or desired.remote_id is not None
+                ):
+                    return False
+                absent = desired.model_copy(
+                    update={"verified": True, "after": None, "permissions": None}
+                )
+                if observed.get((desired.kind, desired.identity)) != absent:
+                    return False
+            await db.execute("DELETE FROM planned_requirements WHERE operation=?", (key,))
+            await db.execute("DELETE FROM reservations WHERE operation=?", (key,))
+            await db.executemany(
+                "UPDATE changes SET phase='verified',resource=? WHERE operation=? "
+                "AND kind=? AND identity=?",
+                [(r.model_dump_json(), key, r.kind, r.identity) for r in result.resources],
+            )
+            await db.execute(
+                "UPDATE operations SET phase='verified',outcome=? WHERE id=?",
+                (Outcome.CANCELLED.value, key),
+            )
+            return True
+
     async def finish(self, operation: UUID, result: Result) -> None:
         """Verify readback and retain uncertain reservations."""
+        if result.outcome is Outcome.CANCELLED and result.resources:
+            if not await self.cancel_if_unpublished(operation, result):
+                raise MissingPublicationProofError(
+                    "Cannot confirm absence of the original resources"
+                )
+            return
         key = str(operation)
         async with self.connection() as db:
             async with db.execute(
@@ -292,14 +345,24 @@ class ResourceLedger:
             for identity, observation in verified.items():
                 captured = native.get(identity)
                 desired = planned[identity]
+                content_proof = captured and (
+                    captured.after is not None
+                    or (observation.after is None and captured.remote_id is not None)
+                )
                 if (
                     not local
                     and identity not in completed
                     and desired.effect == "ensure"
                     and desired.cleanup
                     and desired.ownership == "created"
-                    and desired.after is None
-                    and (not captured or not (captured.after or captured.remote_id))
+                    and (
+                        (desired.after is None and not content_proof)
+                        or (
+                            desired.remote_id is None
+                            and observation.remote_id is not None
+                            and (not captured or not captured.remote_id)
+                        )
+                    )
                 ):
                     raise MissingPublicationProofError(
                         "No durable native evidence identifies the created resource"
@@ -315,9 +378,13 @@ class ResourceLedger:
                     raise ValueError("Resource identity changed after its native publication")
                 if identity in completed:
                     continue
-                if (desired.after is not None and observation.after != desired.after) or (
-                    desired.permissions is not None
-                    and observation.permissions != desired.permissions
+                if any(
+                    expected is not None and actual != expected
+                    for expected, actual in (
+                        (desired.after, observation.after),
+                        (desired.permissions, observation.permissions),
+                        (desired.remote_id, observation.remote_id),
+                    )
                 ):
                     raise ValueError("Readback differs from the confirmed resource")
                 if (
