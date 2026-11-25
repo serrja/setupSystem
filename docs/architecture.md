@@ -1,39 +1,7 @@
-# Architecture
+# 🧩 Architecture
 
-The Debian package installs the Python application under dist-packages and executable resources under `/usr/lib/setup-system`. The installed `setup-system` command selects the fixed `run` target there. Installation and update end at the package transaction.
+The Textual shell composes discovery, the authorization broker, an asynchronous Make adapter, settings, the resource ledger and the structured journal. It discovers the reviewed distributions through Python package metadata. Backend code runs with the interpreter of its own activated environment. Each package owns its models, actions, Help, templates and native recipes. [Plugin author guide](plugin_authoring.md)
 
-## 🧭 Where to find the code
+A read-only worker reports a plan bound to an immutable release, typed values and observed facts. Apply rechecks the release, observations and ownership, reserves resources and invokes a fixed trusted Make target. After native execution a worker verifies the result. Private mutation receipts and the user-visible journal serve different readers. A process interruption requires inspection before any further mutation. [Trust](plugin_trust.md) · [Recovery](recovery.md)
 
-| Responsibility | Implementation |
-| --- | --- |
-| Form state, validation and immutable plan snapshots | `src/setup_system/models.py`, `app.py`, `ui/` |
-| Typed sources, stage revisions and migration | `src/setup_system/configuration/` |
-| Completion and catalog selections | `src/setup_system/suggestions.py`, `config/` |
-| Running an operation and handling its single password prompt | `src/setup_system/runner.py`, `libexec/play.sh` |
-| Command sequence and per-task privileges | `mk/`, `ansible/` |
-| Compare-and-swap publication of user files | `src/setup_system/file_tasks.py`, file publication and receipt modules |
-| Delivery, native package metadata and source identity | `install.sh`, `debian/`, `mk/package.mk` |
-
-After confirmation, Textual writes the selections and observations to a private JSON request. Make receives a fixed target and passes the request path to a packaged play. A user string cannot select a Makefile, playbook or command. Ansible validates the typed selection and compares the current native plan before applying it. The package owns the plays, templates and executables used by system tasks.
-
-The Textual app and the Ansible controller run as the desktop user. System tasks use native Ansible become. The app sends a single password to its dedicated PTY after the expected prompt and disabled terminal echo. Terminal input and output are excluded from persistent logs. Distribution packages provide Ansible and its Python dependencies. Typer validates the private helper commands. The public launcher opens Textual through Make. HTTPX streams bounded release responses with a total deadline and validates every redirect before contacting its destination.
-
-The section forms and worker have separate lifetimes. Editing a form changes the next preview. Package transactions and mutating tasks use an exclusive lock. File publication checks the previously observed content and owner, records partial progress, and verifies written files before marking them complete. The same receipt supports restore after an interrupted run.
-
-## Async execution
-
-A command captures one target and a validated request. Noninteractive commands use asyncio subprocesses. The privileged Make targets check the configured package status, dpkg checksums and file inventory, and the ownership and modes of the runtime and Python package trees. The locked writer and package hooks serialize package replacement with Apply. The password path responds to the native no-echo Ansible prompt in a dedicated PTY. The runner keeps ownership of the process and lock until completion or a safe cancellation boundary. The UI displays structured progress and operation outcomes. Stable action kinds identify executable changes. The UI can change their display labels independently.
-
-The settings worker holds the complete ownership, revision, flock, fsync and rename transaction. Quit waits for the writer. Path completion debounces edits and limits the scan and cache.
-
-## Native tools and retained adapters
-
-| Responsibility | Native tool and project-specific check |
-| --- | --- |
-| Packages and applications | APT resolves dependencies. The pre-dpkg hook checks the confirmed closure and the Debian release. npm, pipx and Git use reviewed sources and per-run artifact identities. |
-| File publication and recovery | Ansible renders templates. The publication adapter retains displaced inodes and verifies hashes, mode, owner and conflicts during Restore. |
-| System login and boot | greetd, PAM, GRUB, cryptsetup and initramfs-tools own their respective operations. The adapters check account identity, mount layout, recovery menu and backups. |
-| Projects and displays | Git, Copier and Hyprland perform changes. The adapters constrain paths, protect local edits and restore the previous display layout after a timed preview. |
-| Administrative onboarding | Native su authenticates root. The packaged adapter checks the confirmed account, supplementary groups and policy, then uses ansible.builtin.command with the existing-account-only usermod append. Readback checks the account, groups and effective sudo access. |
-| Editor and shell | Neovim manages plugins, parsers and language tools. The editor proof checks headless operation before cleanup. Shell, Git and Codex adapters preserve settings outside the managed scope. |
-| Packaging | dpkg-deb builds the archive. The packaging recipe reads tracked blobs from the exact Git commit and records the source SHA. The project retains this path for reproducibility, lifecycle locks and the current provenance contract. debhelper, dh-python and pybuild are alternatives for the filesystem layout; a switch requires reproducing those properties on the builder. |
+The package contains shared desktop style data and independently distributable plugin wheels. Normal-user file recovery uses inode-checked publication and retained before-images. Only protected package resources participate in administrative transactions. [Debian packaging](debian.md)

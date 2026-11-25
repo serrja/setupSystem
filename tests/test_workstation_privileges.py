@@ -1,32 +1,24 @@
-"""Never publish user files or inspect a workstation profile as root."""
+"""Keep user publications and the protected Make adapter at the right privilege."""
 
-import io
-import json
+import asyncio
 import os
-import runpy
-import sys
-from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from setup_system import file_tasks
 from setup_system.infrastructure.managed_files import apply_files
+from setup_system_sdk import Mutation, Outcome, Plan
+from setup_system_sdk.native import NativeBackend
+from setup_system_sdk.native_play import run_native_play
 
-ROOT = Path(__file__).resolve().parents[1]
 
-
-def test_root_user_configuration_is_rejected_before_writes(tmp_path, monkeypatch):
+def test_root_configuration_rejected_before_resource_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     with pytest.raises(ValueError, match="root"):
         apply_files({})
-    facts = runpy.run_path(str(ROOT / "ansible/files/facts.py"))
-    monkeypatch.setattr(
-        sys, "stdin", io.StringIO(json.dumps({"section": "base", "intent": {}, "inspect": False}))
-    )
-    with pytest.raises(ValueError, match="ordinary account"):
-        facts["collect"]()
-    monkeypatch.setattr(os, "getuid", lambda: 0)
-    result = CliRunner().invoke(file_tasks.cli, ["backups"])
-    assert result.exit_code == 2 and "normal user" in result.stderr
+    backend = NativeBackend()
+    request = Mutation(action_id="configure", settings={}, inputs={}, plan=Plan(summary="fixture"))
+    assert asyncio.run(backend.apply_request("configure", request)).outcome == Outcome.BLOCKED
+    with pytest.raises(ValueError, match="normal-user"):
+        run_native_play("fixture", "configure.yml", {}, "sudo")
     assert not list(tmp_path.iterdir())

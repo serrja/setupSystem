@@ -1,9 +1,9 @@
-# Textual workflow
+# 🧩 Using the configurator
 
-Run `setup-system` as your desktop user. You can switch between **Base system** and **Working environment** while editing or while an operation runs. Inspect refreshes local facts and suggestions. Save writes the current section to its XDG configuration. Reload asks before discarding unsaved edits in that section.
+Start `setup-system` in a terminal as your desktop user. Select an existing local account if you need administrative access. Browsing, saving preferences and inspecting a plugin are available immediately.
 
-## ✅ Confirm and apply a selection
+Search the catalog, choose a category, then open a card. **Overview** shows the extension release, source and permissions. Activate its backend before using **Inspect program**. An already installed program retains its existing ownership.
 
-Preview shows which paths, packages and settings your selection would change. The Apply button and confirmation identify the section that produced the preview, including when you switch tabs. Enter the become password only when the confirmed operation needs system tasks. Editing a form while a run is active changes the next preview. An external edit to a saved configuration invalidates its pending confirmation.
+**Settings / Profiles** stores independent named preferences. **Accounts** appears for plugins that declare account actions. Choose a stable action in **Actions** and review **Run parameters** when the plugin declares flags or environment entries. Preview displays the exact changes and available recovery. Switch cards to work on another draft while an action runs.
 
-When you reopen the app, it shows the last recorded operation and its status. For a partial or unknown outcome, inspect the current state before preparing another plan. Cancellation stops at a safe boundary. Leave a running package transaction time to finish. Preview a recovery operation to see which managed files can be restored. [Configuration](configuration.md) and [recovery](recovery.md).
+An action may ask you to finish a step in the official client. Inspect the result before continuing after a reboot, lost connection or interrupted transaction. **Managed resources** shows verified ownership and available recovery. **History** filters the application journal to the selected plugin. Open **Help** for program-specific instructions or press F1 for the offline guides. [Configuration](configuration.md) · [Recovery](recovery.md)

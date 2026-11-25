@@ -62,49 +62,21 @@ def test_root_ui_is_rejected_before_opening(monkeypatch: pytest.MonkeyPatch) -> 
     assert error.value.code == 2
 
 
-def test_private_file_help_and_unknown_operation_do_not_open_requests(monkeypatch):
-    from typer.testing import CliRunner
-
-    from setup_system.file_tasks import cli
-
-    monkeypatch.delenv("SETUP_SYSTEM_REQUEST", raising=False)
-    runner = CliRunner()
-    assert runner.invoke(cli, ["--help"]).exit_code == 0
-    invalid = runner.invoke(cli, ["arbitrary-operation"])
-    assert invalid.exit_code == 2
-    assert invalid.stdout == ""
-
-
-def test_private_file_preview_emits_one_json_record(tmp_path, monkeypatch):
-    import json
-
-    from typer.testing import CliRunner
-
-    from setup_system.file_tasks import cli
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    request = tmp_path / "request.json"
-    request.write_text('{"schema":1,"settings":{},"expected":null}')
-    (tmp_path / "files").mkdir()
-    monkeypatch.setenv("SETUP_SYSTEM_REQUEST", str(request))
-    monkeypatch.setenv("SETUP_SYSTEM_RESULT", str(tmp_path / "result.json"))
-    result = CliRunner().invoke(cli, ["preview"])
-    assert result.exit_code == 0, result.exception
-    assert result.stdout.endswith("\n") and result.stdout.count("\n") == 1
-    assert json.loads(result.stdout) == {"changes": [], "before": {}, "after": {}}
-    assert result.stderr == ""
-
-
-@pytest.mark.parametrize("target", ["not-a-make-target", "admin-apply"])
-def test_project_helper_rejects_foreign_targets_before_reading_files(target, monkeypatch):
-    from typer.testing import CliRunner
-
-    from setup_system.project_tasks import cli
-
-    monkeypatch.delenv("SETUP_SYSTEM_REQUEST", raising=False)
-    result = CliRunner().invoke(cli, [target])
-    assert result.exit_code == 2 and not result.stdout
+@pytest.mark.parametrize(
+    "message",
+    [b"not-json", b'{"plugin_id":"not-present","method":"validate"}', b"x" * 524289],
+    ids=["malformed", "uninstalled", "oversized"],
+)
+def test_invalid_worker_messages_fail_closed_without_producing_output(tmp_path, message):
+    result = subprocess.run(
+        [sys.executable, "-I", "-m", "setup_system_sdk.worker"],
+        cwd=tmp_path,
+        input=message,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2 and result.stdout == result.stderr == b""
+    assert not list(tmp_path.iterdir())
 
 
 def test_wheel_version_and_short_help_are_read_only(monkeypatch):

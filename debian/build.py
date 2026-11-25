@@ -3,13 +3,17 @@
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import tomllib
 from email.parser import Parser
 from pathlib import Path
+from zipfile import ZipFile
 
 GIT_ENVIRONMENT = {
     "PATH": "/usr/bin:/bin",
@@ -20,7 +24,8 @@ GIT_ENVIRONMENT = {
     "GIT_NO_REPLACE_OBJECTS": "1",
 }
 
-RUNTIME_TREES = ("mk", "ansible", "config", "assets", "libexec", "src/setup_system")
+RUNTIME_TREES = ("mk", "config", "libexec", "profiles")
+PACKAGES = ("setup_system", "setup_system_sdk")
 
 
 def git(root: Path, *args: str) -> bytes:
@@ -31,6 +36,10 @@ def export_source(root: Path, sha: str, source_root: Path) -> None:
     """Read each payload and control file from the identified commit."""
     inputs = (
         *RUNTIME_TREES,
+        *(f"src/{name}" for name in PACKAGES),
+        "plugins",
+        "docker/plugin_artifacts.py",
+        "pyproject.toml",
         "Makefile",
         "ansible.cfg",
         "install.sh",
@@ -78,13 +87,62 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
     documentation = base / "usr/share/doc" / package_name
     control = base / "DEBIAN"
 
-    pairs = [(source_root / folder, runtime / folder) for folder in RUNTIME_TREES[:-1]]
-    pairs.append(
-        (source_root / "src/setup_system", base / "usr/lib/python3/dist-packages/setup_system")
+    distribution = base / "usr/lib/python3/dist-packages"
+    pairs = [(source_root / folder, runtime / folder) for folder in RUNTIME_TREES]
+    pairs.extend((source_root / "src" / name, distribution / name) for name in PACKAGES)
+    pairs.append((source_root / "src/setup_system_sdk", runtime / "sdk"))
+    project = tomllib.loads((source_root / "pyproject.toml").read_text())["project"]
+    public_version = project["version"] if version.startswith("0~local+") else version
+    info = distribution / f"setup_system-{public_version}.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(
+        f"Metadata-Version: 2.3\nName: setup-system\nVersion: {public_version}\n"
+        + f"Requires-Python: {project['requires-python']}\n"
+        + "".join(f"Requires-Dist: {dep}\n" for dep in project["dependencies"])
+        + "\n"
     )
+    catalog = runtime / "plugin_catalog"
+    subprocess.run(
+        [
+            sys.executable,
+            str(source_root / "docker/plugin_artifacts.py"),
+            "--source-root",
+            str(source_root),
+            "--output",
+            str(catalog),
+        ],
+        check=True,
+    )
+    for wheel in catalog.glob("*.whl"):
+        with ZipFile(wheel) as archive:
+            (manifest_path,) = [
+                name
+                for name in archive.namelist()
+                if re.fullmatch(r"[a-z][a-z0-9_]*/manifest\.json", name)
+            ]
+            manifest = json.loads(archive.read(manifest_path))
+            plugin_id = manifest["id"]
+            module = manifest_path.partition("/")[0]
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", plugin_id):
+                raise ValueError("Invalid protected plugin identity")
+            for entry in archive.infolist():
+                path = Path(entry.filename)
+                if entry.is_dir() or not path.parts or path.parts[0] != module:
+                    continue
+                if ".." in path.parts or path.is_absolute():
+                    raise ValueError("Invalid protected resource path")
+                target = runtime / "plugins" / plugin_id / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(entry))
+                target.chmod(0o755 if (entry.external_attr >> 16) & 0o111 else 0o644)
+        wheel.chmod(0o644)
+    for document in catalog.glob("*.json"):
+        document.chmod(0o644)
     for source, dest in pairs:
         for path in sorted(source.rglob("*")):
             if path.is_file():
+                if dest == runtime / "sdk" and path.suffix not in {".yml", ".mk"}:
+                    continue
                 copy_file(path, dest / path.relative_to(source))
     copy_file(source_root / "Makefile", runtime / "Makefile")
     copy_file(source_root / "install.sh", runtime / "install.sh", 0o755)
@@ -122,6 +180,7 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
         for path in files:
             digest = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
             checksums.write(f"{digest}  {path.relative_to(base)}\n")
+    (info / "METADATA").chmod(0o644)
     for name in ("control", "md5sums"):
         (control / name).chmod(0o644)
     for directory in (base, *base.rglob("*")):
@@ -130,20 +189,12 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
     return f"{package_name}_{version}_all.deb"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--version")
-    options = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
-    sha = git(root, "rev-parse", "HEAD").decode().strip()
-    version = options.version or f"0~local+g{sha[:12]}"
-    if options.version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        parser.error("expected a stable Debian release version such as 1.2.3")
+def build(root: Path, output: Path, sha: str, version: str) -> Path:
+    """Publish one archive from the supplied committed identity."""
     environment = dict(
         os.environ, SOURCE_DATE_EPOCH=git(root, "show", "-s", "--format=%ct", sha).decode().strip()
     )
-    out = options.output.resolve()
+    out = output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         source = Path(temp) / "source"
@@ -157,7 +208,20 @@ def main() -> None:
             check=True,
         )
         artifact.replace(out / package)
-        print(out / package)
+        return out / package
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--version")
+    options = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    sha = git(root, "rev-parse", "HEAD").decode().strip()
+    version = options.version or f"0~local+g{sha[:12]}"
+    if options.version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        parser.error("expected a stable Debian release version such as 1.2.3")
+    print(build(root, options.output, sha, version))
 
 
 if __name__ == "__main__":

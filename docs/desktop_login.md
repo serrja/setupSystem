@@ -1,24 +1,15 @@
 # Graphical login
 
-In **Base system**, select **Hyprland, sound, portals and desktop dependencies** and **Graphical login**. Review the login and boot changes before confirming. The plan includes the user session launcher and, when required, greetd, gtkgreet and Cage. The greeter runs as the dedicated `_greetd` account. PAM authenticates the desktop user. A system-owned bridge starts Hyprland with that user's HOME and XDG directories.
+Open **Hyprland** to prepare the ordinary user's session launcher. Install the Debian dependencies on the **Greeter** page. The **Activate graphical login** action reviews the selected login and proposed systemd changes. Greetd runs the GTK greeter under the dedicated `_greetd` account. PAM authenticates the selected user and a system-owned launcher checks the UID, HOME and XDG directories.
 
-## 🖥️ Enable graphical login on the next boot
+## 🔐 Activate the login manager
 
-Apply checks the same account, launcher, display-manager state, default target and GRUB inputs captured during planning. It backs up managed files before writing them and validates the generated GRUB configuration. The managed drop-in keeps a visible five-second boot menu and a ten-second recovery timeout after a failed boot. Enabling graphical login sets the default for subsequent boots. The current session stays open. An encrypted HOME must already be accessible for user configuration. [Graphical disk unlock](graphical_unlock.md)
+Review the files, existing display manager and current default target. The executor revalidates the account, backs up managed files, enables `greetd.service` and selects `graphical.target` for a future boot. A different display manager or a conflicting local file blocks activation. Session registration requires access to the selected user's HOME. The current desktop stays open.
 
-## Session lock
+Hyprlock authenticates the owner of an existing session. Its password field and the GTK greeter share colors, fonts and geometry. Graphical disk unlock uses Plymouth during initramfs. [Desktop appearance](theme.md) · [Graphical disk unlock](graphical_unlock.md)
 
-The greeter accepts the local account for a new login. The system-owned session launcher checks which account is starting Hyprland. Inside an existing session Hyprlock shows its current owner and authenticates the unlock through the native PAM stack. Both native views use the same Mocha Green background, font, card, input dimensions, spacing and color roles. The login error label carries the shared error border. gtkgreet also sets its own red message text. Hyprlock uses the shared error color on the input field. Workspace theme changes affect personal files. Updating the system greeter requires a confirmed Base change. [gtkgreet styling](https://manpages.debian.org/trixie/gtkgreet/gtkgreet.1.en.html) · [Hyprlock configuration](https://wiki.hypr.land/hypr-ecosystem/user/hyprlock/)
+## ⚙️ Recovery and acceptance
 
-## Recovery and verification
+Use a local text console if the graphical login fails. Review the active display-manager alias, default systemd target, journal and root-owned recovery records under `/var/lib/setup-system`. Retain checked backups when local edits conflict with restoration. Verify a real login, expired credentials, locking, fallback TTY and a second ordinary account only on the authorized disposable target. [Acceptance and evidence](testing.md)
 
-If the greeter fails, switch to a text console with Ctrl+Alt+F3. These commands show the service state and messages from the current boot.
-
-```sh
-systemctl status greetd
-journalctl -b -u greetd
-```
-
-The login journal at `/var/lib/setup-system/desktop-backups/operation.json` records previous state and managed paths. Check the journal and its backups before restoring files or changing the default target. [Recovery](recovery.md)
-
-On an approved disposable target, test failed and successful authentication, the normal-user compositor, text-console access and the site's existing remote access. Keep a working console or rescue entry until those checks pass.
+Open the extension’s **Help** tab for offline instructions. [Greeter Help](../plugins/desktop/greeter/src/setup_plugin_greeter/help.md) · [Hyprlock Help](../plugins/desktop/hyprlock/src/setup_plugin_hyprlock/help.md)

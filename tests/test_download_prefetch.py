@@ -3,23 +3,20 @@
 import hashlib
 import json
 import os
-import runpy
-import tomllib
 from pathlib import Path
 
 import pytest
-
-from setup_system.application.templates import load_templates
-from setup_system.infrastructure import copier_templates
+from setup_plugin_projects import FOLDER, copier_templates
+from setup_plugin_projects.templates import load_templates
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_font_packages_are_selected_with_the_desktop_without_an_archive_download():
-    catalog = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
-    packages = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))["package_names"]
-    selection = packages(json.dumps({"hyprland": True}), json.dumps(catalog), "{}")
-    assert {"fontconfig", "fonts-jetbrains-mono", "fonts-noto-color-emoji"} <= set(selection)
+    root = ROOT / "plugins/desktop/hyprland/src/setup_plugin_hyprland"
+    catalog = json.loads((root / "apt.json").read_text())
+    assert {"fontconfig", "fonts-jetbrains-mono", "fonts-noto-color-emoji"} <= set(catalog["names"])
+    assert "release" not in catalog
 
 
 @pytest.mark.parametrize(
@@ -35,7 +32,7 @@ def test_font_packages_are_selected_with_the_desktop_without_an_archive_download
     ],
 )
 def test_invalid_cache_metadata_is_preserved_without_network(tmp_path, monkeypatch, problem):
-    source = load_templates(ROOT)["python"]
+    source = load_templates(FOLDER)["python"]
     root = tmp_path / "cache"
     raw = b"unmanaged metadata"
     entry = root / source.metadata.alias / hashlib.sha256(b"expected").hexdigest()

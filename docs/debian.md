@@ -6,10 +6,7 @@ Open a terminal as your desktop user. If the Debian package is installed, run th
 setup-system
 ```
 
-Choose **Base system** for Debian, Hyprland, graphical login and regional settings. Choose **Working environment** for the theme, applications, editor and projects. **Inspect** reads the current machine. Review a plan and confirm **Apply** when you want to change it. Press **F1** for the installed guides or run `man setup-system` in a terminal. [Using the configurator](textual_workflow.md) · [Settings](configuration.md) · [Recovery](recovery.md)
-
-
-APT installs the Python settings loader and other declared runtime dependencies with the application. Launching it from another directory reads the same packaged resources and the invoking user’s stage preferences. Package updates preserve those preferences and their retained backups. [Settings and storage](configuration.md)
+Search for a plugin, activate its backend, then preview the program action you want. APT owns the configurator, bundled wheels, protected resources and offline documentation. Program settings and file recovery records are stored under the invoking user's XDG directories. Open the guides with F1 or `man setup-system`. [Using the configurator](textual_workflow.md) · [Settings](configuration.md) · [Recovery](recovery.md)
 
 ## 📦 Install on Debian
 

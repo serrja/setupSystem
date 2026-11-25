@@ -4,8 +4,9 @@ import hashlib
 import os
 
 import pytest
+from setup_plugin_firefox import policy as firefox_policy
 
-from setup_system.infrastructure import firefox_policy, system_publication
+from setup_system.infrastructure import system_publication
 from setup_system.infrastructure.system_publication import observe_file, publish_file, save_backup
 
 
@@ -32,13 +33,14 @@ def test_edit_after_backup_survives_target_publication(tmp_path, monkeypatch, ki
                 path, b'keyboard = "us,ru"\n', observed, mode=observed.mode, parent_mode=0o755
             )
     else:
-        firefox_policy.apply(firefox_policy.inspect(path), backups=backups)
+        settings = firefox_policy.Settings(install_ublock=True)
+        firefox_policy.publish(firefox_policy.inspect(path, settings), settings, backups=backups)
         initial = path.read_bytes().replace(b"/uBlock0@raymondhill.net/", b"/ublock-origin/")
         path.write_bytes(initial)
-        plan = firefox_policy.inspect(path)
+        plan = firefox_policy.inspect(path, settings)
 
         def apply():
-            firefox_policy.apply(plan, backups=backups)
+            firefox_policy.publish(plan, settings, backups=backups)
 
     saved = backups / (hashlib.sha256(initial).hexdigest() + path.suffix)
     move = system_publication.move_new

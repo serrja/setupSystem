@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import os
 import subprocess
@@ -12,90 +13,132 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from setup_system.extensions import Release, wheel_manifest
 from setup_system.layout import GUIDES, INSTALLED, PACKAGE, PYTHON_PACKAGE
 
 
 def verify_resources(root: Path, wheel: Path, sdist: Path, deb: Path) -> None:
     """Check that every distribution carries the source resources at its runtime paths."""
-    expected: dict[str, bytes] = {}
-    folders = ("assets", "config", "mk", "libexec", "ansible", "docs")
-    for name in ("Makefile", "ansible.cfg", "install.sh"):
-        expected[name] = (root / name).read_bytes()
-    for directory in folders:
-        for file in (root / directory).rglob("*"):
-            if file.is_file() and "__pycache__" not in file.parts and file.suffix != ".pyc":
-                assert not file.is_symlink(), file
-                expected[file.relative_to(root).as_posix()] = file.read_bytes()
+    files = [
+        Path(os.fsdecode(p))
+        for p in subprocess.check_output(["git", "ls-files", "-z"], cwd=root).split(b"\0")
+        if p
+    ]
+    shared = {"config", "docs", "libexec", "mk", "profiles"}
+    expected = {
+        p.as_posix(): (root / p).read_bytes()
+        for p in files
+        if p.parts[0] in shared or p.as_posix() in {"Makefile", "ansible.cfg", "install.sh"}
+    }
     modules = {
-        path.relative_to(root / "src").as_posix(): path.read_bytes()
-        for path in (root / "src/setup_system").rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        p.relative_to("src").as_posix(): (root / p).read_bytes()
+        for p in files
+        if p.parts[:2] in {("src", "setup_system"), ("src", "setup_system_sdk")}
     }
-    contents = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", deb], timeout=60)
-    packaged = {
-        (GUIDES.parent if path.startswith("docs/") else INSTALLED) / path: data
-        for path, data in expected.items()
+    plugin_source = {
+        p.as_posix(): (root / p).read_bytes() for p in files if p.parts[0] == "plugins"
     }
-    packaged.update({PYTHON_PACKAGE.parent / path: data for path, data in modules.items()})
-    with tarfile.open(fileobj=io.BytesIO(contents)) as archive:
-        found = set()
+    with zipfile.ZipFile(wheel) as dist:
+        members = {name: dist.read(name) for name in dist.namelist() if not name.endswith("/")}
+    prefix = "setup_system/bundle/"
+    catalog = {
+        p.removeprefix(prefix + "plugin_catalog/"): b
+        for p, b in members.items()
+        if p.startswith(prefix + "plugin_catalog/")
+    }
+    projects = list((root / "plugins").glob("*/*/pyproject.toml"))
+    if not projects or len(catalog) != 2 * len(projects):
+        raise ValueError("Unexpected number of plugin release files")
+    plugin_assets: dict[str, bytes] = {}
+    for project in projects:
+        identity = project.parent.name
+        selected = Release(catalog[identity + ".json"]).selected()
+        (primary,) = selected.wheels
+        payload = catalog[primary.name]
+        if (
+            hashlib.sha256(payload).hexdigest() != primary.sha256
+            or wheel_manifest(primary.name, payload) != selected.manifest
+            or selected.manifest.id != identity
+        ):
+            raise ValueError("Built plugin release differs from its wheel")
+        module = selected.manifest.entry_point.partition(":")[0]
+        relative = next(
+            (d / module).relative_to(root)
+            for d in (project.parent / "src", project.parent)
+            if (d / module / "manifest.json").is_file()
+        )
+        sources = {
+            p.relative_to(relative).as_posix(): plugin_source[p.as_posix()]
+            for p in files
+            if p.is_relative_to(relative)
+        }
+        with zipfile.ZipFile(io.BytesIO(payload)) as plugin:
+            actual = {
+                p.removeprefix(module + "/"): plugin.read(p)
+                for p in plugin.namelist()
+                if p.startswith(module + "/") and not p.endswith("/")
+            }
+        if actual != sources:
+            raise ValueError("Plugin distribution differs from committed resources: " + identity)
+        plugin_assets.update({f"plugins/{identity}/{module}/{p}": b for p, b in actual.items()})
+    bundled = expected | {"plugin_catalog/" + k: v for k, v in catalog.items()}
+    if {p.removeprefix(prefix): b for p, b in members.items() if p.startswith(prefix)} != bundled:
+        raise ValueError("Wheel runtime resources disagree with committed product inputs")
+    if {
+        p: b
+        for p, b in members.items()
+        if p.startswith(("setup_system/", "setup_system_sdk/")) and not p.startswith(prefix)
+    } != modules:
+        raise ValueError("Wheel modules differ from source")
+    with tarfile.open(sdist, "r:gz") as source:
+        base = sdist.name.removesuffix(".tar.gz") + "/"
+        for name, blob in (
+            bundled | plugin_source | {"src/" + p: b for p, b in modules.items()}
+        ).items():
+            item = source.extractfile(base + name)
+            if item is None or item.read() != blob:
+                raise ValueError("Source distribution payload differs: " + name)
+    deb_data = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", deb], timeout=90)
+    package = {
+        (GUIDES.parent if p.startswith("docs/") else INSTALLED) / p: b
+        for p, b in (bundled | plugin_assets).items()
+    }
+    package.update({PYTHON_PACKAGE.parent / p: b for p, b in modules.items()})
+    package.update(
+        {
+            INSTALLED / "sdk" / p.removeprefix("setup_system_sdk/"): b
+            for p, b in modules.items()
+            if p.startswith("setup_system_sdk/") and p.endswith((".mk", ".yml"))
+        }
+    )
+    with tarfile.open(fileobj=io.BytesIO(deb_data)) as archive:
+        actual_files = {}
         for entry in archive:
-            debian_path = Path("/") / entry.name
+            member_path = Path("/") / entry.name
             if entry.isdir() or not any(
-                debian_path.is_relative_to(location)
-                for location in (INSTALLED, PYTHON_PACKAGE, GUIDES)
+                member_path.is_relative_to(location)
+                for location in (
+                    INSTALLED,
+                    GUIDES,
+                    PYTHON_PACKAGE,
+                    PYTHON_PACKAGE.parent / "setup_system_sdk",
+                )
             ):
                 continue
-            if not entry.isfile() or debian_path not in packaged or debian_path in found:
-                raise ValueError(f"Unexpected Debian payload member: {debian_path}")
-            member = archive.extractfile(entry)
-            if member is None or member.read() != packaged[debian_path]:
-                raise ValueError(f"Debian payload differs from source: {debian_path}")
-            found.add(debian_path)
-        if missing := packaged.keys() - found:
-            raise ValueError(f"Debian payload is incomplete: {sorted(missing)}")
-
-    prefixes = tuple(directory + "/" for directory in folders)
-    with tarfile.open(sdist, "r:gz") as source, zipfile.ZipFile(wheel) as dist:
-        prefix = sdist.name.removesuffix(".tar.gz") + "/"
-        native = {
-            member.name.removeprefix(prefix) for member in source.getmembers() if member.isfile()
-        }
-        wheel_members = {
-            name.removeprefix("setup_system/bundle/")
-            for name in dist.namelist()
-            if name.startswith("setup_system/bundle/") and not name.endswith("/")
-        }
-        source_members = {name for name in native if name.startswith(prefixes) or name in expected}
-        if source_members != expected.keys() or wheel_members != expected.keys():
-            raise ValueError(
-                f"Source/resource mismatch: sdist={source_members ^ expected.keys()}, "
-                f"wheel={wheel_members ^ expected.keys()}"
-            )
-        wheel_modules = {
-            name
-            for name in dist.namelist()
-            if name.startswith("setup_system/")
-            and not name.startswith("setup_system/bundle/")
-            and not name.endswith("/")
-        }
-        source_modules = {
-            name.removeprefix("src/") for name in native if name.startswith("src/setup_system/")
-        }
-        if source_modules != modules.keys() or wheel_modules != modules.keys():
-            raise ValueError("Distributions contain unexpected Python package members")
-        for path, data in modules.items():
-            module = source.extractfile(prefix + "src/" + path)
-            if module is None or module.read() != data or dist.read(path) != data:
-                raise ValueError("Distributions contain different Python modules: " + path)
-        for path, data in expected.items():
-            member = source.extractfile(prefix + path)
             if (
-                member is None
-                or member.read() != data
-                or dist.read("setup_system/bundle/" + path) != data
+                not entry.isfile()
+                or member_path in actual_files
+                or entry.mode & 0o022
+                or entry.uid
+                or entry.gid
             ):
-                raise ValueError("Distributions contain different runtime bytes: " + path)
+                raise ValueError("Invalid Debian resource: " + str(member_path))
+            item = archive.extractfile(entry)
+            if item is None:
+                raise ValueError("Missing Debian member")
+            actual_files[member_path] = item.read()
+        if actual_files != package:
+            raise ValueError("Debian resources disagree with source or plugin wheels")
 
 
 def verify(artifacts: Path, debian_dir: Path) -> None:
@@ -160,18 +203,54 @@ def verify(artifacts: Path, debian_dir: Path) -> None:
             subprocess.run(command, cwd=root, env=environment, timeout=300, check=True)
         environment["PATH"] = str(executable.parent) + os.pathsep + environment["PATH"]
         (stage / "pyproject.toml").write_bytes((root / "pyproject.toml").read_bytes())
+        smoke = [
+            str(executable),
+            "-I",
+            "-B",
+            str(root / "docker/verify-installed.py"),
+            "--wheel",
+            str(wheels[0]),
+        ]
+        subprocess.run(smoke, cwd=stage, env=environment, timeout=120, check=True)
         subprocess.run(
             [
+                "uv",
+                "pip",
+                "install",
+                "--reinstall",
+                "--no-deps",
+                "--no-index",
+                "--python",
                 str(executable),
-                "-I",
-                "-B",
-                str(root / "docker/verify-installed.py"),
-                "--wheel",
                 str(wheels[0]),
             ],
             cwd=stage,
             env=environment,
-            timeout=120,
+            timeout=60,
+            check=True,
+        )
+        subprocess.run(smoke, cwd=stage, env=environment, timeout=120, check=True)
+        subprocess.run(
+            ["uv", "pip", "uninstall", "--python", str(executable), PACKAGE],
+            cwd=stage,
+            env=environment,
+            timeout=60,
+            check=True,
+        )
+        if os.path.lexists(executable.parent / "setup-system"):
+            raise ValueError("The removed wheel still exposes its public command")
+        subprocess.run(
+            [
+                str(executable),
+                "-I",
+                "-c",
+                "from importlib.util import find_spec; import sys; "
+                "names = ('setup_system', 'setup_system_sdk'); "
+                "sys.exit(any(find_spec(name) is not None for name in names))",
+            ],
+            cwd=stage,
+            env=environment,
+            timeout=15,
             check=True,
         )
 

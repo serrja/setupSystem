@@ -9,9 +9,6 @@ from typing import Any
 from pydantic import BaseModel
 
 from setup_system.configuration import APPLICATION_ENV_PREFIX, ApplicationOptions
-from setup_system.domain.auth_screen import DesktopStyle
-from setup_system.domain.displays import MonitorLayout
-from setup_system.domain.intentions import BaseOptions, Theme, WorkspaceOptions
 
 
 def type_text(field: dict[str, Any], definitions: dict[str, Any]) -> str:
@@ -62,92 +59,17 @@ def reference(root: Path) -> str:
     app = ApplicationOptions.model_validate(
         tomllib.loads((config / "application.toml").read_text())
     )
-    desktop = DesktopStyle.model_validate(
-        tomllib.loads((config / "shared/desktop.toml").read_text())
-    )
-    sections: list[tuple[str, str, type[BaseModel], dict[str, Any], str]] = [
-        (
-            "Application environment",
-            "The normal-user launcher accepts the following environment variables. They "
-            "override the numeric values in the packaged application.toml. Textual uses the "
-            "suggestion settings and its Make runner uses the timeouts.",
-            ApplicationOptions,
-            app.model_dump(),
-            APPLICATION_ENV_PREFIX,
-        ),
-        (
-            "Base system",
-            "The Base form, Preview and installed system play validate BaseOptions. The "
-            "model defines the initial state. An explicitly selected packaged profile, "
-            "saved base.toml and confirmed form values take increasing precedence.",
-            BaseOptions,
-            BaseOptions.model_validate({}).model_dump(),
-            "",
-        ),
-        (
-            "Working environment",
-            "The Workspace form and its plays validate WorkspaceOptions. The profile, saved "
-            "workspace.toml and confirmed values follow the same precedence. Cleanup "
-            "requires a separate preview.",
-            WorkspaceOptions,
-            WorkspaceOptions.model_validate({}).model_dump(),
-            "",
-        ),
-        (
-            "Workspace theme",
-            "The theme table in workspace.toml supplies the desktop renderers and uses "
-            "these model defaults for missing fields.",
-            Theme,
-            Theme().model_dump(),
-            "",
-        ),
-        (
-            "Monitor layout",
-            "Each entry in workspace.toml monitors identifies a connected output and its "
-            "advertised mode. The compositor supplies the observation used to validate "
-            "Preview and Apply.",
-            MonitorLayout,
-            {
-                key: field.default
-                for key, field in MonitorLayout.model_fields.items()
-                if not field.is_required()
-            },
-            "",
-        ),
-        (
-            "Packaged desktop style",
-            "The packaged shared/desktop.toml supplies Waybar and native renderers. The "
-            "installed package owns these values.",
-            DesktopStyle,
-            desktop.model_dump(),
-            "",
-        ),
-        (
-            "Packaged desktop fonts",
-            "Foot, Mako, Waybar and fontconfig consume the fonts table.",
-            type(desktop.fonts),
-            desktop.fonts.model_dump(),
-            "",
-        ),
-        (
-            "Packaged authentication style",
-            "The greetd greeter and hyprlock consume the auth_screen table with color roles "
-            "from shared/palette.toml.",
-            type(desktop.auth_screen),
-            desktop.auth_screen.model_dump(),
-            "",
-        ),
-    ]
     lines = [
-        "# Settings reference",
+        "# ⚙️ Settings reference",
         "",
-        "Generated from the package resources and validation models. Run the reference "
-        "check after changing a field. [Configuration](configuration.md) · "
-        "[Development](development.md)",
+        "The launcher reads packaged settings and explicit environment overrides.",
+        "Each plugin ships a generated `settings_reference.md` beside its manifest and Help.",
+        "",
+        *table(ApplicationOptions, app.model_dump(), APPLICATION_ENV_PREFIX),
+        "",
+        "See [Configuration](configuration.md) for profile storage and precedence.",
         "",
     ]
-    for title, description, model, defaults, prefix in sections:
-        lines.extend([f"## {title}", "", description, "", *table(model, defaults, prefix), ""])
     return "\n".join(lines)
 
 

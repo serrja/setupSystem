@@ -1,27 +1,36 @@
 .TH SETUP-SYSTEM 1
 .SH NAME
-setup-system \- configure a Debian workstation
+setup-system \- manage Debian workstation applications and settings
 .SH SYNOPSIS
 .B setup-system
+.RB [ \-\-help | \-\-version ]
 .SH DESCRIPTION
-Run the Textual interface in an interactive terminal as the desktop user.
-Choose Base system or Working environment, preview the selected changes, and
-confirm an individual operation. Saving preferences is independent of Apply.
-Press F1 for installed documentation and Ctrl-Q to leave at a safe boundary.
+Open the Textual interface as the desktop user. Browse the extension catalog,
+select a program and review the actions and permissions on its page.
+Activating an extension prepares its worker. Choose Install to preview a program
+installation. Save profiles independently, preview an individual action, then
+confirm its resource changes before Apply.
+.PP
+Full cleanup previews the exact resources and code recorded for this program.
+Review conflicts and preserved user data on the plugin page.
 .SH FILES
 .TP
-.I ~/.config/setup-system/base.toml
-Base selections. XDG_CONFIG_HOME overrides the configuration directory.
+.I ~/.config/setup-system/plugins/
+Saved plugin profiles. XDG_CONFIG_HOME selects another configuration root.
 .TP
-.I ~/.config/setup-system/workspace.toml
-Workspace selections.
+.I ~/.local/share/setup-system/extensions/
+Separate worker environments. XDG_DATA_HOME selects another data root.
+.TP
+.I ~/.local/state/setup-system/
+Resource ledger and per-operation history. XDG_STATE_HOME selects another state root.
 .TP
 .I /usr/share/doc/setup-system/docs/
 Offline administration, configuration and recovery guides.
 .SH ENVIRONMENT
-The normal-user interface accepts numeric SETUP_SYSTEM_ preferences for path
-completion and runner timeouts. See the installed settings_map.md reference
-for accepted names, units, defaults and limits.
+The normal-user interface accepts declared SETUP_SYSTEM_ preferences for path
+completion and worker timeouts. The installed settings_map.md reference gives
+their names, units, defaults and limits. Plugin settings belong to the selected
+program's Settings and Help tabs.
 .SH SEE ALSO
 .BR apt (8),
 .BR su (1),
