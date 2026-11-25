@@ -12,6 +12,7 @@ from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 
 from setup_system.domain.intentions import CleanupMode, WorkspaceOptions
+from setup_system.infrastructure.processes import run_command
 from setup_system.models import CleanupOptions
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,9 +23,16 @@ def review(monkeypatch, selected, closure, records, mode="remove"):
 
     def inventory(argv, **kwargs):
         assert argv[0:2] == ["/usr/bin/dpkg-query", "-W"]
-        return SimpleNamespace(stdout="\n".join(records))
+        assert argv[argv.index("--") + 1 :] == sorted(selected)
+        missing = set(selected) - {row.split("|")[0] for row in records}
+        return subprocess.CompletedProcess(
+            argv,
+            int(bool(missing)),
+            "\n".join(records),
+            "\n".join(f"dpkg-query: no packages found matching {name}" for name in missing),
+        )
 
-    monkeypatch.setattr(module["subprocess"], "run", inventory)
+    monkeypatch.setitem(module["check"].__globals__, "run_command", inventory)
     module["check"]({"selected": selected, "closure": closure, "mode": mode})
 
 
@@ -41,7 +49,10 @@ def test_critical_package_cannot_be_selected(monkeypatch, name):
 def test_dpkg_protection_overrides_catalog(monkeypatch, protected):
     with pytest.raises(ValueError, match=r"held|protected"):
         review(
-            monkeypatch, ["reportbug"], ["Remv reportbug [1]"], ["reportbug|installed|" + protected]
+            monkeypatch,
+            ["reportbug"],
+            ["Remv reportbug [1]"],
+            ["reportbug|all|installed|" + protected],
         )
 
 
@@ -51,7 +62,7 @@ def test_extra_dependency_is_rejected_even_if_reviewed(monkeypatch):
             monkeypatch,
             ["reportbug"],
             ["Remv reportbug [1]", "Remv nano [1]"],
-            ["reportbug|installed|install|no|no"],
+            ["reportbug|all|installed|install|no|no"],
         )
 
 
@@ -63,7 +74,7 @@ def test_exact_native_closure_is_accepted(monkeypatch, mode, action):
         monkeypatch,
         ["reportbug"],
         [f"{action} reportbug [1]"],
-        ["reportbug|installed|install|no|no"],
+        ["reportbug|all|installed|install|no|no"],
         mode,
     )
 
@@ -72,6 +83,28 @@ def test_absent_candidate_only_accepts_empty_plan(monkeypatch):
     review(monkeypatch, ["reportbug"], [], [])
     with pytest.raises(ValueError, match="outside"):
         review(monkeypatch, ["reportbug"], ["Remv reportbug [1]"], [])
+
+
+@pytest.mark.parametrize(
+    ("status", "records", "diagnostic", "error"),
+    [
+        (0, "", "", "Incomplete"),
+        (1, "", "dpkg-query: failed to read status", "Cannot verify"),
+        (0, "reportbug|riscv64|installed|install|no|no", "", "architecture"),
+        (0, "unselected|all|installed|install|no|no", "", "Unexpected package"),
+    ],
+)
+def test_unverified_removal_inventory_stops_before_approval(
+    monkeypatch, status, records, diagnostic, error
+):
+    inventory = runpy.run_path(str(ROOT / "ansible/files/removals.py"))["installed_candidates"]
+    monkeypatch.setitem(
+        inventory.__globals__,
+        "run_command",
+        lambda argv, **options: subprocess.CompletedProcess(argv, status, records, diagnostic),
+    )
+    with pytest.raises(ValueError, match=error):
+        inventory({"reportbug"}, "amd64", CleanupMode.REMOVE)
 
 
 def task(name, match):
@@ -120,7 +153,8 @@ def test_preview_uses_dpkg_and_simulation_without_mutation(tmp_path, monkeypatch
     status = tmp_path / "status"
     status.write_text(
         "Package: reportbug\nStatus: install ok installed\nArchitecture: all\n"
-        "Version: 1.0\nDescription: Synthetic removal preview\n\n"
+        "Version: 1.0\nMaintainer: Test <test@example.invalid>\n"
+        "Description: Synthetic removal preview\n\n"
     )
     before = status.read_bytes()
     base, *args = simulate_args("remove")
@@ -155,10 +189,10 @@ def test_preview_uses_dpkg_and_simulation_without_mutation(tmp_path, monkeypatch
 
     def observe(argv, **options):
         assert argv[:2] == ["/usr/bin/dpkg-query", "-W"]
-        return subprocess.run([argv[0], "--admindir=" + str(tmp_path), *argv[1:]], **options)
+        return run_command([argv[0], "--admindir=" + str(tmp_path), *argv[1:]], **options)
 
-    monkeypatch.setitem(check.__globals__, "subprocess", SimpleNamespace(run=observe))
-    check({"mode": "remove", "selected": ["reportbug"], "closure": closure})
+    monkeypatch.setitem(check.__globals__, "run_command", observe)
+    check({"mode": "remove", "selected": ["reportbug", "doc-debian"], "closure": closure})
     assert json.loads(capsys.readouterr().out) == ["reportbug"]
     assert status.read_bytes() == before
 
@@ -170,7 +204,7 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
     monkeypatch, capsys, mode, step
 ):
     line = ("Purg" if mode == "purge" else "Remv") + " reportbug [1]"
-    review(monkeypatch, ["reportbug"], [line], ["reportbug|installed|install|no|no"], mode)
+    review(monkeypatch, ["reportbug"], [line], ["reportbug|all|installed|install|no|no"], mode)
     approved = capsys.readouterr().out
     remove = task("apply", "Remove exactly the approved packages")
     argv = render(
@@ -184,7 +218,7 @@ def test_apply_removes_exact_confirmed_set_without_another_resolver(
             monkeypatch,
             ["reportbug"],
             [line, line.replace("reportbug", "nano")],
-            ["reportbug|installed|install|no|no"],
+            ["reportbug|all|installed|install|no|no"],
             mode,
         )
     assert capsys.readouterr().out == ""
@@ -213,22 +247,20 @@ def editor_fixture(tmp_path, monkeypatch, selected, fallback_owner, metadata):
 
     def run(argv, **options):
         if argv[:2] == ["/usr/bin/dpkg-query", "-W"]:
-            return SimpleNamespace(stdout=f"{selected}|installed|install|no|no\n")
+            return subprocess.CompletedProcess(
+                argv, 0, f"{selected}|all|installed|install|no|no\n", ""
+            )
+        if argv[:2] == ["/usr/bin/dpkg-query", "-S"]:
+            return subprocess.CompletedProcess(argv, 0, f"{fallback_owner}:amd64: {argv[-1]}\n", "")
         if argv[0] == "/usr/bin/grep":
             assert argv[-1] == str(editor)
-            return subprocess.run(argv, **options)
+            return run_command(argv, **options)
         assert argv == ["/usr/bin/nvim", "--clean", "--headless", "-n", "-i", "NONE", "+q"]
         return SimpleNamespace(returncode=0)
 
-    def which_package(argv, **options):
-        assert argv[:2] == ["/usr/bin/dpkg-query", "-S"]
-        return f"{fallback_owner}:amd64: {argv[-1]}\n"
-
     monkeypatch.setitem(check.__globals__, "__file__", str(root / "ansible/files/removals.py"))
     monkeypatch.setitem(check.__globals__, "Path", fixture_path)
-    monkeypatch.setitem(
-        check.__globals__, "subprocess", SimpleNamespace(run=run, check_output=which_package)
-    )
+    monkeypatch.setitem(check.__globals__, "run_command", run)
     monkeypatch.setitem(
         check.__globals__,
         "pwd",
@@ -279,4 +311,4 @@ def test_catalog_controls_editor_requirement(tmp_path, monkeypatch, required):
 )
 def test_changed_mode_architecture_or_repeated_removal_is_rejected(monkeypatch, mode, closure):
     with pytest.raises(ValueError, match="removal"):
-        review(monkeypatch, ["reportbug"], closure, ["reportbug|installed|install|no|no"], mode)
+        review(monkeypatch, ["reportbug"], closure, ["reportbug|all|installed|install|no|no"], mode)

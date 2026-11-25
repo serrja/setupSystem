@@ -29,7 +29,9 @@ def open_app(
     """Open the Textual workstation configurator."""
     if show_version:
         if resource_root() == INSTALLED:
-            subprocess.run(["/usr/bin/dpkg-query", "-W", r"-f=${Version}\n", PACKAGE], check=True)
+            subprocess.run(
+                ["/usr/bin/dpkg-query", "-W", r"-f=${Version}\n", PACKAGE], check=True, timeout=10
+            )
         else:
             typer.echo(version(PACKAGE))
         return

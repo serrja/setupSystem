@@ -192,28 +192,41 @@ async def _plain(
             report(Phase.WAITING)
             return await finished
 
+    stopping: asyncio.Task[None] | None = None
+
+    def stop_reader_group() -> asyncio.Task[None]:
+        nonlocal stopping
+        if stopping is None:
+            stopping = asyncio.create_task(
+                _stop_group(process.pid, finished, options.termination_grace_seconds)
+            )
+        return stopping
+
     async def request_stop() -> None:
         report(Phase.CANCELLING)
         if read_only:
-            await _stop_group(process.pid, finished, options.termination_grace_seconds)
+            # Keep reading while the group exits, including when its deadline expires.
+            stop_reader_group()
         else:
             await asyncio.to_thread(_cancel_at_boundary, env)
 
     try:
-        code = await _supervise(observe(), cancel, request_stop)
+        try:
+            code = await _supervise(observe(), cancel, request_stop)
+        except ReadinessTimeoutError:
+            if read_only and cancel.is_set():
+                return 130
+            raise
         return 130 if read_only and cancel.is_set() else code
     finally:
-        if process.stdout is not None and not finished.done():
-            # A paused full pipe prevents Process.wait() from finishing even after SIGKILL.
-            stopping = asyncio.create_task(
-                _stop_group(process.pid, finished, options.termination_grace_seconds)
-            )
+        if process.stdout is not None and (stopping is not None or not finished.done()):
+            shutdown = stop_reader_group()
             try:
                 with suppress(OSError):
                     while await process.stdout.read(65536):
                         pass
             finally:
-                await stopping
+                await shutdown
         await finished
 
 

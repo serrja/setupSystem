@@ -11,6 +11,7 @@ import time
 from collections.abc import Mapping
 from contextlib import ExitStack, suppress
 from io import BytesIO, TextIOWrapper
+from pathlib import Path
 from tempfile import TemporaryFile
 from types import FrameType
 from typing import Literal, TypedDict, Unpack, overload
@@ -18,19 +19,21 @@ from typing import Literal, TypedDict, Unpack, overload
 MAX_OUTPUT = 1024 * 1024
 
 
-def _output(process: subprocess.Popen[bytes], timeout: int) -> tuple[bytes, bytes] | None:
+def _output(
+    process: subprocess.Popen[bytes], timeout: int, limit: int
+) -> tuple[bytes, bytes] | None:
     """Drain both pipes to EOF while retaining at most the allowed bytes per stream."""
     if process.stdout is None:
         process.wait(timeout=timeout)
         return b"", b""
-    assert process.stderr is not None
     stdout = bytearray()
     stderr = bytearray()
     oversized = False
     deadline = time.monotonic() + timeout
     with selectors.DefaultSelector() as reader:
         reader.register(process.stdout, selectors.EVENT_READ, stdout)
-        reader.register(process.stderr, selectors.EVENT_READ, stderr)
+        if process.stderr is not None:
+            reader.register(process.stderr, selectors.EVENT_READ, stderr)
         while reader.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -39,7 +42,7 @@ def _output(process: subprocess.Popen[bytes], timeout: int) -> tuple[bytes, byte
                 chunk = os.read(key.fd, 65536)
                 if not chunk:
                     reader.unregister(key.fd)
-                elif len(key.data) + len(chunk) <= MAX_OUTPUT and not oversized:
+                elif len(key.data) + len(chunk) <= limit and not oversized:
                     key.data.extend(chunk)
                 else:
                     oversized = True
@@ -63,6 +66,9 @@ class _RunOptions(TypedDict, total=False):
     env: Mapping[str, str] | None
     stdin: int | None
     discard_output: bool
+    discard_stderr: bool
+    cwd: str | Path | None
+    max_output_bytes: int | None
 
 
 @overload
@@ -88,6 +94,9 @@ def run_command(
     stdin: int | None = None,
     text: bool = True,
     discard_output: bool = False,
+    discard_stderr: bool = False,
+    cwd: str | Path | None = None,
+    max_output_bytes: int | None = None,
 ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
     """Run a native helper, retaining bounded output and reaping its process group."""
     if input is not None and stdin is not None:
@@ -110,13 +119,16 @@ def run_command(
                 argv,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL if discard_output else subprocess.PIPE,
-                stderr=subprocess.DEVNULL if discard_output else subprocess.PIPE,
+                stderr=subprocess.DEVNULL if discard_output or discard_stderr else subprocess.PIPE,
+                cwd=cwd,
                 env=env,
                 stdin=stdin,
             )
         )
         try:
-            output = _output(process, timeout)
+            output = _output(
+                process, timeout, MAX_OUTPUT if max_output_bytes is None else max_output_bytes
+            )
         except BaseException:
             if process.returncode is None:
                 if threading.current_thread() is threading.main_thread():

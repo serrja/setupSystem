@@ -104,7 +104,7 @@ def test_happ_upgrade_requires_confirmed_version_and_disconnected_service(
         lambda: dict(inactive, ActiveState="active") if active else inactive,
     )
     monkeypatch.setattr(
-        happ_facts.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 1)
+        happ_facts, "run_command", lambda *a, **kw: subprocess.CompletedProcess(a, 1)
     )
     expected = {"installed": "1.0", "unit": inactive}
     if accept:

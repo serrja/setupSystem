@@ -166,8 +166,10 @@ def test_profile_has_installed_roles_and_no_hardcoded_home() -> None:
 )
 def test_missing_or_incompatible_compositor_blocks_before_writes(home, monkeypatch, version):
     probe = desktop_module()
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, version, "")
+    monkeypatch.setitem(
+        probe["desktop_error"].__globals__,
+        "run_command",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, version, ""),
     )
     assert "Lua configuration" in probe["desktop_error"]()
     assert snapshot(home) == {}
@@ -197,10 +199,10 @@ def test_incomplete_system_stage_blocks_user_writes(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     probe = desktop_module()
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *a, **kw: subprocess.CompletedProcess(a, 0, "install ok installed 0.55.2", ""),
+    monkeypatch.setitem(
+        probe["desktop_error"].__globals__,
+        "run_command",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "install ok installed 0.55.2", ""),
     )
     monkeypatch.setattr(os, "access", lambda path, mode: Path(path).name != "thunar")
     assert "missing: thunar" in probe["desktop_error"]()
@@ -381,14 +383,16 @@ def test_version_inspection_does_not_launch_compositor_without_runtime(
     monkeypatch.setattr(os, "access", lambda path, mode: True)
 
     def execute(
-        argv: list[str], *, text: bool, capture_output: bool, check: bool, timeout: int
+        argv: list[str], *, stdin: int, discard_stderr: bool, check: bool, timeout: int
     ) -> subprocess.CompletedProcess[str]:
+        assert stdin == subprocess.DEVNULL and discard_stderr and timeout == 5
         assert argv[0] == "/usr/bin/dpkg-query"
         assert argv[-1] == "hyprland"
         return subprocess.CompletedProcess(argv, 0, f"install ok installed\t{version}\n", "")
 
-    monkeypatch.setattr(subprocess, "run", execute)
-    assert desktop_module()["desktop_error"]() is None
+    desktop_error = desktop_module()["desktop_error"]
+    monkeypatch.setitem(desktop_error.__globals__, "run_command", execute)
+    assert desktop_error() is None
 
 
 @pytest.fixture

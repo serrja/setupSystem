@@ -93,3 +93,18 @@ except KeyboardInterrupt:
         finally:
             if owner.poll() is None:
                 owner.kill()
+
+
+def test_larger_probe_keeps_its_cwd_and_ignores_unneeded_stderr(tmp_path, monkeypatch):
+    from setup_system.infrastructure import processes
+
+    monkeypatch.setattr(processes, "MAX_OUTPUT", 3)
+    cwd = tmp_path / "Unicode проба"
+    cwd.mkdir()
+    program = "import os; os.write(2, b'x' * 200000); os.write(1, os.fsencode(os.getcwd()))"
+    command = [sys.executable, "-I", "-c", program]
+    result = run_command(command, cwd=cwd, discard_stderr=True, max_output_bytes=4096)
+    assert result.stdout == str(cwd)
+    assert result.stderr == ""
+    with pytest.raises(subprocess.SubprocessError, match="exceeds the supported size"):
+        run_command(command, cwd=cwd, discard_stderr=True)

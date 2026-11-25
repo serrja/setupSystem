@@ -6,6 +6,7 @@ from pathlib import Path
 
 import typer
 
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.tool_paths import personal_path
 
 
@@ -24,9 +25,11 @@ def observe(path: Path, repo: str) -> str:
         raise ValueError("An existing user tool directory requires review")
 
     def git(*args: str) -> str:
-        return subprocess.check_output(
+        return run_command(
             ["/usr/bin/git", "-c", "core.fsmonitor=false", "-C", str(path), *args],
-            text=True,
+            stdin=subprocess.DEVNULL,
+            discard_stderr=True,
+            timeout=15,
             env={
                 "PATH": "/usr/bin:/bin",
                 "HOME": str(home),
@@ -34,7 +37,7 @@ def observe(path: Path, repo: str) -> str:
                 "GIT_CONFIG_GLOBAL": "/dev/null",
                 "GIT_CONFIG_NOSYSTEM": "1",
             },
-        ).strip()
+        ).stdout.strip()
 
     if git("remote", "get-url", "origin") != repo or git(
         "status", "--porcelain", "--untracked-files=normal"

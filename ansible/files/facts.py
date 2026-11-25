@@ -18,6 +18,7 @@ from setup_system.domain.intentions import BaseOptions, Section, WorkspaceOption
 from setup_system.domain.observations import NativeObservations, OutputModes
 from setup_system.infrastructure.native_target import current_target, get_release
 from setup_system.infrastructure.package_journal import historical_status
+from setup_system.infrastructure.processes import run_command
 from setup_system.machine_io import write_model
 
 
@@ -49,8 +50,12 @@ def monitors() -> list[OutputModes]:
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not Path("/usr/bin/hyprctl").is_file():
         return []
     try:
-        probe = subprocess.run(
-            ["/usr/bin/hyprctl", "monitors", "-j"], check=True, capture_output=True, timeout=4
+        probe = run_command(
+            ["/usr/bin/hyprctl", "monitors", "-j"],
+            text=False,
+            stdin=subprocess.DEVNULL,
+            discard_stderr=True,
+            timeout=4,
         )
         rows = TypeAdapter(list[HyprMonitor]).validate_json(probe.stdout)
         return [
@@ -68,11 +73,11 @@ def desktop_error() -> str | None:
     approved = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "config/base/desktop.toml").read_text()
     )
-    probe = subprocess.run(
+    probe = run_command(
         ["/usr/bin/dpkg-query", "-W", "-f=${Status}\\t${Version}", "hyprland"],
-        text=True,
-        capture_output=True,
+        stdin=subprocess.DEVNULL,
         check=False,
+        discard_stderr=True,
         timeout=5,
     )
     match = re.fullmatch(

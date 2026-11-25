@@ -32,7 +32,7 @@ from setup_system.machine_io import write_model
 def desktop(xdg: dict[str, str]) -> tuple[DesktopSystem, TargetUser, dict[str, str]]:
     target = resolve_target(None)
     env = user_environment(target, {k: Path(v) for k, v in xdg.items()})
-    return DesktopSystem(resource_root(), run=subprocess.run), target, env
+    return DesktopSystem(resource_root()), target, env
 
 
 def policy_stamp(
@@ -227,6 +227,9 @@ def run(op: SystemTask) -> None:
                     str(apt_stage),
                 ],
                 check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
 
         changed = graphical_unlock.apply_unlock(

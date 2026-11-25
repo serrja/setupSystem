@@ -21,6 +21,7 @@ from setup_system.domain.system_receipts import UnlockPlan
 from setup_system.infrastructure.boot_recovery import BootRecovery, digest
 from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.system_paths import protected
 from setup_system.layout import INSTALLED, resource_root
 
@@ -34,12 +35,16 @@ MIN_SPACE = 64 * 1024 * 1024
 
 
 def _command(args: list[str]) -> str:
-    return subprocess.run(
+    return run_command(
         args,
         check=True,
-        text=True,
-        capture_output=True,
-        timeout=600,
+        discard_output=args[0]
+        in {"/usr/sbin/mkinitramfs", "/usr/sbin/grub-mkconfig", "/usr/bin/grub-script-check"},
+        discard_stderr=True,
+        max_output_bytes=16 * 1024 * 1024 if args[0] == "/usr/bin/lsinitramfs" else None,
+        timeout=15
+        if args[0] in {"/usr/bin/findmnt", "/usr/bin/lsblk", "/usr/bin/efibootmgr"}
+        else 600,
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LC_ALL": "C"},
     ).stdout
 

@@ -39,7 +39,9 @@ def test_native_transaction_reconstructs_fixed_sources_and_defers_services(tmp_p
     enter = fixture(tmp_path, monkeypatch, ["foot"])
     calls = []
 
-    def record(argv, *, check, env):
+    def record(argv, *, check, stdin, stdout, stderr, env):
+        assert stdin == stdout == stderr == subprocess.DEVNULL
+        assert check
         calls.append((argv, env))
         return subprocess.CompletedProcess(argv, 0)
 

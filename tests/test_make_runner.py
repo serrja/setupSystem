@@ -738,3 +738,25 @@ def test_active_read_only_output_has_an_absolute_deadline(tmp_path, monkeypatch)
     pid = int((tmp_path / "make-pid").read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_read_only_cancel_during_output_drain_survives_overlapping_deadline(tmp_path, monkeypatch):
+    fixture_make(
+        tmp_path,
+        "import os,signal\nfrom pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path('ready').touch()\nwhile True: os.write(1,b'x' * 65536)\n",
+    )
+    monkeypatch.setenv("SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS", "0.6")
+    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.8")
+
+    async def exercise():
+        stop = asyncio.Event()
+        task = asyncio.create_task(run_transport(tmp_path, Target.WORKSPACE_PLAN, cancel=stop))
+        async with asyncio.timeout(5):
+            while not (tmp_path / "ready").exists():
+                await asyncio.sleep(0.005)
+            stop.set()
+            assert await task == 130
+
+    asyncio.run(exercise())

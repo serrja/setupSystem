@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from copy import deepcopy
 from pathlib import Path
 from threading import Event
@@ -123,12 +124,37 @@ PanelRow = TypedDict("PanelRow", {"text": str, "class": list[str], "tooltip": st
 
 
 def _query(topic: str) -> dict[str, JsonValue] | list[JsonValue]:
-    result = subprocess.run(
-        ["hyprctl", "-j", topic], capture_output=True, text=True, timeout=2, check=True
-    )
-    if len(result.stdout) > MAX_REPLY:
-        raise ValueError("Hyprland IPC response exceeds its bound")
-    data = json.loads(result.stdout)
+    # This session asset can outlive the configurator package.
+    with (
+        subprocess.Popen(
+            ["hyprctl", "-j", topic],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ) as process,
+        selectors.DefaultSelector() as reader,
+    ):
+        assert process.stdout is not None
+        reader.register(process.stdout, selectors.EVENT_READ)
+        raw = bytearray()
+        deadline = time.monotonic() + 2
+        try:
+            while len(raw) <= MAX_REPLY:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not reader.select(remaining):
+                    raise TimeoutError("Hyprland IPC response timed out")
+                block = os.read(process.stdout.fileno(), min(65536, MAX_REPLY + 1 - len(raw)))
+                if not block:
+                    break
+                raw.extend(block)
+            if len(raw) > MAX_REPLY:
+                raise ValueError("Hyprland IPC response exceeds its bound")
+            if process.wait(timeout=max(0, deadline - time.monotonic())):
+                raise ValueError("Hyprland IPC request failed")
+        finally:
+            if process.poll() is None:
+                process.kill()
+    data = json.loads(raw)
     if isinstance(data, (list, dict)):
         return data
     raise ValueError("Unexpected workspace response")

@@ -153,6 +153,17 @@ def executable(path: Path, source: str) -> None:
     path.chmod(0o700)
 
 
+def test_oversized_workspace_reply_is_rejected_while_hyprctl_is_running(tmp_path, monkeypatch):
+    executable(
+        tmp_path / "hyprctl",
+        "import os,time\nos.write(1, b'x' * 4096)\ntime.sleep(30)\n",
+    )
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(panel, "MAX_REPLY", 1024)
+    with pytest.raises(ValueError, match="exceeds its bound"):
+        panel._query("workspaces")
+
+
 def test_actual_custom_module_commands_quote_cache_paths_and_use_lua_ipc(
     waybar_template: str, tmp_path: Path
 ) -> None:

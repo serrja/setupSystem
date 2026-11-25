@@ -16,6 +16,7 @@ from setup_system.domain.receipts import FileState, digest
 from setup_system.domain.workspace_facts import GitIdentity
 from setup_system.infrastructure.file_publication import observe
 from setup_system.infrastructure.managed_files import apply_files
+from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.user_storage import inside_home
 
 IDENTITY_KEYS = ("user.name", "user.email", "user.useConfigOnly", "user.signingKey")
@@ -26,10 +27,10 @@ def _git(*args: str, repo: Path | None = None, missing: bool = False) -> str:
     command = ["git"]
     if repo is not None:
         command += ["-C", str(repo)]
-    result = subprocess.run(
+    result = run_command(
         [*command, *args],
-        text=True,
-        capture_output=True,
+        discard_output="--replace-all" in args,
+        discard_stderr=True,
         timeout=15,
         env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
         check=False,
