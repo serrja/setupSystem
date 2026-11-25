@@ -7,10 +7,10 @@ import pytest
 from textual.widgets import Button, Input, Static, TabbedContent
 
 from setup_system.app import SetupApp, main
+from setup_system.configuration import Settings
 from setup_system.domain.observations import NativeObservations
 from setup_system.models import TaskResult
 from setup_system.runner import Target
-from setup_system.settings import Settings
 from setup_system.suggestions import Catalog
 from setup_system.ui.dialogs import Consent, Password
 from setup_system.ui.forms import CompletionInput, WorkspaceForm

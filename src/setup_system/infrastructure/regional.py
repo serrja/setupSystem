@@ -22,15 +22,6 @@ LOCALE_GEN = Path("/etc/locale.gen")
 SUPPORTED = Path("/usr/share/i18n/SUPPORTED")
 
 
-def prerequisites(setting: str) -> tuple[str, ...]:
-    commands = {
-        "locale": (Path("/usr/sbin/update-locale"), "locales"),
-        "keyboard": (Path("/usr/bin/setupcon"), "console-setup"),
-    }
-    pair = commands.get(setting)
-    return (pair[1],) if pair and not pair[0].is_file() else ()
-
-
 def _generated(value: str) -> bool:
     return (
         value.lower().replace("utf-8", "utf8")

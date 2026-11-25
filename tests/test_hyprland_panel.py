@@ -38,10 +38,10 @@ def waybar_template(tmp_path_factory: pytest.TempPathFactory) -> str:
             "release_root": str(ROOT),
             "intent": {"theme": {}},
             "facts": {"xdg": {}},
-            "render_ctx": (
-                "{{ (lookup('ansible.builtin.file', release_root + "
-                "'/config/shared/palette.toml') | native_toml) "
-                "| workspace_context(intent, facts) }}"
+            "render_ctx": next(
+                row["ansible.builtin.set_fact"]["render_ctx"]
+                for row in tasks
+                if "render_ctx" in row.get("ansible.builtin.set_fact", {})
             ),
             "templates": [
                 {

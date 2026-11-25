@@ -61,3 +61,27 @@ def test_real_terminal_open_and_keyboard_quit(tmp_path, monkeypatch) -> None:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=5)
         os.close(master)
+
+
+def test_invalid_application_override_exits_before_opening_forms(tmp_path):
+    master, slave = pty.openpty()
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-m", "setup_system.app"],
+            stdin=slave,
+            stdout=slave,
+            stderr=subprocess.PIPE,
+            env={
+                "HOME": str(tmp_path),
+                "TERM": "xterm-256color",
+                "SETUP_SYSTEM_SUGGESTION_RESULTS": "invalid-private-value",
+            },
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 1
+        assert b"invalid-private-value" not in result.stderr and b"Traceback" not in result.stderr
+        assert not list(tmp_path.iterdir())
+    finally:
+        os.close(slave)
+        os.close(master)

@@ -2,6 +2,9 @@
 
 In **Base system**, select the existing local account that needs administrative access. Run the configurator as your ordinary user. Preview shows the UID, primary GID, HOME, shell and current sudo membership. Granting access allows that login to run commands as root with its own password. Confirm the account and consequence before entering the **root password** for the packaged Ansible `su` operation.
 
+
+Administrative access is confirmed for the selected existing account in a separate operation. The stage files hold workstation preferences. The package supplies the fixed authorization commands and the executor verifies account identity again before applying the change.
+
 ## 📦 First installation without sudo
 
 If sudo is unavailable before installation, run `sh install.sh install --auth su` as the ordinary user from the reviewed release bootstrap. Add `--release vX.Y.Z` to select a published stable version. The bootstrap verifies the GitHub release, checksum and attestation before invoking native `su` for the package transaction. APT checks its installed state and the transaction rechecks the selected package bytes. Start the application separately with `setup-system`. If the installer reports that an older launcher takes precedence in PATH, use the full path it displays. Updates support the same explicit authentication choice. Default package delivery uses sudo.

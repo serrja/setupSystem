@@ -81,3 +81,26 @@ def test_native_preview_refuses_removal_or_downgrade(preview):
     native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
     with pytest.raises(AnsibleFilterError):
         native["apt_closure"](preview, False)
+
+
+def test_regional_catalog_change_reaches_preview_and_verified_executor(tmp_path, monkeypatch):
+    import shutil
+    import tomllib
+
+    import tomlkit
+
+    shutil.copytree(ROOT / "config", tmp_path / "config")
+    path = tmp_path / "config/base/packages.toml"
+    catalog = tomllib.loads(path.read_text())
+    catalog["keyboard"]["stable"] = ["fixture-keyboard"]
+    path.write_text(tomlkit.dumps(catalog))
+    native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
+    packages = native["package_names"]('{"keyboard":"fr"}', json.dumps(catalog), "{}")
+    assert packages == ["fixture-keyboard"]
+
+    execute = fixture(tmp_path, monkeypatch, packages)
+    monkeypatch.setitem(execute.__globals__, "ROOT", tmp_path)
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: calls.append(argv))
+    execute(tmp_path)
+    assert len(calls) == 1 and calls[0][-2:] == ["--", "fixture-keyboard"]

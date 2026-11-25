@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import typer
+from platformdirs import user_data_path
 from pydantic import ConfigDict, TypeAdapter, with_config
 
 from setup_system.domain.contracts import MAX_MESSAGE_BYTES
@@ -31,7 +32,7 @@ class EditorInputs(TypedDict):
 
 
 def proof(request: EditorInputs) -> str | None:
-    data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    data = user_data_path()
     parsed = {}
     for name in request["parsers"]:
         if not re.fullmatch(r"[a-z0-9_]+", name):

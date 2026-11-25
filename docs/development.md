@@ -15,6 +15,19 @@ Use `make package` to build a Debian archive without sudo. `make install` is a s
 
 The native gate runs Ruff, mypy, ShellCheck, Ansible checks and pytest. Coverage includes the application, Ansible helpers and filters, packaged executable assets and owned build tools. The combined statement and branch coverage floor is 75%. JUnit reports skipped cases separately from passing tests. Packaging compares the Make, Ansible, config and asset bytes in the wheel and source distribution, then exercises the installed wheel from a temporary directory. Tests use synthetic HOME and XDG paths for writes. The CI builder also checks the allocated wheel outside the source checkout.
 
+## Change a setting
+
+For a UI timing or scan limit, declare the typed field and its bounds in `configuration/models.py` and the default in `config/application.toml`. Inject the validated setting at its consumer. Only normal-user application fields are eligible for environment overrides. A workstation selection belongs in `domain/intentions.py`. Its model supplies defaults and validates both saved values and native requests. Connect its widget and target behavior to that field.
+
+For a catalog change, edit the corresponding resource under `config/base`, `config/workspace` or `config/shared`. The same bytes are shipped to every runtime. Add a behavior test that changes the input and observes the final consumer. Regenerate the offline field tables and run the locked gate.
+
+```sh
+uv run --locked python docker/settings_reference.py --write
+make native-ci
+```
+
+The Debian builder reads committed Git blobs. Run the packaging gate on the candidate commit to compare its modules, resources and offline guides across all three archives.
+
 ## 🧬 Engineering provenance
 
 The engineering upstream is [pythonTemplate](https://github.com/serrja/pythonTemplate). The reviewed revisions are recorded in [engineering-source.json](https://github.com/serrja/setupSystem/blob/main/.github/engineering-source.json). Changes to upstream-owned release helpers require a reviewed upstream revision.

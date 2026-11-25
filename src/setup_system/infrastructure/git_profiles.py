@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from platformdirs import user_config_path
+
 from setup_system.diagnostics import PartialApplyError
 from setup_system.domain.receipts import FileState, digest
 from setup_system.domain.workspace_facts import GitIdentity
@@ -51,7 +53,7 @@ def exact_repository(repo: Path) -> Path:
 def profile_path(name: str) -> Path:
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
         raise ValueError("Profile names use lowercase letters, digits, underscores or hyphens")
-    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    config = user_config_path()
     return inside_home(config / "git/identities" / f"{name}.gitconfig")
 
 

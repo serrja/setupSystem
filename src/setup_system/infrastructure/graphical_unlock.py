@@ -12,15 +12,17 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
+from setup_system.domain.applications import BasePackages
 from setup_system.domain.system_receipts import UnlockPlan
 from setup_system.infrastructure.boot_recovery import BootRecovery, digest
 from setup_system.infrastructure.native_templates import render_asset
 from setup_system.infrastructure.palette import palette
 from setup_system.infrastructure.system_paths import protected
-from setup_system.layout import INSTALLED
+from setup_system.layout import INSTALLED, resource_root
 
 BOOT = Path("/boot")
 SYS = Path("/sys")
@@ -164,12 +166,9 @@ def _identity() -> str:
 
 
 def prerequisites() -> tuple[str, ...]:
-    files = {
-        "plymouth": Path("/usr/share/initramfs-tools/hooks/plymouth"),
-        "plymouth-themes": THEMES / "spinner/spinner.plymouth",
-        "console-setup": Path("/usr/bin/setupcon"),
-    }
-    return tuple(package for package, path in files.items() if not path.is_file())
+    with (resource_root() / "config/base/packages.toml").open("rb") as stream:
+        catalog = BasePackages.model_validate(tomllib.load(stream))
+    return tuple(name for name, path in catalog.unlock_probes.items() if not Path(path).is_file())
 
 
 def inspect_unlock() -> UnlockPlan:

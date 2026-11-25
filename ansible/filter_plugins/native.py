@@ -62,15 +62,7 @@ def package_names(settings: str, base: str, catalog: str) -> list[str]:
             sources = BasePackages.model_validate_json(base)
         except ValidationError as exc:
             raise AnsibleFilterError("Invalid Debian package catalog") from exc
-        if intent.hyprland:
-            packages.extend(sources.hyprland.stable)
-            packages.extend(p + "/trixie-backports" for p in sources.hyprland.backports)
-        if intent.graphical_login:
-            packages.extend(sources.login.stable)
-        if intent.locale:
-            packages.append("locales")
-        if intent.keyboard:
-            packages.extend(("console-setup", "xkb-data"))
+        packages.extend(sources.selected(intent))
     else:
         try:
             apps = applications(json.loads(catalog))

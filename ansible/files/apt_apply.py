@@ -132,10 +132,8 @@ def run(stage: Path) -> None:
     app_config = applications(
         tomllib.loads((ROOT / "config/workspace/applications.toml").read_text())
     )
-    allow = set(package_config.hyprland.stable + package_config.login.stable)
-    allow.update(p + "/trixie-backports" for p in package_config.hyprland.backports)
+    allow = package_config.allowed()
     allow.update(p for app in app_config.values() for p in app.packages)
-    allow.update(["console-setup", "locales", "plymouth", "plymouth-themes", "xkb-data"])
     index = args.index("--")
     if args[index - 3 : index] != ["--no-remove", "--no-install-recommends", "install"]:
         raise ValueError("Expected a native nonremoving install")

@@ -8,16 +8,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+from email.parser import Parser
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
-parser = argparse.ArgumentParser()
-parser.add_argument("--output", type=Path, required=True)
-parser.add_argument("--version")
-options = parser.parse_args()
-
-
-git_environment = {
+GIT_ENVIRONMENT = {
     "PATH": "/usr/bin:/bin",
     "HOME": "/dev/null",
     "LANG": "C",
@@ -26,27 +20,17 @@ git_environment = {
     "GIT_NO_REPLACE_OBJECTS": "1",
 }
 
-
-def git(*args: str) -> bytes:
-    return subprocess.check_output(["git", "-C", str(root), *args], env=git_environment)
+RUNTIME_TREES = ("mk", "ansible", "config", "assets", "libexec", "src/setup_system")
 
 
-sha = git("rev-parse", "HEAD").decode().strip()
-version = options.version or f"0~local+g{sha[:12]}"
-if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) and options.version:
-    parser.error("expected a stable Debian release version such as 1.2.3")
-environment = dict(
-    os.environ, SOURCE_DATE_EPOCH=git("show", "-s", "--format=%ct", sha).decode().strip()
-)
-out = options.output.resolve()
-out.mkdir(parents=True, exist_ok=True)
-with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
-    # Read every payload byte, including control files, from the recorded Git
-    # tree. Dirty or untracked working files can never inherit that commit identity.
-    source_root = Path(temp) / "source"
-    trees = ("mk", "ansible", "config", "assets", "libexec", "src/setup_system")
+def git(root: Path, *args: str) -> bytes:
+    return subprocess.check_output(["git", "-C", str(root), *args], env=GIT_ENVIRONMENT)
+
+
+def export_source(root: Path, sha: str, source_root: Path) -> None:
+    """Read each payload and control file from the identified commit."""
     inputs = (
-        *trees,
+        *RUNTIME_TREES,
         "Makefile",
         "ansible.cfg",
         "install.sh",
@@ -60,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         "debian/guard.sh",
         "debian/setup-system.conf",
     )
-    entries = git("ls-tree", "-rz", "--full-tree", sha, "--", *inputs)
+    entries = git(root, "ls-tree", "-rz", "--full-tree", sha, "--", *inputs)
     for entry in entries.split(b"\0")[:-1]:
         header, encoded_path = entry.split(b"\t", 1)
         mode, kind, object_id = header.decode("ascii").split()
@@ -69,51 +53,56 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
             raise ValueError(f"Unexpected release path: {path}")
         if kind != "blob" or mode not in {"100644", "100755"}:
             raise ValueError(f"Expected a regular committed file: {path}")
-        content = git("cat-file", "blob", object_id)
+        content = git(root, "cat-file", "blob", object_id)
         target = source_root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         target.chmod(int(mode[-3:], 8))
-    base = Path(temp) / "root"
+
+
+def copy_file(src: Path, dst: Path, mode: int | None = None) -> None:
+    if src.is_symlink() or not src.is_file():
+        raise ValueError(f"Expected a regular release file: {src}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    dst.chmod(mode if mode is not None else 0o755 if src.stat().st_mode & 0o111 else 0o644)
+
+
+def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> str:
+    """Stage the package layout, permissions and dpkg control files."""
     metadata = (source_root / "debian/control").read_text()
-    package_name = next(
-        line.removeprefix("Package: ")
-        for line in metadata.splitlines()
-        if line.startswith("Package: ")
-    )
+    package_name = Parser().parsestr(metadata)["Package"]
+    if not package_name or not re.fullmatch(r"[a-z0-9][a-z0-9+.-]+", package_name):
+        raise ValueError("Invalid Debian package name")
     runtime = base / "usr/lib" / package_name
+    documentation = base / "usr/share/doc" / package_name
     control = base / "DEBIAN"
 
-    def copy(src: Path, dst: Path, mode: int | None = None) -> None:
-        if src.is_symlink() or not src.is_file():
-            raise ValueError(f"Expected a regular release file: {src}")
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
-        dst.chmod(mode if mode is not None else 0o755 if src.stat().st_mode & 0o111 else 0o644)
-
-    pairs = [(source_root / folder, runtime / folder) for folder in trees[:-1]]
+    pairs = [(source_root / folder, runtime / folder) for folder in RUNTIME_TREES[:-1]]
     pairs.append(
         (source_root / "src/setup_system", base / "usr/lib/python3/dist-packages/setup_system")
     )
     for source, dest in pairs:
         for path in sorted(source.rglob("*")):
             if path.is_file():
-                copy(path, dest / path.relative_to(source))
-    copy(source_root / "Makefile", runtime / "Makefile")
-    copy(source_root / "install.sh", runtime / "install.sh", 0o755)
-    copy(source_root / "ansible.cfg", runtime / "ansible.cfg")
-    copy(source_root / "debian/setup-system.sh", base / "usr/bin/setup-system", 0o755)
-    copy(source_root / "debian/setup-system.conf", base / "usr/lib/tmpfiles.d/setup-system.conf")
-    copy(source_root / "LICENSE.md", base / "usr/share/doc/setup-system/copyright")
-    copy(
-        source_root / "THIRD_PARTY_NOTICES.md",
-        base / "usr/share/doc/setup-system/THIRD_PARTY_NOTICES.md",
+                copy_file(path, dest / path.relative_to(source))
+    copy_file(source_root / "Makefile", runtime / "Makefile")
+    copy_file(source_root / "install.sh", runtime / "install.sh", 0o755)
+    copy_file(source_root / "ansible.cfg", runtime / "ansible.cfg")
+    copy_file(source_root / "debian/setup-system.sh", base / "usr/bin" / package_name, 0o755)
+    copy_file(
+        source_root / "debian/setup-system.conf",
+        base / "usr/lib/tmpfiles.d" / f"{package_name}.conf",
     )
-    documentation = base / "usr/share/doc/setup-system"
-    copy(source_root / "README.md", documentation / "README.md")
+    copy_file(source_root / "LICENSE.md", documentation / "copyright")
+    copy_file(
+        source_root / "THIRD_PARTY_NOTICES.md",
+        documentation / "THIRD_PARTY_NOTICES.md",
+    )
+    copy_file(source_root / "README.md", documentation / "README.md")
     for article in sorted((source_root / "docs").glob("*.md")):
-        copy(article, documentation / "docs" / article.name)
-    manual = base / "usr/share/man/man1/setup-system.1.gz"
+        copy_file(article, documentation / "docs" / article.name)
+    manual = base / "usr/share/man/man1" / f"{package_name}.1.gz"
     manual.parent.mkdir(parents=True, exist_ok=True)
     with manual.open("wb") as compressed:
         subprocess.run(
@@ -124,7 +113,7 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         )
     manual.chmod(0o644)
     for script in ("preinst", "prerm"):
-        copy(source_root / "debian/guard.sh", control / script, 0o755)
+        copy_file(source_root / "debian/guard.sh", control / script, 0o755)
     (control / "control").write_text(
         f"Version: {version}\nX-Setup-System-Source: {sha}\n{metadata}"
     )
@@ -138,12 +127,38 @@ with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
     for directory in (base, *base.rglob("*")):
         if directory.is_dir():
             directory.chmod(0o755)
-    package = f"setup-system_{version}_all.deb"
-    artifact = Path(temp) / package
-    subprocess.run(
-        ["dpkg-deb", "--root-owner-group", "-Zxz", "--build", str(base), str(artifact)],
-        env=environment,
-        check=True,
+    return f"{package_name}_{version}_all.deb"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--version")
+    options = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    sha = git(root, "rev-parse", "HEAD").decode().strip()
+    version = options.version or f"0~local+g{sha[:12]}"
+    if options.version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        parser.error("expected a stable Debian release version such as 1.2.3")
+    environment = dict(
+        os.environ, SOURCE_DATE_EPOCH=git(root, "show", "-s", "--format=%ct", sha).decode().strip()
     )
-    artifact.replace(out / package)
-    print(out / package)
+    out = options.output.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
+        source = Path(temp) / "source"
+        base = Path(temp) / "root"
+        export_source(root, sha, source)
+        package = prepare_package(source, base, sha, version)
+        artifact = Path(temp) / package
+        subprocess.run(
+            ["dpkg-deb", "--root-owner-group", "-Zxz", "--build", str(base), str(artifact)],
+            env=environment,
+            check=True,
+        )
+        artifact.replace(out / package)
+        print(out / package)
+
+
+if __name__ == "__main__":
+    main()

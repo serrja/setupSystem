@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from setup_system.configuration import Settings
 from setup_system.models import BaseOptions, Theme, WorkspaceOptions
-from setup_system.settings import Settings
 from setup_system.suggestions import config_root
 
 

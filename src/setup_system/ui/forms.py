@@ -99,21 +99,21 @@ class WorkspaceForm(VerticalScroll):
         yield Checkbox("Apply desktop theme and top panel", id="desktop_theme")
         yield Checkbox("Compact panel", id="compact_panel")
         yield Checkbox("Compositor effects", id="effects")
-        yield Label("Window opacity (0.75-1)")
-        yield Input("0.96", id="opacity")
-        yield Label("Corner radius (0-24 px)")
-        yield Input("12", id="rounding")
+        yield Label("Window opacity")
+        yield Input(id="opacity")
+        yield Label("Corner radius (px)")
+        yield Input(id="rounding")
         yield Label("Connected display")
         yield CompletionInput(id="output")
         yield Label("Advertised mode")
         yield CompletionInput(id="mode")
-        for key, label, value in (
-            ("scale", "Scale", "1"),
-            ("x", "Horizontal position", "0"),
-            ("y", "Vertical position", "0"),
+        for key, label in (
+            ("scale", "Scale"),
+            ("x", "Horizontal position"),
+            ("y", "Vertical position"),
         ):
             yield Label(label)
-            yield Input(value, id=key)
+            yield Input(str(Monitor.model_fields[key].default), id=key)
         with Horizontal(classes="buttons"):
             yield Button("Set layout", id="set-layout")
             yield Button("Forget layout", id="forget-layout")
@@ -140,7 +140,6 @@ class WorkspaceForm(VerticalScroll):
         yield Select(
             [(mode.value, mode) for mode in CleanupMode],
             allow_blank=False,
-            value=CleanupMode.REMOVE,
             id="cleanup-mode",
         )
         yield Button("Plan cleanup", id="cleanup-plan")

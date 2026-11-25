@@ -13,9 +13,9 @@ from textual import events
 from textual.widgets import Button, Input, Static, TabbedContent
 
 from setup_system.app import SetupApp
+from setup_system.configuration import Settings
 from setup_system.models import PlanSnapshot, TaskResult
 from setup_system.runner import AsyncMakeRunner, BecomePassword, Target
-from setup_system.settings import Settings
 from setup_system.ui.dialogs import Consent, Password
 
 
@@ -512,5 +512,27 @@ def test_startup_shows_last_unknown_outcome_without_overwriting_new_feedback(
             assert str(app.query_one("#feedback", Static).render()) == (
                 "New status" if new_message else saved.describe()
             )
+
+    asyncio.run(scenario())
+
+
+def test_startup_loads_application_preferences_off_the_event_loop(tmp_path, monkeypatch):
+    settings = Settings(tmp_path, tmp_path / ".config")
+    load = settings.application
+    owner = threading.get_ident()
+
+    def worker_load():
+        assert threading.get_ident() != owner
+        return load()
+
+    monkeypatch.setenv("SETUP_SYSTEM_SUGGESTION_RESULTS", "7")
+    monkeypatch.setattr(settings, "application", worker_load)
+
+    async def scenario():
+        app = SetupApp(settings=settings)
+        async with app.run_test():
+            await app.workers.wait_for_complete()
+            assert app.runner.options is app.suggestions.options
+            assert app.suggestions.options.suggestion_results == 7
 
     asyncio.run(scenario())
