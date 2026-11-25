@@ -68,7 +68,7 @@ def test_user_role_never_follows_symlink_target(home: Path) -> None:
 
 
 def test_workspace_restore_reverts_changed_files_and_removes_created_paths(home: Path) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
 
     existing = home / "config/tool/first"
     created = home / "config/nested/new"
@@ -84,7 +84,7 @@ def test_workspace_restore_reverts_changed_files_and_removes_created_paths(home:
 
 @pytest.mark.parametrize("later", ["changed", "mode", "recreated", "symlink"])
 def test_repeated_restore_reports_later_changes_without_overwriting(home: Path, later: str) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
 
     target = home / "managed"
     if later != "recreated":
@@ -121,7 +121,7 @@ def test_repeated_restore_reports_later_changes_without_overwriting(home: Path, 
 def test_interrupted_runner_keeps_recovery_and_only_verified_writes(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
     from setup_system.infrastructure import managed_files
     from setup_system.infrastructure.receipt_repository import list_operations
 
@@ -159,8 +159,8 @@ def test_runner_success_without_expected_output_fails_readback(
 
 
 def test_legacy_journal_migration_backs_up_originals_and_preserves_modes(home: Path) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.domain.receipts import digest
-    from setup_system.file_tasks import restore
     from setup_system.infrastructure.user_storage import state_root
 
     original = home / "tool/owned"
@@ -195,7 +195,7 @@ def test_legacy_journal_migration_backs_up_originals_and_preserves_modes(home: P
 
 
 def test_unknown_receipt_schema_is_a_read_only_conflict(home: Path) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
 
     target = home / "original"
     target.write_bytes(b"before")
@@ -210,7 +210,7 @@ def test_unknown_receipt_schema_is_a_read_only_conflict(home: Path) -> None:
 
 
 def test_restore_refuses_later_mode_change_without_touching_a_sibling(home: Path) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
 
     one, two = home / "one", home / "two"
     op = apply_files({one: b"first", two: b"second"})
@@ -224,7 +224,7 @@ def test_concurrent_restore_edit_is_returned_without_overwriting(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
 
     target = home / "tool"
     op = apply_files({target: b"managed"})
@@ -246,7 +246,7 @@ def test_concurrent_restore_edit_is_returned_without_overwriting(
 def test_interrupted_restore_resumes_from_private_staging(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
     from setup_system.infrastructure import restore_files
 
     target = home / "tool"
@@ -268,8 +268,8 @@ def test_interrupted_restore_resumes_from_private_staging(
 
 
 def test_legacy_desktop_preparation_requires_committed_index(home: Path) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.domain.receipts import digest
-    from setup_system.file_tasks import restore
     from setup_system.infrastructure.user_storage import state_root
 
     managed = home / "font.conf"
@@ -297,8 +297,8 @@ def test_legacy_desktop_preparation_requires_committed_index(home: Path) -> None
 
 
 def test_legacy_git_before_hash_must_match_backup(home: Path) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.domain.receipts import digest
-    from setup_system.file_tasks import restore
 
     config = home / ".gitconfig"
     config.write_bytes(b"old")
@@ -349,9 +349,11 @@ def test_interrupted_displacement_is_recovered_before_another_apply(
 ) -> None:
     import asyncio
 
+    from setup_system.application.rollback import RecoveryPlan
     from setup_system.domain import receipts
     from setup_system.infrastructure import file_publication, managed_files, receipt_repository
-    from setup_system.runner import AsyncMakeRunner, Command, Target
+    from setup_system.plugin_manager import PluginManager
+    from setup_system_sdk import Outcome
 
     target = home / "tool"
     target.write_bytes(b"owner's original")
@@ -381,24 +383,18 @@ def test_interrupted_displacement_is_recovered_before_another_apply(
     with pytest.raises(ValueError, match="Restore interrupted file publication"):
         apply_files({target: b"selected"})
     assert not target.exists()
-    runner = AsyncMakeRunner()
-    request = {"schema": 1, "settings": {"backup_id": operation}, "expected": None}
-    plan = asyncio.run(runner.execute(Command.capture(Target.RESTORE_PLAN, request)))
-    assert plan.status == "ready"
-    assert [(action.path, action.operation) for action in plan.actions] == [
-        (str(target), "would-return-displaced")
-    ]
+    plan = RecoveryPlan.inspect(operation)
+    assert plan.entries == ((str(target), "would-return-displaced"),)
     assert not target.exists()
-    request["expected"] = plan.model_dump(mode="json", exclude_unset=True)
-    applied = asyncio.run(runner.execute(Command.capture(Target.RESTORE_APPLY, request)))
-    assert applied.status == "complete", applied.describe()
+    applied = asyncio.run(PluginManager().run_recovery(plan))
+    assert applied.outcome is Outcome.COMPLETE
     assert target.read_bytes() == b"owner's original"
 
 
 def test_restore_after_publication_before_verification_is_journaled(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from setup_system.file_tasks import restore
+    from setup_system.application.recovery import restore
     from setup_system.infrastructure import managed_files, receipt_repository
 
     target = home / "first-publication"
@@ -425,9 +421,9 @@ def test_restore_after_publication_before_verification_is_journaled(
 def test_owner_recreates_target_while_prior_inode_is_held(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.diagnostics import PartialApplyError
     from setup_system.domain import receipts
-    from setup_system.file_tasks import restore
     from setup_system.infrastructure import file_publication, managed_files, receipt_repository
 
     target = home / "config.ini"
@@ -459,8 +455,8 @@ def test_owner_recreates_target_while_prior_inode_is_held(
 
 
 def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.domain import receipts
-    from setup_system.file_tasks import restore
     from setup_system.infrastructure import file_publication, receipt_repository
 
     target = home / "existing"
@@ -487,8 +483,8 @@ def test_open_writer_on_displaced_inode_keeps_its_late_edit(home: Path) -> None:
 def test_restore_keeps_open_writer_on_the_removed_installation(
     home: Path, monkeypatch: pytest.MonkeyPatch, separate: bool, existed: bool
 ) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.domain import receipts
-    from setup_system.file_tasks import restore
     from setup_system.infrastructure import managed_files, receipt_repository, restore_files
 
     if separate:
@@ -524,8 +520,8 @@ def test_restore_keeps_open_writer_on_the_removed_installation(
 
 
 def test_unverified_v040_creation_cannot_claim_a_later_matching_file(home: Path) -> None:
+    from setup_system.application.recovery import restore
     from setup_system.domain.receipts import digest
-    from setup_system.file_tasks import restore
 
     target = home / "independently-created"
     backup = historical_backup([])
@@ -545,47 +541,42 @@ def test_unverified_v040_creation_cannot_claim_a_later_matching_file(home: Path)
 
 
 def test_confirmed_file_plan_includes_permissions(home: Path) -> None:
-    from setup_system.file_tasks import file_preview
+    from setup_system_sdk import Inputs, PluginSettings
+    from setup_system_sdk.native import FilesBackend
 
     target = home / "managed"
+
+    class Example(FilesBackend):
+        file_actions = frozenset({"configure"})
+
+        def files(self, *args):
+            return {target: b"second"}
+
     apply_files({target: b"first"}, modes={target: 0o600})
-    desired, modes = {target: b"second"}, {target: 0o600}
-    original = file_preview(desired, modes)
+    backend = Example()
+    original = backend.prepare("configure", PluginSettings(), Inputs())
     target.chmod(0o640)
-    assert file_preview(desired, modes) != original
+    assert backend.prepare("configure", PluginSettings(), Inputs()) != original
     assert target.read_bytes() == b"first"
 
 
 def test_project_directories_restore_through_make_and_preserve_other_files(home):
     import asyncio
 
-    from setup_system.infrastructure.receipt_repository import list_operations
-    from setup_system.runner import AsyncMakeRunner, Command, Target
+    from setup_system.application.rollback import RecoveryPlan
+    from setup_system.plugin_manager import PluginManager
+    from setup_system_sdk import Outcome
 
-    runner = AsyncMakeRunner()
-
-    def invoke(target, payload):
-        result = asyncio.run(runner.execute(Command.capture(target, payload)))
-        return result.model_dump(mode="json", exclude_unset=True)
-
-    req = {"schema": 1, "settings": {}, "expected": None}
-    preview = invoke(Target.PROJECT_PREPARE_PLAN, req)
-    assert preview["status"] == "ready"
-    completed = invoke(Target.PROJECT_PREPARE_APPLY, {**req, "expected": preview})
-    assert completed["status"] == "complete", completed
     folder = home / "Projects"
-    foreign = folder / "serrja" / "owner.md"
+    first, second = folder / "first", folder / "second"
+    backup = apply_files({}, directories=(first, second))
+    foreign = first / "owner.md"
     foreign.write_text("keep")
-    backup = list_operations()[0][0]
-    req["settings"] = {"backup_id": backup}
-    preview = invoke(Target.RESTORE_PLAN, req)
-    assert preview["status"] == "ready"
-    assert any("pokerlost" in row["label"] for row in preview["actions"])
-    assert not any(row["label"].endswith("/serrja") for row in preview["actions"])
-    completed = invoke(Target.RESTORE_APPLY, {**req, "expected": preview})
-    assert completed["status"] == "complete", completed
-    assert foreign.read_text() == "keep" and not (folder / "pokerlost").exists()
-    assert invoke(Target.RESTORE_PLAN, req)["status"] == "no_changes"
+    preview = RecoveryPlan.inspect(backup.name)
+    assert (str(second), "would-remove-directory") in preview.entries
+    assert (str(first), "would-remove-directory") not in preview.entries
+    assert asyncio.run(PluginManager().run_recovery(preview)).outcome is Outcome.COMPLETE
+    assert foreign.read_text() == "keep" and not second.exists()
 
 
 def test_migration_preserves_backup_created_during_publication(home, monkeypatch):

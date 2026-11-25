@@ -196,7 +196,12 @@ jq -e --arg tag "$tag" '.tag_name == $tag and .draft == false and .prerelease ==
 fetch "$api/releases/tags/$native" "$dir/release" 1048576
 published=$(jq -er --arg t "$native" --arg n "$file" '
     select(.tag_name == $t and .draft == false and .prerelease == false and (.published_at | type == "string" and length > 0))
-    | select(([.assets[].name] | sort) == ([$n, ($n + ".sha256"), ($n + ".sigstore.json")] | sort))
+    | select((.assets | length) <= 512)
+    | select([.assets[].name] as $names | ($names | unique | length) == ($names | length)
+        and (([$n, ($n + ".sha256"), ($n + ".sigstore.json")] - $names) == [])
+        and all($names[]; . == $n or . == ($n+".sha256") or . == ($n+".sigstore.json")
+          or test("^[a-z][a-z0-9_-]{0,63}\\.json$")
+          or test("^setup_system_plugin_[a-z0-9_]+-[0-9][a-zA-Z0-9.+_-]*\\.whl$")))
     | .assets[] | select(.name == $n) | .digest | select(test("^sha256:[a-f0-9]{64}$"))' "$dir/release") || fail 'Invalid Debian release inventory or asset digest.'
 assets=$web/releases/download/$native
 fetch "$assets/$file" "$dir/$file" 134217728
@@ -214,5 +219,17 @@ HOME=$dir/gh-home GH_HOST=github.com gh attestation verify "$dir/$file" --bundle
     --signer-digest "$sha" --source-ref refs/heads/main --source-digest "$sha" \
     --deny-self-hosted-runners --predicate-type https://slsa.dev/provenance/v1
 )
+# Additional download links inherit their identities from the attested package.
+dpkg-deb -x "$dir/$file" "$dir/proven"
+count=3
+for member in "$dir"/proven/usr/lib/setup-system/plugin_catalog/*; do
+    [ -e "$member" ] || continue
+    [ -f "$member" ] && [ ! -L "$member" ] || fail 'Unexpected plugin catalog member.'
+    name=${member##*/}
+    evidence=$(sha256sum < "$member")
+    jq -e --arg n "$name" --arg d "sha256:${evidence%% *}"         'any(.assets[]; .name == $n and .digest == $d)' "$dir/release" >/dev/null || fail 'Plugin release differs from the signed Debian catalog.'
+    count=$((count+1))
+done
+jq -e --argjson count "$count" '.assets | length == $count' "$dir/release" >/dev/null || fail 'Release inventory differs from the signed Debian catalog.'
 printf 'Verified %s from %s at %s.\n' "$file" "$repository" "$sha"
 package_transaction "$dir/$file" "$digest" "$version" "$sha" "$action"

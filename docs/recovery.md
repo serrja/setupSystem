@@ -1,17 +1,10 @@
-# Recovery
+# 🧹 Recovery and ownership
 
-Cancel waits until the next safe boundary. A running dpkg transaction can finish
-and leave packages installed. If an operation fails, inspect its completed stages,
-exit status and receipts before correcting the cause and retrying.
+Open **Managed resources** on the plugin page to inspect verified resources and unresolved operations. After an interruption, choose **Check interrupted operations**. The manager inspects the approved release and current facts before recording a verified result. A lost connection during a mutation leaves an unknown outcome. Keep the worker and its environment until inspection completes.
 
-The app records the target, status and time of the last mutation in
-`$XDG_STATE_HOME/setup-system/last-operation.json`. A partial result means a stage
-may already have changed the system. An unknown result means the runner could
-not verify the outcome. Inspect the system and its receipts before preparing a
-new plan. The app displays the recorded outcome on its next launch.
+**Uninstall application** uses the package's native removal action. **Remove extension** retires sealed code after checking for local changes. **Full cleanup** lists remote, local and program actions, exact settings and keyring references, and code generations. Review the list of preserved resources. Cleanup can stop at a conflict or failed readback. Keep the evidence and use a fresh preview to continue.
 
-
-To recover a stage preference, inspect the retained TOML backup beside the affected file under `$XDG_CONFIG_HOME/setup-system`. Keep a copy of your current edits, restore the desired settings, then use **Reload** and review a new plan. File-operation receipts use the separate state directory. [Configuration](configuration.md)
+The resource ledger is `$XDG_STATE_HOME/setup-system/resources.sqlite3`. It records prepared changes, verified fingerprints, consumers and unresolved reservations. The bounded JSONL journal in `$XDG_STATE_HOME/setup-system/history` records operation events. User-specific recovery evidence and before-images remain in `$XDG_STATE_HOME/setup-system/backups`.
 
 ## Receipts and backups
 
@@ -26,7 +19,7 @@ A native flock serializes package changes, Apply and Restore. Preview optional r
 | Login or boot files | Stage-specific backups under `/var/lib/setup-system` |
 | Debian packages | Native APT and dpkg status and logs |
 
-User ownership is recorded in `$XDG_STATE_HOME/setup-system/workstation.json`. File journals and original bytes are under `$XDG_STATE_HOME/setup-system/backups/`.
+Managed-file publication retains its recovery index in `$XDG_STATE_HOME/setup-system/workstation.json`. The SQLite ledger records plugin ownership. File journals and original bytes are under `$XDG_STATE_HOME/setup-system/backups/`.
 
 When the system task replaces the managed Firefox
 policy, it retains the original inode in a private sibling directory named
@@ -37,7 +30,7 @@ intended bytes and permissions. A new file at the live path is preserved.
 
 ## ♻️ Restore user files
 
-In **Working environment**, choose a backup and preview Restore. The preview lists
+For current operations, open **Managed resources** and choose **Roll back a file operation**. For earlier backups, choose **Restore a previous backup** on the welcome screen. The preview lists
 which files will be restored or removed. Apply checks the current hash, owner and
 mode against the recorded state. A later edit requires review. A successful
 restore removes empty directories created by that operation and leaves additional

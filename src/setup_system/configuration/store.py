@@ -11,30 +11,25 @@ from collections.abc import Iterator, MutableMapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tomlkit
 from platformdirs import user_config_path
-from pydantic import ConfigDict, JsonValue, TypeAdapter
+from pydantic import TypeAdapter
 
 from setup_system.configuration.models import ApplicationOptions
-from setup_system.configuration.sources import Profile, _application_options, _stage_options
-from setup_system.domain.intentions import BaseOptions, Section, WorkspaceOptions
+from setup_system.configuration.sources import _application_options
+from setup_system.infrastructure.atomic_rename import rename_new
 from setup_system.infrastructure.user_storage import FileSnapshot, publish_revision
+from setup_system_sdk import Identifier, Outcome, Plan, Resource, Result, Values
 
-Options = BaseOptions | WorkspaceOptions
-_VALUES = TypeAdapter(dict[str, JsonValue], config=ConfigDict(hide_input_in_errors=True))
-_LEGACY = {"base": "system-intentions.toml", "workspace": "settings.toml"}
-_V1_APPS = {"neovim", "firefox", "codex", "chatgpt", "happ", "developer_tools"}
+if TYPE_CHECKING:
+    from setup_system.resource_ledger import ResourceLedger
+
+_NAMES = TypeAdapter(Identifier)
+_VALUES = TypeAdapter(Values)
 _LIMIT = 65536
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
-
-@dataclass(frozen=True)
-class Loaded:
-    options: Options
-    revision: str
-    source: str
 
 
 @contextmanager
@@ -95,46 +90,11 @@ def _merge(table: MutableMapping[str, Any], desired: dict[str, Any]) -> None:
             table[key] = value
 
 
-def _decode(section: Section, raw: bytes | None, legacy: bool) -> dict[str, JsonValue]:
-    values = (
-        _VALUES.validate_python(tomlkit.parse(raw.decode()).unwrap(), strict=True)
-        if raw is not None
-        else {}
-    )
-    version = values.pop("schema_version", 1)
-    if type(version) is not int or version not in (
-        (1, 2) if legacy and section == "workspace" else (1,)
-    ):
-        raise ValueError("Unknown settings schema; review the original file")
-    if section == "base":
-        return values
-    if legacy:
-        if version == 1:
-            allowed = _V1_APPS | {
-                "theme",
-                "language_profiles",
-                "optional_apps",
-                "cleanup",
-                "cleanup_mode",
-            }
-            if values.keys() - allowed or any(
-                type(values[k]) is not bool for k in values.keys() & _V1_APPS
-            ):
-                raise ValueError("Invalid version 1 application selections")
-            values["apps"] = [key for key in sorted(_V1_APPS) if values.pop(key, False)]
-        apps = values.get("apps", [])
-        optional = values.pop("optional_apps", [])
-        if not isinstance(apps, list) or not isinstance(optional, list) or "languages" in values:
-            raise ValueError("Invalid legacy workspace selections")
-        values["apps"] = apps + optional
-        values["languages"] = values.pop("language_profiles", [])
-        theme = values.get("theme", {})
-        if (
-            not isinstance(theme, dict)
-            or theme.pop("name", "catppuccin_mocha_green") != "catppuccin_mocha_green"
-        ):
-            raise ValueError("Unknown legacy theme")
-    return values
+@dataclass(frozen=True)
+class SavedValues:
+    values: Values
+    revision: str
+    version: int
 
 
 class Settings:
@@ -151,41 +111,6 @@ class Settings:
         """Load the normal-user runtime preferences at explicit application startup."""
         return _application_options()
 
-    async def read(
-        self,
-        section: Section,
-        *,
-        profile: Profile | None = None,
-        confirmed: dict[str, JsonValue] | None = None,
-    ) -> Loaded:
-        """Read one owner-checked snapshot without blocking the terminal."""
-        return await asyncio.to_thread(self.load, section, profile=profile, confirmed=confirmed)
-
-    async def publish(self, section: Section, options: Options, expected: str) -> Loaded:
-        """Keep ownership of the entire filesystem transaction until the worker returns."""
-        async with self._writer:
-            pending = asyncio.create_task(asyncio.to_thread(self.save, section, options, expected))
-            cancelled = False
-            while not pending.done():
-                try:
-                    await asyncio.shield(pending)
-                except asyncio.CancelledError:
-                    cancelled = True
-            result = pending.result()
-            if cancelled:
-                raise asyncio.CancelledError
-            return result
-
-    def _source(self, fd: int | None, section: Section) -> tuple[str, FileSnapshot | None]:
-        name = f"{section}.toml"
-        raw = _read(fd, name)
-        if raw is None:
-            old = _LEGACY[section]
-            old_bytes = _read(fd, old)
-            if old_bytes is not None:
-                return old, old_bytes
-        return name, raw
-
     @staticmethod
     def _revision(name: str, snapshot: FileSnapshot | None) -> str:
         if snapshot is None:
@@ -199,49 +124,137 @@ class Settings:
         )
         return name + ":" + hashlib.sha256(repr(metadata).encode() + snapshot.data).hexdigest()
 
-    def load(
-        self,
-        section: Section,
-        *,
-        profile: Profile | None = None,
-        confirmed: dict[str, JsonValue] | None = None,
-    ) -> Loaded:
-        if section not in _LEGACY:
-            raise ValueError("Unknown settings section")
-        with _directory(self.home, self.directory, False) as fd:
-            name, snapshot = self._source(fd, section)
-            raw = snapshot.data if snapshot else None
-            return Loaded(
-                _stage_options(
-                    section, _decode(section, raw, name == _LEGACY[section]), confirmed, profile
-                ),
-                self._revision(name, snapshot),
-                name,
-            )
+    async def read(self, plugin: str, profile: str = "default") -> SavedValues:
+        return await asyncio.to_thread(load_values, self, plugin, profile)
 
-    def save(self, section: Section, options: Options, expected: str) -> Loaded:
-        if section not in _LEGACY:
-            raise ValueError("Unknown settings section")
-        target = f"{section}.toml"
-        model = BaseOptions if section == "base" else WorkspaceOptions
-        validated = model.model_validate(options)
-        with _directory(self.home, self.directory, True) as fd:
-            assert fd is not None
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            name, snapshot = self._source(fd, section)
-            raw = snapshot.data if snapshot else None
-            if self._revision(name, snapshot) != expected:
-                raise ValueError("Settings changed; reload before saving")
-            document = tomlkit.parse(raw.decode()) if raw is not None else tomlkit.document()
-            _merge(
-                document,
-                {"schema_version": 1, **validated.model_dump(mode="json", exclude_none=True)},
+    def for_version(self, schema: int) -> Settings:
+        """Keep older configurations readable by the previously active release."""
+        if schema < 1:
+            raise ValueError("Invalid profile schema")
+        if schema == 1:
+            return self
+        result = Settings(self.home, self.directory.parent)
+        result.directory = self.directory / "schemas" / str(schema)
+        return result
+
+    async def publish(
+        self, plugin: str, profile: str, values: Values, version: int, revision: str
+    ) -> SavedValues:
+        async with self._writer:
+            pending = asyncio.create_task(
+                asyncio.to_thread(save_values, self, plugin, profile, values, version, revision)
             )
-            output = tomlkit.dumps(document).encode()
-            if len(output) > _LIMIT:
-                raise ValueError("Settings exceed the size limit")
-            if name == target and raw == output:
-                return Loaded(validated, expected, target)
-            retained = f"{target}.bak-{uuid.uuid4().hex}" if name == target and snapshot else None
-            published = publish_revision(fd, name, snapshot, fd, target, output, retained)
-        return Loaded(validated, self._revision(target, published), target)
+            try:
+                return await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                while not pending.done():
+                    try:
+                        await asyncio.shield(pending)
+                    except asyncio.CancelledError:
+                        continue
+                pending.result()
+                raise
+
+
+def load_values(store: Settings, plugin: str, profile: str) -> SavedValues:
+    name = _NAMES.validate_python(profile) + ".toml"
+    directory = store.directory / "plugins" / _NAMES.validate_python(plugin)
+    with _directory(store.home, directory, False) as fd:
+        snapshot = _read(fd, name)
+        version = 1
+        values: Values = {}
+        if snapshot:
+            data = tomlkit.parse(snapshot.data.decode()).unwrap()
+            version = data["schema_version"]
+            if type(version) is not int or version < 1:
+                raise ValueError("Unknown settings version")
+            values = _VALUES.validate_python(data["values"])
+        return SavedValues(values, store._revision(name, snapshot), version)
+
+
+def save_values(
+    store: Settings, plugin: str, profile: str, values: Values, version: int, revision: str
+) -> SavedValues:
+    name = _NAMES.validate_python(profile) + ".toml"
+    directory = store.directory / "plugins" / _NAMES.validate_python(plugin)
+    with _directory(store.home, directory, True) as fd:
+        assert fd is not None
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        snapshot = _read(fd, name)
+        if store._revision(name, snapshot) != revision:
+            raise ValueError("Settings changed. Reload the profile before saving.")
+        document = tomlkit.parse(snapshot.data.decode()) if snapshot else tomlkit.document()
+        _merge(
+            document,
+            {
+                "schema_version": version,
+                "values": {k: v for k, v in values.items() if v is not None},
+            },
+        )
+        data = tomlkit.dumps(document).encode()
+        if len(data) > 65536:
+            raise ValueError("Settings exceed the size limit")
+        if snapshot and data == snapshot.data:
+            return SavedValues(values, revision, version)
+        backup = f"{name}.bak-{uuid.uuid4().hex}" if snapshot else None
+        result = publish_revision(fd, name, snapshot, fd, name, data, backup)
+        return SavedValues(values, store._revision(name, result), version)
+
+
+def profiles(store: Settings, plugin: str) -> list[str]:
+    directory = store.directory / "plugins" / _NAMES.validate_python(plugin)
+    with _directory(store.home, directory, False) as fd:
+        if fd is None:
+            return ["default"]
+
+        names = [Path(name).stem for name in os.listdir(fd) if name.endswith(".toml")]
+        return sorted({"default", *names})
+
+
+async def forget_profile(
+    store: Settings, ledger: ResourceLedger, plugin: str, row: Resource
+) -> None:
+    directory = store.directory / "plugins" / _NAMES.validate_python(plugin)
+    path = Path(row.identity)
+    if path.parent != directory or path.suffix != ".toml" or not row.after:
+        raise ValueError("Invalid profile resource")
+    _NAMES.validate_python(path.stem)
+    operation = uuid.uuid4()
+    change = row.model_copy(update={"effect": "remove", "before": row.after, "after": None})
+    await ledger.prepare(
+        operation,
+        plugin,
+        "remove-profile",
+        "1",
+        Plan(summary="Remove owned profile", outcome=Outcome.READY, resources=[change]),
+    )
+
+    def remove() -> None:
+        with _directory(store.home, directory, False) as fd:
+            if fd is None:
+                raise ValueError("Profile directory disappeared")
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            source = _read(fd, path.name)
+            if source is None or store._revision(path.name, source) != row.after:
+                raise ValueError("Profile changed after cleanup confirmation")
+            held = ".removing-" + operation.hex
+            rename_new(fd, path.name, fd, held)
+            if not source.matches(fd, held):
+                rename_new(fd, held, fd, path.name)
+                raise ValueError("A concurrent edit was retained")
+            os.unlink(held, dir_fd=fd)
+            os.fsync(fd)
+            if _read(fd, path.name) is not None:
+                raise ValueError("Another profile appeared during cleanup")
+
+    try:
+        await asyncio.to_thread(remove)
+    except (ValueError, OSError):
+        await ledger.finish(
+            operation, Result(outcome=Outcome.PARTIAL, message="Profile removal needs inspection")
+        )
+        raise
+    await ledger.finish(
+        operation,
+        Result(outcome=Outcome.COMPLETE, message="Profile removal verified", resources=[change]),
+    )

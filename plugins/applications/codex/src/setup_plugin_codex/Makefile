@@ -1,0 +1,7 @@
+.DEFAULT_GOAL := help
+override SHELL := /bin/sh
+.PHONY: help install update uninstall configure logout
+help:
+	@echo 'Open the plugin page to review an action.'
+install update uninstall configure logout:
+	@"$${SETUP_SYSTEM_INTERPRETER}" -I -B -m setup_plugin_codex.action "$@"

@@ -188,7 +188,7 @@ def test_make_check_routes_native_and_docker_children_without_executing_recipes(
     assert result.returncode == 0, result.stderr
     assert ("docker run --init" in result.stdout) is docker_child
     assert ("uv run --locked pytest" in result.stdout) is not docker_child
-    for name in ("run", "base-inspect", "workspace-plan"):
+    for name in ("run", "help"):
         public = subprocess.check_output(
             ["make", "--no-print-directory", "-n", name], cwd=tmp_path, env=environment, text=True
         )

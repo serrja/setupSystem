@@ -6,16 +6,15 @@ edges. No update, download, package installation or host APT state is involved.
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import runpy
 import shutil
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
+
+from setup_system_sdk.apt import Packages, closure
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -135,9 +134,11 @@ def run_apt(
 
 
 def profile_arguments() -> list[str]:
-    native = runpy.run_path(str(ROOT / "ansible/filter_plugins/native.py"))
-    catalog = tomllib.loads((ROOT / "config/base/packages.toml").read_text())
-    selected = native["package_names"](json.dumps({"hyprland": True}), json.dumps(catalog), "{}")
+    plugins = ROOT / "plugins/desktop"
+    selected = []
+    for name in ("hyprland", "waybar"):
+        catalog = plugins / name / "src" / ("setup_plugin_" + name) / "apt.json"
+        selected.extend(Packages.model_validate_json(catalog.read_bytes()).candidates())
     return [p for p in selected if p.partition("/")[0] in PROFILE_PACKAGES]
 
 
@@ -173,6 +174,8 @@ def test_profile_resolves_coherent_xkb_backports_without_removal(
             line for line in result.stdout.splitlines() if line.startswith(f"Inst {name} ")
         )
         assert f"({BACKPORT_XKB} " in planned, result.stdout
+    resolved = closure(result.stdout)
+    assert all(resolved[p][1] == BACKPORT_XKB for p in XKB_PACKAGES)
     assert "Remv " not in result.stdout
     assert "downgraded" not in result.stdout.lower()
     repeated = simulate(configuration, profile_arguments())
@@ -222,3 +225,60 @@ def test_resolver_rejects_incomplete_xkb_backports_cohort(
     assert "unmet dependencies" in result.stdout
     if partial_pins:
         assert STABLE_XKB in result.stdout + result.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("case", ["idle", "held", "essential", "consumer", "stale", "absent"])
+def test_exact_plugin_removal_uses_private_dpkg_and_apt_only(tmp_path, monkeypatch, case):
+    from setup_system_sdk import Outcome, Resource, apt
+
+    configuration = apt_workspace(tmp_path, "amd64", installed=False)
+    db = tmp_path / "state"
+    status = db / "status"
+    state = "hold ok installed" if case == "held" else "install ok installed"
+    record = (
+        "Package: fixture-app\nStatus: "
+        + state
+        + "\nVersion: 1.0\nArchitecture: amd64\nMaintainer: Fixture <fixture@example.invalid>\n"
+        "Description: Synthetic package\n"
+        + ("Essential: yes\n" if case == "essential" else "")
+        + "\n"
+    )
+    if case == "consumer":
+        record += (
+            "Package: other-project\nStatus: install ok installed\nVersion: 1.0\n"
+            "Architecture: amd64\nDepends: fixture-app\n"
+            "Maintainer: Fixture <fixture@example.invalid>\nDescription: User project\n\n"
+        )
+    status.write_text(record if case != "absent" else "")
+    original = status.read_bytes()
+    native_run = apt.run_command
+
+    def private_run(argv, **opts):
+        if argv[0] == "/usr/bin/dpkg-query":
+            argv = [argv[0], "--admindir=" + str(db), *argv[1:]]
+        elif argv[0] == "/usr/bin/apt-get":
+            assert "--simulate" in argv and "remove" in argv
+            opts["env"] = {**opts["env"], "APT_CONFIG": str(configuration), "TMPDIR": str(tmp_path)}
+        else:
+            pytest.fail("Unexpected native command: " + argv[0])
+        return native_run(argv, **opts)
+
+    monkeypatch.setattr(apt, "current_target", lambda: ("amd64", True))
+    monkeypatch.setattr(apt, "run_command", private_run)
+    packages = Packages(names=("fixture-app",))
+    row = Resource(
+        kind="package",
+        identity="fixture-app",
+        ownership="created",
+        cleanup=True,
+        effect="remove",
+        before="0.9" if case == "stale" else "1.0",
+    )
+    if case in {"idle", "absent"}:
+        plan = apt.removal(tmp_path, packages, [row])
+        assert plan.outcome == (Outcome.NO_CHANGES if case == "absent" else Outcome.READY)
+    else:
+        with pytest.raises(ValueError):
+            apt.removal(tmp_path, packages, [row])
+    assert status.read_bytes() == original

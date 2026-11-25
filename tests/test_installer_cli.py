@@ -2,29 +2,28 @@
 
 from pathlib import Path
 
-from setup_system.models import BaseOptions, PlanSnapshot
+import pytest
+from pydantic import ValidationError
+
+from setup_system.plugin_manager import Snapshot
+from setup_system_sdk import Inputs, Mutation, Plan
 
 
 def test_request_is_an_immutable_plan_input() -> None:
-    import pytest
-    from pydantic import ValidationError
-
-    request = PlanSnapshot.capture(
-        "base",
-        BaseOptions(timezone="UTC").model_dump(mode="json"),
-        {
-            "status": "ready",
-            "actions": [
-                {"kind": "region", "field": "timezone", "value": "UTC", "label": "Set timezone"}
-            ],
-            "observed": {"needs_system": True, "needs_user": False},
-        },
-        None,
+    values = {"title": "prepared"}
+    snapshot = Snapshot(
+        digest="f" * 64,
+        plugin_id="example",
+        mutation=Mutation(
+            settings=values, inputs={}, action_id="configure", plan=Plan(summary="Preview")
+        ),
     )
+    values["title"] = "later"
+    assert snapshot.mutation.settings == {"title": "prepared"}
     with pytest.raises(ValidationError, match="frozen"):
-        request.task = "workspace"
+        snapshot.plugin_id = "another"
     with pytest.raises(ValidationError):
-        BaseOptions.model_validate({"yes": True})
+        Inputs.model_validate({"yes": True})
 
 
 def test_bootstrap_does_not_elevate_the_python_ui() -> None:

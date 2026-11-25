@@ -1,40 +1,28 @@
 # setupSystem
 
-Configure an existing Debian 13 workstation with a Textual interface. **Base system** covers Hyprland, graphical login and regional settings. **Working environment** covers the Catppuccin Mocha desktop, Neovim, applications and projects.
+setupSystem manages programs and workstation settings on an existing Debian 13 (trixie) desktop, amd64 or arm64. Open a program's page to configure profiles, check its current state, manage accounts or run an individual action. A workstation profile combines actions from several extensions.
 
-## 📦 Install
+## 📦 Install and update
 
-Paste this command into a terminal as your regular user on Debian 13 (trixie), amd64 or arm64. You need curl, the GitHub CLI with attestation support, and access to APT. [Full prerequisites and the su authentication option](docs/debian.md)
+Run the verified delivery script as a regular user. It verifies the stable Debian package and its GitHub build attestation. Installation and updates finish at the APT transaction. [Prerequisites and delivery options](docs/debian.md)
 
 ```sh
 sh -c 'loader=$(curl -qfsSL --proto =https --proto-redir =https "$1") && exec /bin/sh -c "$loader" install.sh install' sh \
   https://raw.githubusercontent.com/serrja/setupSystem/main/install.sh
 ```
 
-The loader verifies the stable Debian package and its build attestation before asking for permission to install it. Installation ends when APT finishes.
+For an installed package, run `make -C /usr/lib/setup-system update`. Open the configurator separately from any directory with `setup-system`. The source checkout also supports `make run`.
 
-## 🔄 Update
+## 🧩 Open an extension
 
-Run the installed package’s update recipe as your regular user. It verifies the new release and finishes after APT completes.
+Search the catalog or select a category. Open a card and choose **Activate / update extension** to prepare its isolated backend with uv. Read the source, author, release digest and requested permissions before activation. Program installation has its own **Install** action. **Add by link** accepts a verified HTTPS release manifest or a compatible binary wheel. The administrator's source policy and the approved digest must cover the complete executable dependency chain. [Extension trust and delivery](docs/plugin_trust.md)
 
-```sh
-make -C /usr/lib/setup-system update
-```
+Use **Settings / Profiles** to edit and save preferences. Under **Actions**, select the command, review its parameters and choose **Preview**. Apply the snapshot after checking the listed resources, account, permissions and recovery options. Saved profiles and operation history remain available when you return to the card. **Help** opens the packaged instructions. [Using the configurator](docs/textual_workflow.md)
 
-## 🚀 Run
+## 🧹 Uninstall and recover
 
-Open the installed app from any directory.
+**Uninstall** previews program removal. **Disable extension** keeps its environment for later use. **Remove extension** verifies and removes its code. **Full cleanup** previews owned resources, supported remote revocations and the extension environment. Review preserved resources and resolve ownership conflicts before continuing. Repositories, vault notes, attachments and Docker volumes remain user data. Verified file operations have a separate rollback receipt. [Recovery and ownership](docs/recovery.md)
 
-```sh
-setup-system
-```
+## ⚙️ Engineering
 
-Choose a section, inspect the machine and review the plan before selecting **Apply**. Press **F1** for the offline guides.
-
-## 📚 Guides
-
-- [Update or remove the package](docs/debian.md)
-- [Configure the workstation](docs/textual_workflow.md)
-- [Save preferences and configure suggestions](docs/configuration.md)
-- [Restore managed files](docs/recovery.md)
-- [Build and test from source](docs/development.md)
+Read the [SDK guide](docs/plugin_authoring.md), [settings reference](docs/settings_map.md), [native development gate](docs/development.md) and [release guide](docs/release_guide.md).

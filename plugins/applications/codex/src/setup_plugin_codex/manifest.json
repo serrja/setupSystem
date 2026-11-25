@@ -1,0 +1,270 @@
+{
+  "id": "codex",
+  "name": "Codex CLI",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_codex:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "user-files",
+    "account-status"
+  ],
+  "capabilities": [
+    "project-settings",
+    "model-list",
+    "authorizations"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Codex",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install official CLI",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update official CLI",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Configure client",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "login",
+      "label": "Sign in",
+      "page": "accounts",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "status",
+      "label": "Account status",
+      "page": "accounts",
+      "target": null,
+      "permissions": [
+        "account-status"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "logout",
+      "label": "Sign out",
+      "page": "accounts",
+      "target": "logout",
+      "permissions": [
+        "account-status"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "mcp",
+      "label": "Manage MCP servers",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "skills",
+      "label": "Manage skills",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall managed CLI",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "permission": {
+        "default": "workspace-write",
+        "enum": [
+          "read-only",
+          "workspace-write"
+        ],
+        "title": "Sandbox mode",
+        "type": "string"
+      },
+      "approval": {
+        "default": "on-request",
+        "enum": [
+          "on-request",
+          "untrusted"
+        ],
+        "title": "Approval policy",
+        "type": "string"
+      },
+      "model": {
+        "default": "",
+        "maxLength": 160,
+        "title": "Model",
+        "type": "string",
+        "ui": {
+          "choice_provider": "models"
+        }
+      },
+      "effort": {
+        "default": "",
+        "maxLength": 64,
+        "title": "Reasoning effort",
+        "type": "string",
+        "ui": {
+          "choice_provider": "efforts"
+        }
+      },
+      "instructions": {
+        "default": false,
+        "title": "Include the pinned engineering instructions",
+        "type": "boolean"
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leave empty for the current user's config.",
+          "title": "Project checkout"
+        }
+      },
+      "title": "Project",
+      "type": "object"
+    },
+    "login": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "status": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "logout": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "mcp": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "skills": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

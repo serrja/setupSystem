@@ -1,0 +1,13 @@
+# 🧩 Write a plugin
+
+Create a Python distribution with its own `pyproject.toml`, import package, manifest, Help article, Makefile, resources and tests. Register its backend class in `setup_system.plugins`. The entry name must match its stable plugin ID. Package the manifest beside the backend. The host reads metadata before executing extension code. [Python packaging guide](https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/)
+
+Inherit `PluginSettings` for saved values and `Inputs` for action inputs. Use Pydantic `Field` bounds, enums and descriptions. Put typed `UIHints` in `json_schema_extra["ui"]` for dynamic choices, ordering, units or secret references. Return bounded choices asynchronously and validate the selected value again before Apply. Mark supported capabilities and permissions in the manifest. Use IDs for dispatch and localized text for display. [Pydantic JSON Schema](https://pydantic.dev/docs/validation/latest/concepts/json_schema/) · [Settings sources](https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/)
+
+The host sends versioned `Request` objects to the activated interpreter over private pipes. Implement asynchronous inspect, plan, verify and any declared choice providers. Make targets admit only declared mutations. Each target receives the validated action and confirmed snapshot. Return a typed result with readback. Return `needs_user_action` for an official interactive flow and `unknown_outcome` after losing contact with a mutating tool. Advertise rollback only for an operation with a tested recovery implementation.
+
+A resource identifies its kind, canonical identity, owner relationship, operation, before and after fingerprints, permissions, consumers and supported cleanup. The host records the plan before mutation. Read back each affected resource. For partial completion, mark only demonstrated changes as verified. Keep passwords, tokens, private keys and entire requests out of diagnostics. [Recovery](recovery.md)
+
+Most cards use the native schema editors. For a custom trusted panel, declare `setup_system.plugin_ui`, request `ui-code`, and put the component in a separate module inside the plugin package. Import the host SDK's `PluginPanel` and use its `UIContext` to select actions. Backend-only packages belong in the plugin venv. Restart the host to activate a new UI version. [Textual screens](https://textual.textualize.io/guide/screens/)
+
+Regenerate trusted builtin manifests and field references with `uv run --locked python docker/plugin_reference.py --write`. Add tests for the action's revision check, readback, cancellation, unmanaged resources and recovery. [Native gate](development.md)

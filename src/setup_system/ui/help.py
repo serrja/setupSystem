@@ -13,6 +13,8 @@ from textual.widgets import Button, Markdown, Select
 
 TOPICS = {
     "configuration": "Configuration",
+    "plugin_authoring": "Plugin SDK",
+    "plugin_trust": "Extension trust and privileges",
     "settings_map": "Settings reference",
     "administration": "Administrative access",
     "recovery": "Recovery",

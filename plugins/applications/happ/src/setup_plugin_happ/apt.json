@@ -1,0 +1,20 @@
+{
+  "names": [
+    "happ"
+  ],
+  "requires_idle": {
+    "service": "happd.service",
+    "processes": [
+      "Happ",
+      "happ"
+    ]
+  },
+  "release": {
+    "github": "Happ-proxy/happ-desktop",
+    "asset": {
+      "amd64": "Happ.linux.x64.deb",
+      "arm64": "Happ.linux.arm64.deb"
+    }
+  },
+  "service": "happd.service"
+}

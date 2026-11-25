@@ -17,12 +17,12 @@ The native gate runs Ruff, mypy, ShellCheck, Ansible checks and pytest. Coverage
 
 ## Change a setting
 
-For a UI timing or scan limit, declare the typed field and its bounds in `configuration/models.py` and the default in `config/application.toml`. Inject the validated setting at its consumer. Only normal-user application fields are eligible for environment overrides. A workstation selection belongs in `domain/intentions.py`. Its model supplies defaults and validates both saved values and native requests. Connect its widget and target behavior to that field.
-
-For a catalog change, edit the corresponding resource under `config/base`, `config/workspace` or `config/shared`. The same bytes are shipped to every runtime. Add a behavior test that changes the input and observes the final consumer. Regenerate the offline field tables and run the locked gate.
+For a UI timing or scan limit, declare the typed field and its bounds in `configuration/models.py` and the default in `config/application.toml`. Inject the validated setting at its consumer. Only normal-user application fields are eligible for environment overrides. A program setting belongs in its plugin Pydantic model. Regenerate its manifest and offline reference. Add a regression that changes the field and exercises its consumer in an isolated environment. Build the catalog to exercise activation from source.
 
 ```sh
 uv run --locked python docker/settings_reference.py --write
+uv run --locked python docker/plugin_reference.py --write
+uv run --locked python docker/plugin_artifacts.py --output coverage/plugin_catalog --with-runtime
 make native-ci
 ```
 

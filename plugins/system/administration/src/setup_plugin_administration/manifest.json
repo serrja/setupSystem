@@ -1,0 +1,102 @@
+{
+  "id": "administration",
+  "name": "Administration",
+  "author": "serrja",
+  "category": "system",
+  "kind": "system",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_administration:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "su"
+  ],
+  "capabilities": [
+    "sudo-membership"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "id": "grant-sudo",
+      "label": "Grant sudo access",
+      "target": "grant-sudo",
+      "permissions": [
+        "root",
+        "su"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "verify-sudo",
+      "label": "Verify effective access",
+      "target": "verify-sudo",
+      "permissions": [
+        "root",
+        "su"
+      ],
+      "supports_rollback": false,
+      "description": "Authenticate and verify the selected account’s effective Debian sudo policy."
+    }
+  ],
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Load only caller-selected sources and explicitly declared environment names.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "grant-sudo": {
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "description": "An ordinary account in the local passwd and group databases.",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "title": "Existing local login",
+          "type": "string",
+          "ui": {
+            "allow_custom": false,
+            "choice_provider": "accounts",
+            "widget": "select"
+          }
+        }
+      },
+      "required": [
+        "username"
+      ],
+      "title": "Login",
+      "type": "object"
+    },
+    "verify-sudo": {
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "description": "An ordinary account in the local passwd and group databases.",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "title": "Existing local login",
+          "type": "string",
+          "ui": {
+            "allow_custom": false,
+            "choice_provider": "accounts",
+            "widget": "select"
+          }
+        }
+      },
+      "required": [
+        "username"
+      ],
+      "title": "Login",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Accounts"
+  ],
+  "settings_version": 1
+}

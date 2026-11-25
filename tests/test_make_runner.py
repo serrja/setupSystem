@@ -5,15 +5,14 @@ import hashlib
 import os
 import secrets
 import shlex
-import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
 from setup_system import make_transport as transport
+from setup_system.authorization import BecomePassword
 from setup_system.configuration import Settings
-from setup_system.runner import AsyncMakeRunner, BecomePassword, Command, Target
 
 
 def fixture_make(tmp_path: Path, body: str) -> None:
@@ -22,10 +21,6 @@ def fixture_make(tmp_path: Path, body: str) -> None:
         "\t@umask 077; exec /usr/bin/python3 -I task.py\n"
     )
     (tmp_path / "task.py").write_text(body)
-
-
-def command(target, settings=None, expected=None):
-    return Command.capture(target, {"schema": 1, "settings": settings or {}, "expected": expected})
 
 
 def run_transport(tmp_path, target, secret=None, *, cancel=None, phases=None):
@@ -37,74 +32,20 @@ def run_transport(tmp_path, target, secret=None, *, cancel=None, phases=None):
         "SETUP_SYSTEM_RESULT": str(tmp_path / "result"),
         "SETUP_SYSTEM_CANCEL": str(tmp_path / "cancel"),
     }
-    return transport.execute_make(
+    return transport.authenticated_make(
         tmp_path,
-        target,
+        ["-rR", "-j1", "-f", str(tmp_path / "Makefile"), target],
         env,
         cancel if cancel is not None else asyncio.Event(),
         phases.append if phases is not None else lambda phase: None,
         options=Settings.application(),
-        take_password=secret.take if secret is not None else None,
+        take_password=secret.take,
+        root_account=target == "admin-apply",
     )
-
-
-def test_request_is_detached_data_and_host_make_overrides_are_absent(tmp_path, monkeypatch):
-    value = "/tmp/-Проект 'данные' $(shell ...) 資料"
-    fields = {"project": value}
-    request = command(Target.WORKSPACE_PLAN, fields)
-    fields["project"] = "/tmp/other"
-    fixture_make(
-        tmp_path,
-        """import json, os, stat
-from pathlib import Path
-p=Path(os.environ['SETUP_SYSTEM_REQUEST'])
-assert stat.S_IMODE(p.stat().st_mode)==0o600
-assert not {'ANSIBLE_LIBRARY','ANSIBLE_CONFIG','ANSIBLE_FILTER_PLUGINS','BASH_ENV','ENV',
-            'PYTHONPATH','MAKEFILES'} & os.environ.keys()
-assert 'eval' not in os.getenv('MAKEFLAGS','') and 'caller-override' not in os.getenv('MFLAGS','')
-assert not os.isatty(0) and not os.isatty(1)
-Path('observed').write_text(json.loads(p.read_bytes())['settings']['project'])
-Path(os.environ['SETUP_SYSTEM_RESULT']).write_text('{"status":"ready"}')
-""",
-    )
-    monkeypatch.setenv("MAKEFLAGS", "--eval=bad")
-    for name in (
-        "ANSIBLE_LIBRARY",
-        "ANSIBLE_CONFIG",
-        "ANSIBLE_FILTER_PLUGINS",
-        "BASH_ENV",
-        "ENV",
-        "PYTHONPATH",
-        "MAKEFILES",
-        "MFLAGS",
-    ):
-        monkeypatch.setenv(name, "caller-override")
-    phases = []
-    result = asyncio.run(AsyncMakeRunner(tmp_path).execute(request, on_event=phases.append))
-    assert result.status == "ready" and (tmp_path / "observed").read_text() == value
-    assert phases and all(p.target == Target.WORKSPACE_PLAN for p in phases)
-    assert value not in str(phases)
-    for invalid in ("arbitrary", "run"):
-        with pytest.raises(ValueError):
-            command(invalid)
-    with pytest.raises(ValueError):
-        command(Target.WORKSPACE_PLAN, {"project": "/tmp/name\nbad"})
-
-
-def test_cancel_before_spawn_discards_credentials(tmp_path):
-    event = asyncio.Event()
-    event.set()
-    token = BecomePassword("sample")
-    # Cancellation precedes authorizing or opening the system operation.
-    cmd = command(Target.BASE_INSPECT)
-    reply = asyncio.run(AsyncMakeRunner(tmp_path).execute(cmd, password=token, cancel=event))
-    assert reply.status == "cancelled"
-    with pytest.raises(RuntimeError, match="expired"):
-        token.take()
 
 
 @pytest.mark.parametrize(
-    ("target", "prompt"), [(Target.WORKSPACE_APPLY, "BECOME"), (Target.ADMIN_APPLY, "SU")]
+    ("target", "prompt"), [("workspace-apply", "BECOME"), ("admin-apply", "SU")]
 )
 def test_getpass_receives_only_the_hidden_prompt(tmp_path, target, prompt):
     secret = secrets.token_hex(16)
@@ -127,7 +68,7 @@ Path(os.environ['SETUP_SYSTEM_RESULT']).write_text(hashlib.sha256(value.encode()
 def test_visible_prompt_cannot_receive_a_secret(tmp_path):
     fixture_make(tmp_path, 'print("BECOME password: ", end="", flush=True)\ninput()\n')
     with pytest.raises(transport.AuthorizationError, match="echo"):
-        asyncio.run(run_transport(tmp_path, Target.WORKSPACE_APPLY, BecomePassword("fixture")))
+        asyncio.run(run_transport(tmp_path, "workspace-apply", BecomePassword("fixture")))
 
 
 def test_response_is_one_use_and_has_no_plaintext_representation():
@@ -138,23 +79,6 @@ def test_response_is_one_use_and_has_no_plaintext_representation():
         response.take()
     with pytest.raises(ValueError):
         BecomePassword("two\nlines")
-
-
-def test_two_writers_surface_the_native_lock_reason(tmp_path):
-    import fcntl
-
-    root = Path(__file__).resolve().parents[1]
-    lock_task = (root / "libexec/locked.sh").read_text().replace("lock=/run/setup-system", "lock=.")
-    (tmp_path / "lock-task").write_text(lock_task)
-    shutil.copy2(root / "libexec/dpkg_lock.py", tmp_path / "dpkg_lock.py")
-    (tmp_path / "Makefile").write_text("workspace-plan:\n\t@/bin/sh ./lock-task /usr/bin/false\n")
-    fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        result = asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
-        assert result.status == "blocked" and "retry" in str(result.blockers).lower()
-    finally:
-        os.close(fd)
 
 
 @pytest.mark.parametrize("after_auth", [False, True])
@@ -208,7 +132,7 @@ Path("boundary").write_text("finished")
     monkeypatch.setattr(transport.os, "openpty", opened)
     monkeypatch.setattr(transport.fdspawn, "expect", broken)
     with pytest.raises(transport.TransportError) as error:
-        asyncio.run(run_transport(tmp_path, Target.WORKSPACE_APPLY, BecomePassword("fixture")))
+        asyncio.run(run_transport(tmp_path, "workspace-apply", BecomePassword("fixture")))
     assert "private-test-transcript" not in str(error.value)
     assert error.value.__context__ is None
     assert len(children) == len(masters) == 1
@@ -217,69 +141,6 @@ Path("boundary").write_text("finished")
     with pytest.raises(OSError):
         os.fstat(masters[0])
     assert (tmp_path / "boundary").exists() == after_auth
-
-
-def test_noninteractive_idle_timeout_and_read_only_cancel_reap_processes(tmp_path, monkeypatch):
-    fixture_make(
-        tmp_path,
-        """import os, time
-from pathlib import Path
-Path("child").write_text(str(os.getpid()))
-time.sleep(8)
-Path("finished").touch()
-""",
-    )
-    monkeypatch.setenv("SETUP_SYSTEM_IDLE_TIMEOUT_SECONDS", "0.2")
-    with pytest.raises(transport.TransportError, match="read-only"):
-        asyncio.run(run_transport(tmp_path, Target.WORKSPACE_PLAN))
-    assert not (tmp_path / "finished").exists()
-
-
-def test_cancelling_worker_keeps_writer_and_snapshot_until_safe_boundary(tmp_path, monkeypatch):
-    import threading
-
-    owner = threading.get_ident()
-    create_marker = transport._cancel_at_boundary
-
-    def marker(env):
-        assert threading.get_ident() != owner
-        create_marker(env)
-
-    monkeypatch.setattr(transport, "_cancel_at_boundary", marker)
-    fixture_make(
-        tmp_path,
-        """import json, os, time
-from pathlib import Path
-Path("writing").touch()
-marker=Path(os.environ["SETUP_SYSTEM_CANCEL"])
-until=time.monotonic()+4
-while not marker.exists() and time.monotonic()<until: time.sleep(.01)
-assert marker.exists()
-time.sleep(.08)
-assert Path(os.environ["SETUP_SYSTEM_REQUEST"]).is_file()
-Path(os.environ["SETUP_SYSTEM_RESULT"]).write_text('{"status":"cancelled"}')
-Path("boundary").touch()
-""",
-    )
-
-    async def exercise():
-        # Use a confirmed user mutation without invoking any system package tools.
-        expected = {
-            "status": "ready",
-            "actions": [{"kind": "user_file", "path": ".config/test", "label": "theme"}],
-            "observed": {"needs_user": True, "needs_system": False},
-        }
-        cmd = command(Target.WORKSPACE_USER_APPLY, {"desktop_theme": True}, expected)
-        task = asyncio.create_task(AsyncMakeRunner(tmp_path).execute(cmd))
-        async with asyncio.timeout(3):
-            while not (tmp_path / "writing").exists():
-                await asyncio.sleep(0.01)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        assert (tmp_path / "boundary").is_file()
-
-    asyncio.run(exercise())
 
 
 def test_real_ansible_asks_on_the_private_terminal_without_running_become(tmp_path):
@@ -299,7 +160,7 @@ def test_real_ansible_asks_on_the_private_terminal_without_running_become(tmp_pa
     assert (
         asyncio.run(
             run_transport(
-                tmp_path, Target.WORKSPACE_APPLY, BecomePassword("fixture-only"), phases=phases
+                tmp_path, "workspace-apply", BecomePassword("fixture-only"), phases=phases
             )
         )
         == 0
@@ -312,7 +173,7 @@ def test_readiness_deadline_does_not_transmit_password(tmp_path, monkeypatch):
     monkeypatch.setenv("SETUP_SYSTEM_PROMPT_TIMEOUT_SECONDS", "0.15")
     token = BecomePassword("test-only")
     with pytest.raises(transport.ReadinessTimeoutError, match="prompt"):
-        asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, token))
+        asyncio.run(run_transport(tmp_path, "admin-apply", token))
     assert token.take() == b"test-only"
 
 
@@ -327,9 +188,7 @@ Path("changed").touch()
     )
     phases = []
     assert (
-        asyncio.run(
-            run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("wrong"), phases=phases)
-        )
+        asyncio.run(run_transport(tmp_path, "admin-apply", BecomePassword("wrong"), phases=phases))
         != 0
     )
     assert not (tmp_path / "changed").exists() and "wrong" not in str(phases)
@@ -349,9 +208,7 @@ Path("boundary").touch()
     phases = []
     assert (
         asyncio.run(
-            run_transport(
-                tmp_path, Target.WORKSPACE_APPLY, BecomePassword("fixture"), phases=phases
-            )
+            run_transport(tmp_path, "workspace-apply", BecomePassword("fixture"), phases=phases)
         )
         == 0
     )
@@ -374,37 +231,11 @@ def test_spawn_failure_closes_both_pty_fds(tmp_path, monkeypatch):
     monkeypatch.setattr(transport.os, "openpty", opened)
     monkeypatch.setattr(transport.asyncio, "create_subprocess_exec", failed)
     with pytest.raises(transport.TransportError, match="authorization terminal") as message:
-        asyncio.run(run_transport(tmp_path, Target.WORKSPACE_APPLY, BecomePassword("fixture")))
+        asyncio.run(run_transport(tmp_path, "workspace-apply", BecomePassword("fixture")))
     assert "fixture" not in str(message.value)
     for fd in descriptors:
         with pytest.raises(OSError):
             os.fstat(fd)
-
-
-def test_read_only_cancel_stops_even_a_recipe_that_ignores_term(tmp_path, monkeypatch):
-    fixture_make(
-        tmp_path,
-        """import signal,time
-from pathlib import Path
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-Path('ready').touch()
-time.sleep(4)
-Path('changed').touch()
-""",
-    )
-    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.1")
-
-    async def exercise():
-        stop = asyncio.Event()
-        task = asyncio.create_task(run_transport(tmp_path, Target.WORKSPACE_PLAN, cancel=stop))
-        async with asyncio.timeout(2):
-            while not (tmp_path / "ready").exists():
-                await asyncio.sleep(0.01)
-            stop.set()
-            assert await task == 130
-
-    asyncio.run(exercise())
-    assert not (tmp_path / "changed").exists()
 
 
 def test_private_authorization_cancel_preserves_unused_token(tmp_path):
@@ -422,46 +253,21 @@ def test_private_authorization_cancel_preserves_unused_token(tmp_path):
 
         env = {"SETUP_SYSTEM_CANCEL": str(tmp_path / "cancel")}
         async with asyncio.timeout(2):
-            result = await transport.execute_make(
+            result = await transport.authenticated_make(
                 tmp_path,
-                Target.ADMIN_APPLY,
+                ["-rR", "-f", str(tmp_path / "Makefile"), "admin-apply"],
                 env,
                 stop,
                 notice,
                 options=Settings.application(),
                 take_password=token.take,
+                root_account=True,
             )
         assert result == 130
         assert token.take() == b"fixture"
 
     asyncio.run(exercise())
     assert not (tmp_path / "changed").exists()
-
-
-def test_oversized_or_unrelated_command_is_rejected_before_spawn():
-    for envelope in (
-        {"schema": 1, "settings": {"project": "/" + "a" * (2**20)}, "expected": None},
-        {"schema": 1, "settings": {}, "expected": None, "makefile": "/tmp/other"},
-        {"schema": True, "settings": {}, "expected": None},
-    ):
-        with pytest.raises(ValueError):
-            Command.capture(Target.WORKSPACE_PLAN, envelope)
-
-
-def test_terminal_error_keeps_the_recorded_native_outcome(tmp_path, monkeypatch):
-    from setup_system import runner
-
-    async def broken(_root, _target, env, *_args, **_kwargs):
-        Path(env["SETUP_SYSTEM_RESULT"]).write_text(
-            '{"status":"partial","blockers":["Review recovery"]}'
-        )
-        Path(env["SETUP_SYSTEM_RESULT"]).chmod(0o600)
-        raise transport.TransportError("Native channel interrupted")
-
-    monkeypatch.setattr(runner, "execute_make", broken)
-    with pytest.raises(transport.TransportError, match="Recorded native outcome: Partial") as fail:
-        asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
-    assert "Review recovery" in str(fail.value)
 
 
 def test_repeated_hidden_prompt_is_dismissed_without_a_second_response(tmp_path):
@@ -475,59 +281,10 @@ def test_repeated_hidden_prompt_is_dismissed_without_a_second_response(tmp_path)
     async def exercise():
         async with asyncio.timeout(2):
             with pytest.raises(transport.AuthorizationError, match="Additional native"):
-                await run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture"))
+                await run_transport(tmp_path, "admin-apply", BecomePassword("fixture"))
 
     asyncio.run(exercise())
     assert not (tmp_path / "changed").exists()
-
-
-def test_all_private_snapshot_io_runs_off_the_ui_thread(tmp_path, monkeypatch):
-    import threading
-
-    import aiofiles.tempfile
-    import aiofiles.threadpool
-
-    from setup_system import runner
-
-    fixture_make(
-        tmp_path,
-        "import os\nfrom pathlib import Path\n"
-        "Path(os.environ['SETUP_SYSTEM_RESULT']).write_text('{\"status\":\"ready\"}')\n",
-    )
-    owner = threading.get_ident()
-    seen = set()
-
-    def guard(module, name):
-        original = getattr(module, name)
-
-        def checked(*args, **kwargs):
-            assert threading.get_ident() != owner, f"{name} blocked the UI loop"
-            seen.add(name)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(module, name, checked)
-
-    guard(runner, "_environment")
-    guard(runner, "read_wire")
-    guard(aiofiles.threadpool, "sync_open")
-    guard(aiofiles.tempfile, "syncTemporaryDirectory")
-    reply = asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
-    assert reply.status == "ready"
-    assert seen == {"_environment", "read_wire", "sync_open", "syncTemporaryDirectory"}
-
-
-def test_partial_native_outcome_survives_cancellation_exit_code(tmp_path, monkeypatch):
-    from setup_system import runner
-
-    async def interrupted(_root, _target, env, *_args, **_kwargs):
-        path = Path(env["SETUP_SYSTEM_RESULT"])
-        path.write_text('{"status":"partial","blockers":["Inspect recovery"]}')
-        path.chmod(0o600)
-        return 130
-
-    monkeypatch.setattr(runner, "execute_make", interrupted)
-    reply = asyncio.run(AsyncMakeRunner(tmp_path).execute(command(Target.WORKSPACE_PLAN)))
-    assert reply.status == "partial" and reply.blockers == ("Inspect recovery",)
 
 
 def test_premature_terminal_eof_has_a_deadline_before_authorization(tmp_path, monkeypatch):
@@ -540,7 +297,7 @@ def test_premature_terminal_eof_has_a_deadline_before_authorization(tmp_path, mo
     monkeypatch.setattr(transport.fdspawn, "expect", early_eof)
     secret = BecomePassword("unused fixture response")
     with pytest.raises(transport.ReadinessTimeoutError):
-        asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, secret))
+        asyncio.run(run_transport(tmp_path, "admin-apply", secret))
     assert secret.take() == b"unused fixture response"
 
 
@@ -569,6 +326,12 @@ def test_installed_resources_require_protected_parents_and_recipes(tmp_path, mon
         path.chmod(0o755 if path.is_dir() else 0o644)
     python_package = root / "python"
     python_package.mkdir(mode=0o755)
+    for name, file in (
+        ("setup_system_sdk", "worker.py"),
+        ("setup_system-1.0.dist-info", "METADATA"),
+    ):
+        (python_package.parent / name).mkdir(mode=0o755)
+        (python_package.parent / name / file).touch(mode=0o644)
     (python_package / "layout.py").touch(mode=0o644)
     monkeypatch.setattr(layout, "INSTALLED", root)
     monkeypatch.setattr(layout, "PYTHON_PACKAGE", python_package)
@@ -584,39 +347,6 @@ def test_installed_resources_require_protected_parents_and_recipes(tmp_path, mon
         layout.verify_installation(root)
 
 
-@pytest.mark.parametrize("reply", ["missing", "invalid", "unreadable", "preview"])
-def test_lost_mutation_result_requires_inspection_without_retry(tmp_path, monkeypatch, reply):
-    from setup_system import runner
-
-    calls = []
-
-    async def interrupted(_root, target, env, _stop, report, **_kwargs):
-        calls.append(target)
-        report(transport.Phase.RUNNING)
-        if reply == "invalid":
-            Path(env["SETUP_SYSTEM_RESULT"]).write_text("{")
-        if reply == "unreadable":
-            Path(env["SETUP_SYSTEM_RESULT"]).mkdir()
-        if reply == "preview":
-            Path(env["SETUP_SYSTEM_RESULT"]).write_text('{"status":"plan_ready"}')
-            return 0
-        return 130
-
-    monkeypatch.setattr(runner, "execute_make", interrupted)
-    request = command(
-        Target.WORKSPACE_USER_APPLY,
-        {"desktop_theme": True},
-        expected={
-            "status": "ready",
-            "actions": [{"kind": "user_file", "path": ".config/test", "label": "theme"}],
-            "observed": {"needs_user": True, "needs_system": False},
-        },
-    )
-    outcome = asyncio.run(AsyncMakeRunner(tmp_path).execute(request))
-    assert outcome.status == "unknown" and calls == [Target.WORKSPACE_USER_APPLY]
-    assert "Inspect" in outcome.describe()
-
-
 def test_second_prompt_with_echo_enabled_is_dismissed_without_input(tmp_path):
     fixture_make(
         tmp_path,
@@ -629,7 +359,7 @@ Path("changed").touch()
 """,
     )
     with pytest.raises(transport.AuthorizationError, match="Additional native"):
-        asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture")))
+        asyncio.run(run_transport(tmp_path, "admin-apply", BecomePassword("fixture")))
     assert not (tmp_path / "changed").exists()
 
 
@@ -651,7 +381,7 @@ Path("unexpected-input" if received else "dismissed").touch()
 """,
     )
     with pytest.raises(transport.AuthorizationError, match="Additional native"):
-        asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture")))
+        asyncio.run(run_transport(tmp_path, "admin-apply", BecomePassword("fixture")))
     assert (tmp_path / "dismissed").exists() and not (tmp_path / "unexpected-input").exists()
 
 
@@ -705,58 +435,12 @@ Path("finished").touch()
         monkeypatch.setattr(transport.fdspawn, "expect", interrupt)
         if condition == "idle":
             monkeypatch.setenv("SETUP_SYSTEM_IDLE_TIMEOUT_SECONDS", "0.06")
-        operation = run_transport(
-            tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture"), cancel=cancel
-        )
+        operation = run_transport(tmp_path, "admin-apply", BecomePassword("fixture"), cancel=cancel)
         if condition == "reader_error":
             with pytest.raises(transport.TransportError):
                 await operation
         else:
             await operation
         assert (tmp_path / "finished").exists()
-
-    asyncio.run(exercise())
-
-
-def test_active_read_only_output_has_an_absolute_deadline(tmp_path, monkeypatch):
-    fixture_make(
-        tmp_path,
-        "import os, signal\nfrom pathlib import Path\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "Path('make-pid').write_text(str(os.getppid()))\n"
-        "while True: os.write(1, b'x' * 65536)\n",
-    )
-    monkeypatch.setenv("SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS", "0.4")
-    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.1")
-
-    async def scenario():
-        async with asyncio.timeout(3):
-            with pytest.raises(transport.ReadinessTimeoutError, match="read-only"):
-                await run_transport(tmp_path, Target.WORKSPACE_PLAN)
-
-    asyncio.run(scenario())
-    pid = int((tmp_path / "make-pid").read_text())
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
-
-
-def test_read_only_cancel_during_output_drain_survives_overlapping_deadline(tmp_path, monkeypatch):
-    fixture_make(
-        tmp_path,
-        "import os,signal\nfrom pathlib import Path\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "Path('ready').touch()\nwhile True: os.write(1,b'x' * 65536)\n",
-    )
-    monkeypatch.setenv("SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS", "0.6")
-    monkeypatch.setenv("SETUP_SYSTEM_TERMINATION_GRACE_SECONDS", "0.8")
-
-    async def exercise():
-        stop = asyncio.Event()
-        task = asyncio.create_task(run_transport(tmp_path, Target.WORKSPACE_PLAN, cancel=stop))
-        async with asyncio.timeout(5):
-            while not (tmp_path / "ready").exists():
-                await asyncio.sleep(0.005)
-            stop.set()
-            assert await task == 130
 
     asyncio.run(exercise())

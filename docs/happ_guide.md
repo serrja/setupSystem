@@ -1,7 +1,7 @@
-# Happ
+# Happ subscriptions and routing
 
-Select Happ in **Working environment**. Preview checks the publisher's stable release, architecture, asset digest and Debian package identity. The confirmed revision and service state are checked again before installation. Disconnect an active session before updating. Base setup uses the workstation's existing connectivity.
+## ⚙️ Plugin actions
 
-## 🔐 Sign in to Happ
+Open Happ → Accounts to save a named subscription and a system-keyring reference. Import it through the native Happ dialog. Disconnect active sessions before updating the package.
 
-After installation, open Happ to sign in or add a subscription. Keep subscription URLs and user data in Happ. Verify the native helper, graphical session and connectivity on the chosen target. [Official desktop releases](https://github.com/Happ-proxy/happ-desktop/releases).
+For a standard subscription, choose Export route, select the subscription and enter the rule. Import the generated routing link into Happ and reconnect separately. A JSON subscription can supply provider-controlled routing. The plugin blocks local edits for that source format. [Happ routing](https://www.happ.su/main/dev-docs/routing).

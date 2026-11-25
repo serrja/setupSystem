@@ -1,0 +1,8 @@
+{
+  "names": [
+    "docker-cli",
+    "docker.io",
+    "jq"
+  ],
+  "service": "docker.service"
+}

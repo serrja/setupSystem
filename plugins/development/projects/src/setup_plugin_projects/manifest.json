@@ -1,0 +1,313 @@
+{
+  "id": "projects",
+  "name": "Projects and templates",
+  "author": "serrja",
+  "category": "development",
+  "kind": "system",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_projects:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "user-files",
+    "user-session"
+  ],
+  "capabilities": [
+    "copier-templates"
+  ],
+  "dependencies": [
+    "git"
+  ],
+  "actions": [
+    {
+      "id": "inspect-projects",
+      "label": "inspect projects",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "prepare-directories",
+      "label": "prepare directories",
+      "page": "actions",
+      "target": "prepare-directories",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "template-cache",
+      "label": "template cache",
+      "page": "actions",
+      "target": "template-cache",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "template-create",
+      "label": "template create",
+      "page": "actions",
+      "target": "template-create",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "template-update",
+      "label": "template update",
+      "page": "actions",
+      "target": "template-update",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "open-editor",
+      "label": "Open in Neovim",
+      "target": "open-editor",
+      "permissions": [
+        "user-session"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "open-codex",
+      "label": "Open in Codex",
+      "target": "open-codex",
+      "permissions": [
+        "user-session"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "template-versions",
+      "label": "List template releases",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    }
+  ],
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "offline": {
+        "default": false,
+        "title": "Use cached template releases",
+        "type": "boolean"
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "inspect-projects": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "open-editor": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "maxLength": 128,
+          "pattern": "^[a-z][A-Za-z0-9]*/(?:[A-Za-z][A-Za-z0-9]*|\\.github)$",
+          "title": "Active project",
+          "type": "string",
+          "ui": {
+            "choice_provider": "projects",
+            "widget": "select"
+          }
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "title": "Project",
+      "type": "object"
+    },
+    "open-codex": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "maxLength": 128,
+          "pattern": "^[a-z][A-Za-z0-9]*/(?:[A-Za-z][A-Za-z0-9]*|\\.github)$",
+          "title": "Active project",
+          "type": "string",
+          "ui": {
+            "choice_provider": "projects",
+            "widget": "select"
+          }
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "title": "Project",
+      "type": "object"
+    },
+    "template-versions": {
+      "additionalProperties": false,
+      "properties": {
+        "template": {
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]+$",
+          "title": "Catalog template",
+          "type": "string",
+          "ui": {
+            "choice_provider": "templates",
+            "widget": "select"
+          }
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "title": "CatalogTemplate",
+      "type": "object"
+    },
+    "prepare-directories": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "template-cache": {
+      "additionalProperties": false,
+      "properties": {
+        "template": {
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]+$",
+          "title": "Catalog template",
+          "type": "string",
+          "ui": {
+            "choice_provider": "templates",
+            "widget": "select"
+          }
+        },
+        "version": {
+          "default": "",
+          "description": "Leave empty to resolve the latest stable annotated release.",
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9.+-]*$",
+          "title": "Release",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template"
+      ],
+      "title": "Template",
+      "type": "object"
+    },
+    "template-create": {
+      "additionalProperties": false,
+      "properties": {
+        "template": {
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]+$",
+          "title": "Catalog template",
+          "type": "string",
+          "ui": {
+            "choice_provider": "templates",
+            "widget": "select"
+          }
+        },
+        "version": {
+          "default": "",
+          "description": "Leave empty to resolve the latest stable annotated release.",
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9.+-]*$",
+          "title": "Release",
+          "type": "string"
+        },
+        "destination": {
+          "description": "A directory inside your HOME.",
+          "format": "path",
+          "title": "Project directory",
+          "type": "string"
+        },
+        "project_name": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,79}$",
+          "title": "Project name",
+          "type": "string"
+        },
+        "python_profile": {
+          "anyOf": [
+            {
+              "enum": [
+                "library",
+                "native",
+                "service"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Python template profile"
+        }
+      },
+      "required": [
+        "template",
+        "destination",
+        "project_name"
+      ],
+      "title": "Creation",
+      "type": "object"
+    },
+    "template-update": {
+      "additionalProperties": false,
+      "properties": {
+        "template": {
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]+$",
+          "title": "Catalog template",
+          "type": "string",
+          "ui": {
+            "choice_provider": "templates",
+            "widget": "select"
+          }
+        },
+        "version": {
+          "default": "",
+          "description": "Leave empty to resolve the latest stable annotated release.",
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9.+-]*$",
+          "title": "Release",
+          "type": "string"
+        },
+        "destination": {
+          "description": "A directory inside your HOME.",
+          "format": "path",
+          "title": "Project directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template",
+        "destination"
+      ],
+      "title": "Destination",
+      "type": "object"
+    }
+  },
+  "pages": [],
+  "settings_version": 1
+}

@@ -1,0 +1,19 @@
+[candidates.nano]
+reason = "Keep one primary editor and an independent spare."
+requires_verified_editor = true
+
+[candidates.vim-tiny]
+reason = "Optional minimal editor when a tested replacement and backup are installed."
+requires_verified_editor = true
+
+[candidates.reportbug]
+reason = "Optional interactive Debian bug-reporting client."
+
+[candidates.popularity-contest]
+reason = "Optional Debian package-usage reporting."
+
+[candidates.debian-faq]
+reason = "Optional local Debian FAQ documentation."
+
+[candidates.doc-debian]
+reason = "Optional local Debian documentation."

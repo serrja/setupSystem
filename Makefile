@@ -12,7 +12,6 @@ override export $(1) := $$(value $(1))
 endif
 endef
 $(foreach name,$(runtime_environment),$(eval $(call export_literal,$(name))))
-override PLAY := /bin/sh ./libexec/play.sh
 .PHONY: help run prepare
 help:
 	@printf '%s\n' 'make prepare  | prepare a development environment' \
@@ -22,4 +21,4 @@ run:
 	@/bin/sh ./libexec/run.sh
 prepare:
 	uv sync --locked --all-groups
-include mk/files.mk mk/projects.mk mk/base.mk mk/admin.mk mk/workspace.mk mk/package.mk mk/quality.mk
+include mk/package.mk mk/quality.mk

@@ -1,0 +1,260 @@
+{
+  "id": "hyprland",
+  "name": "Hyprland",
+  "author": "serrja",
+  "category": "desktop",
+  "kind": "system",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_hyprland:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-files",
+    "session-output"
+  ],
+  "capabilities": [],
+  "dependencies": [
+    "foot",
+    "waybar",
+    "hyprlock",
+    "regional"
+  ],
+  "actions": [
+    {
+      "id": "check",
+      "label": "Check program",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "description": "",
+      "cleanup_phase": "program"
+    },
+    {
+      "id": "configure",
+      "label": "Save configuration",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "description": ""
+    },
+    {
+      "id": "save-monitor",
+      "label": "Save monitor layout",
+      "page": "actions",
+      "target": "save-monitor",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "description": ""
+    },
+    {
+      "id": "test-monitor",
+      "label": "Test monitor temporarily",
+      "target": "test-monitor",
+      "permissions": [
+        "session-output"
+      ],
+      "supports_rollback": false,
+      "description": "Restore the original output after twelve seconds."
+    }
+  ],
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "effects": {
+        "default": false,
+        "title": "Compositor effects",
+        "type": "boolean"
+      },
+      "rounding": {
+        "default": 12,
+        "maximum": 24,
+        "minimum": 0,
+        "title": "Window corner radius",
+        "type": "integer"
+      },
+      "keyboard": {
+        "default": "us",
+        "description": "One to four XKB layouts separated by commas.",
+        "pattern": "^[a-z][a-z0-9_-]{0,15}(,[a-z][a-z0-9_-]{0,15}){0,3}$",
+        "title": "Session keyboard layouts",
+        "type": "string"
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "save-monitor": {
+      "additionalProperties": false,
+      "properties": {
+        "output": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "title": "Output",
+          "type": "string",
+          "ui": {
+            "choice_provider": "outputs",
+            "widget": "select"
+          }
+        },
+        "mode": {
+          "pattern": "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}@[0-9]{1,4}(\\.[0-9]{1,5})?$",
+          "title": "Mode",
+          "type": "string",
+          "ui": {
+            "choice_provider": "modes",
+            "widget": "select"
+          }
+        },
+        "x": {
+          "default": 0,
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 0,
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "Y",
+          "type": "integer"
+        },
+        "scale": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 0.25,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "output",
+        "mode"
+      ],
+      "title": "Display",
+      "type": "object"
+    },
+    "test-monitor": {
+      "additionalProperties": false,
+      "properties": {
+        "output": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "title": "Output",
+          "type": "string",
+          "ui": {
+            "choice_provider": "outputs",
+            "widget": "select"
+          }
+        },
+        "mode": {
+          "pattern": "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}@[0-9]{1,4}(\\.[0-9]{1,5})?$",
+          "title": "Mode",
+          "type": "string",
+          "ui": {
+            "choice_provider": "modes",
+            "widget": "select"
+          }
+        },
+        "x": {
+          "default": 0,
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "default": 0,
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "Y",
+          "type": "integer"
+        },
+        "scale": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 0.25,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "output",
+        "mode"
+      ],
+      "title": "Display",
+      "type": "object"
+    }
+  },
+  "pages": [],
+  "settings_version": 1
+}

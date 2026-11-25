@@ -14,54 +14,6 @@ from setup_system.configuration import sources as settings_sources
 from setup_system.layout import resource_root
 
 
-def test_stage_precedence_and_partial_tables(tmp_path, monkeypatch):
-    store = Settings(tmp_path, tmp_path / "config")
-    store.directory.mkdir(parents=True, mode=0o700)
-    path = store.directory / "workspace.toml"
-    path.write_text('apps=["codex"]\n[theme]\nrounding=4\n')
-    path.chmod(0o600)
-    monkeypatch.setenv("SETUP_SYSTEM_LANGUAGES", '["override"]')
-    loaded = store.load("workspace", profile="example", confirmed={"theme": {"effects": True}})
-    assert loaded.options.apps == ("codex",)
-    assert loaded.options.languages == ("python",)
-    assert loaded.options.theme.rounding == 4 and loaded.options.theme.effects
-    assert loaded.options.theme.opacity == store.load("workspace").options.theme.opacity
-    assert not store.load("workspace").options.languages
-    assert not store.load("base").options.hyprland
-    confirmed = store.load("workspace", profile="example", confirmed={"apps": []})
-    assert not confirmed.options.apps
-    assert path.read_text() == 'apps=["codex"]\n[theme]\nrounding=4\n'
-
-
-@pytest.mark.parametrize("key", ["_env_file", "_secrets_dir", "_cli_parse_args", "root", "target"])
-def test_confirmed_source_cannot_change_loader_or_execution_policy(tmp_path, key):
-    store = Settings(tmp_path, tmp_path / "config")
-    with pytest.raises(ValidationError) as error:
-        store.load("base", confirmed={key: "private input value"})
-    assert "private input value" not in str(error.value)
-    assert not store.directory.exists()
-
-
-def test_confirmed_value_cannot_hide_invalid_saved_preferences(tmp_path):
-    store = Settings(tmp_path, tmp_path / "config")
-    store.directory.mkdir(parents=True, mode=0o700)
-    path = store.directory / "base.toml"
-    path.write_text("hyprland = 1")
-    path.chmod(0o600)
-    with pytest.raises(ValidationError):
-        store.load("base", confirmed={"hyprland": True})
-    assert path.read_text() == "hyprland = 1"
-
-
-def test_only_packaged_profile_and_fixed_section_names_are_read(tmp_path):
-    store = Settings(tmp_path, tmp_path / "config")
-    with pytest.raises(ValueError, match="profile"):
-        store.load("base", profile="../private")
-    with pytest.raises(ValueError, match="section"):
-        store.load("../private")
-    assert not store.directory.exists()
-
-
 def test_only_named_numeric_application_environment_overrides_packaged_toml(tmp_path, monkeypatch):
     packaged = tomllib.loads((resource_root() / "config/application.toml").read_text())
     monkeypatch.chdir(tmp_path)

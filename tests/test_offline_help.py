@@ -17,7 +17,7 @@ def test_help_opens_local_recovery_and_returns_to_workspace(tmp_path, monkeypatc
     async def exercise():
         app = SetupApp()
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+2", "f1")
+            await pilot.press("f1")
             assert isinstance(app.screen, Help)
             app.screen.query_one(Select).value = "recovery"
             await pilot.pause()
@@ -28,7 +28,7 @@ def test_help_opens_local_recovery_and_returns_to_workspace(tmp_path, monkeypatc
                 ):
                     await pilot.pause()
             await pilot.press("escape")
-            assert app.section == "workspace"
+            assert not isinstance(app.screen, Help)
             assert not list(tmp_path.iterdir())
 
     asyncio.run(exercise())

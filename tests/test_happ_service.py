@@ -4,7 +4,6 @@ import os
 import stat
 
 import pytest
-from test_native_ansible import run_env as run_env
 
 from setup_system.infrastructure import service_policy
 
@@ -70,58 +69,3 @@ def test_late_policy_replacement_survives_actual_claim(tmp_path, monkeypatch, sa
         with service_policy.defer_services(path):
             assert path.read_bytes() == service_policy.DEFER_POLICY
     assert os.path.samestat(identity, path.stat()) and path.read_bytes() == replacement
-
-
-def test_native_unit_readback_failure_does_not_record_started_service(run_env):
-    import json
-    from pathlib import Path
-
-    import yaml
-    from test_native_ansible import ROOT, play
-
-    tasks = yaml.safe_load((ROOT / "ansible/tasks/apply.yml").read_text())
-    by_name = {task["name"]: number for number, task in enumerate(tasks)}
-    install = by_name["Apply the native, signed Debian transaction with service start deferral"]
-    confirm = by_name["Verify the installed Happ unit and preserve administrator masks"]
-    start = by_name["Start the verified vendor service after the Debian transaction"]
-    readback = by_name["Check the vendor service completed its start"]
-    record = by_name["Record the verified vendor service"]
-    assert install < confirm < start < readback < record
-    step = tasks[readback]
-    assert step["ansible.builtin.command"]["argv"][-2:] == ["is-active", "happd.service"]
-    step["ansible.builtin.command"]["argv"][-1] = "setup-system-test-nonexistent.service"
-    stage = Path(run_env["SETUP_SYSTEM_RESULT"]).parent
-    note = stage / "completed.json"
-    book = stage / "unit-readback.yml"
-    book.write_text(
-        yaml.safe_dump(
-            [
-                {
-                    "hosts": "localhost",
-                    "become": False,
-                    "gather_facts": False,
-                    "vars": {
-                        "changed_stages": ["Verified Debian package transaction"],
-                        "system_actions": ["Start the installed Happ service"],
-                    },
-                    "tasks": [
-                        {
-                            "block": [step, tasks[record]],
-                            "rescue": [
-                                {
-                                    "ansible.builtin.copy": {
-                                        "content": "{{ changed_stages | to_json }}",
-                                        "dest": str(note),
-                                        "mode": "0600",
-                                    }
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ]
-        )
-    )
-    result = play([str(book)], run_env)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(note.read_text()) == ["Verified Debian package transaction"]

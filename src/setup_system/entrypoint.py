@@ -9,9 +9,9 @@ from typing import Annotated
 
 import typer
 
+from setup_system.authorization import _environment, encoded_preferences
 from setup_system.configuration import APPLICATION_ENV_PREFIX, Settings
 from setup_system.layout import INSTALLED, PACKAGE, resource_root
-from setup_system.runner import _environment
 
 cli = typer.Typer(
     add_completion=False,
@@ -42,6 +42,7 @@ def open_app(
     env = _environment()
     try:
         preferences = Settings.application()
+        env["SETUP_SYSTEM_PLUGIN_OVERRIDES"] = encoded_preferences()
     except (OSError, ValueError) as error:
         typer.echo(f"Could not load application settings: {error}", err=True)
         raise typer.Exit(1) from None

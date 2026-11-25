@@ -1,0 +1,99 @@
+{
+  "id": "plymouth",
+  "name": "Plymouth",
+  "author": "serrja",
+  "category": "system",
+  "kind": "system",
+  "sdk": ">=1,<2",
+  "entry_point": "setup_plugin_plymouth:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root"
+  ],
+  "capabilities": [
+    "initramfs-prompt"
+  ],
+  "dependencies": [
+    "regional"
+  ],
+  "actions": [
+    {
+      "id": "check",
+      "label": "Check",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    },
+    {
+      "id": "configure",
+      "label": "Configure",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "description": ""
+    }
+  ],
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Load only caller-selected sources and explicitly declared environment names.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [],
+  "settings_version": 1
+}

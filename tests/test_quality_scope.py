@@ -14,15 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_production_scripts_are_discoverable_by_native_checks() -> None:
     tools = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]
-    typed = [ROOT / entry for entry in tools["mypy"]["files"]]
+    typed = [p for pattern in tools["mypy"]["files"] for p in ROOT.glob(pattern)]
     coverage = [
-        ROOT / ("src/setup_system" if entry == "setup_system" else entry)
+        ROOT / ("hatch_build.py" if entry == "hatch_build" else entry)
         for entry in tools["coverage"]["run"]["source"]
     ]
     provider = {"docker/python_release.py", "docker/release.py"}
-    for directory in ("src", "ansible", "assets", "debian", "docker", "libexec"):
+    for directory in ("src", "plugins", "assets", "debian", "docker", "libexec"):
         for path in (ROOT / directory).rglob("*"):
-            if not path.is_file() or "__pycache__" in path.parts:
+            if not path.is_file() or "__pycache__" in path.parts or "tests" in path.parts:
                 continue
             with path.open("rb") as stream:
                 first = stream.readline(256)
@@ -65,3 +65,10 @@ def test_packaging_and_execution_scripts_are_inert_on_import(tmp_path, monkeypat
         runpy.run_path(str(ROOT / name), run_name="imported_script")
     forbidden.assert_not_called()
     assert not list(tmp_path.iterdir())
+
+
+def test_bundled_make_workers_preserve_the_sealed_environment():
+    for makefile in (ROOT / "plugins").glob("*/*/src/*/Makefile"):
+        for line in makefile.read_text().splitlines():
+            if "SETUP_SYSTEM_INTERPRETER" in line and " -m " in line:
+                assert " -B " in line and " -I " in line, makefile

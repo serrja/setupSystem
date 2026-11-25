@@ -13,6 +13,7 @@ from importlib.metadata import distribution, version
 from pathlib import Path
 
 import setup_system
+from setup_system.extensions import builtins
 from setup_system.infrastructure.palette import palette
 from setup_system.layout import resource_root
 
@@ -49,11 +50,15 @@ def main() -> None:
     assert version("setup-system") == expected
     resources = resource_root()
     assert resources == root / "bundle"
-    projects = tomllib.loads((resources / "config/workspace/projects.toml").read_text())["project"]
-    assert "pokerlost/projectRules" in {item["id"] for item in projects}
-    assert (resources / "ansible/base.yml").is_file() and (
-        resources / "ansible/workspace.yml"
-    ).is_file()
+    entries = builtins(resources)
+    if not entries or any(item.reason or not item.manifest or not item.release for item in entries):
+        raise ValueError("An installed plugin lacks a valid release identity")
+    projects = next(e for e in entries if e.manifest and e.manifest.id == "projects")
+    assert projects.source and projects.manifest
+    module = projects.manifest.entry_point.partition(":")[0]
+    with zipfile.ZipFile(projects.source) as plugin:
+        catalog = tomllib.loads(plugin.read(module + "/config/workspace/projects.toml").decode())
+    assert "pokerlost/projectRules" in {item["id"] for item in catalog["project"]}
     source_palette = tomllib.loads((resources / "config/shared/palette.toml").read_text())
     assert palette(resources) == {
         key: value for key, value in source_palette.items() if key != "name"
