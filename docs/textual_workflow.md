@@ -2,6 +2,8 @@
 
 Start `setup-system` in a terminal as your desktop user. Select an existing local account if you need administrative access. Browsing, saving preferences and inspecting a plugin are available immediately.
 
+From a text console you can prepare the system and its graphical session first. After logging into the desktop, reopen the configurator whenever you want to use a program’s account actions. GitHub CLI, Codex and Telegram each have their own sign-in flow. The base and workspace profiles do not sign into accounts.
+
 Search the catalog, choose a category, then open a card. **Overview** shows the extension release, source and permissions. Activate its backend before using **Inspect program**. An already installed program retains its existing ownership.
 
 **Settings / Profiles** stores independent named preferences. **Accounts** appears for plugins that declare account actions. Choose a stable action in **Actions** and review **Run parameters** when the plugin declares flags or environment entries. Preview displays the exact changes and available recovery. Switch cards to work on another draft while an action runs.

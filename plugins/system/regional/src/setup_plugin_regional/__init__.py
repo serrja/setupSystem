@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, ClassVar
 from zoneinfo import available_timezones
@@ -10,13 +11,30 @@ from zoneinfo import available_timezones
 from pydantic import Field
 
 from setup_system.infrastructure.native_target import current_boot_identity, current_target
-from setup_system_sdk import Backend, Inputs, Outcome, Plan, PluginSettings, Resource, Result, xkb
+from setup_system_sdk import (
+    Backend,
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+    xkb,
+)
 from setup_system_sdk.apt import apply_packages, package_plan, verify_packages
 from setup_system_sdk.native_play import run_native_play
 
 from . import regional
 from .change import Confirmation
 from .models import RegionalKind
+
+
+class PluginAction(StrEnum):
+    KEYBOARD = "keyboard"
+    LOCALE = "locale"
+    TIMEZONE = "timezone"
+
 
 FOLDER = Path(__file__).parent
 SETTINGS = ("locale", "keyboard", "timezone")
@@ -73,11 +91,11 @@ def choices(provider: str) -> list[str]:
 
 def change(action_id: str, inputs: Inputs) -> Confirmation:
     setting: RegionalKind
-    if action_id == "timezone" and isinstance(inputs, Timezone):
+    if action_id == PluginAction.TIMEZONE and isinstance(inputs, Timezone):
         setting, values = "timezone", [inputs.value]
-    elif action_id == "locale" and isinstance(inputs, Locale):
+    elif action_id == PluginAction.LOCALE and isinstance(inputs, Locale):
         setting, values = "locale", [inputs.value]
-    elif action_id == "keyboard" and isinstance(inputs, Keyboard):
+    elif action_id == PluginAction.KEYBOARD and isinstance(inputs, Keyboard):
         setting, values = "keyboard", inputs.layouts
     else:
         raise ValueError("Select an independent regional setting.")
@@ -113,11 +131,11 @@ def prepare(action_id: str, inputs: Inputs) -> Plan:
 
 class Plugin(Backend):
     inputs: ClassVar[dict[str, type[Inputs]]] = {
-        "install": Inputs,
-        "update": Inputs,
-        "locale": Locale,
-        "keyboard": Keyboard,
-        "timezone": Timezone,
+        LifecycleAction.INSTALL: Inputs,
+        LifecycleAction.UPDATE: Inputs,
+        PluginAction.LOCALE: Locale,
+        PluginAction.KEYBOARD: Keyboard,
+        PluginAction.TIMEZONE: Timezone,
     }
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
@@ -139,7 +157,7 @@ class Plugin(Backend):
         )
 
     async def plan(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id in ("install", "update"):
+        if action_id in (LifecycleAction.INSTALL, LifecycleAction.UPDATE):
             return await asyncio.to_thread(package_plan, FOLDER)
         return await asyncio.to_thread(prepare, action_id, inputs)
 
@@ -157,7 +175,7 @@ class Plugin(Backend):
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    if action_id in ("install", "update"):
+    if action_id in (LifecycleAction.INSTALL, LifecycleAction.UPDATE):
         apply_packages("regional", action_id, plan)
         return
     request = change(action_id, inputs)

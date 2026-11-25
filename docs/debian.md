@@ -1,18 +1,25 @@
 # Debian workstation target
 
-Open a terminal as your desktop user. If the Debian package is installed, run this command from any directory.
+After installing the Debian package, choose **setupSystem** in the desktop applications menu or enter this command in any terminal or text console (TTY) as your normal user.
 
 ```sh
 setup-system
 ```
 
-Search for a plugin, activate its backend, then preview the program action you want. APT owns the configurator, bundled wheels, protected resources and offline documentation. Program settings and file recovery records are stored under the invoking user's XDG directories. Open the guides with F1 or `man setup-system`. [Using the configurator](textual_workflow.md) · [Settings](configuration.md) · [Recovery](recovery.md)
+Search for a plugin, activate its backend, then preview the program action you want. When uv is missing, the first explicit activation fetches the pinned Astral binary and checks its archive digest. APT owns the configurator, bundled wheels, protected resources and offline documentation. Program settings and file recovery records are stored under the invoking user's XDG directories. Open the guides with F1 or `man setup-system`. [Using the configurator](textual_workflow.md) · [Settings](configuration.md) · [Recovery](recovery.md)
 
 ## 📦 Install on Debian
 
-Use an existing Debian 13 (trixie) installation on amd64 or arm64 with configured APT sources and a normal user account. HTTPS delivery requires a POSIX shell, curl with CA certificates, jq, dpkg, APT, util-linux, coreutils and the GitHub CLI. Its `gh attestation verify` command must support bundle, source and signer verification. The script checks the required flags. The download works without a checkout, Make, Python or uv.
+Use Debian 13 (trixie) on amd64 or arm64 with configured APT sources, a normal user account, curl and CA certificates. The loader uses Debian's standard shell, dpkg, APT, util-linux and coreutils. It stages its verifier and JSON reader in a private executable temporary directory and removes them at exit. A GitHub account, checkout, preinstalled GitHub CLI, jq and uv are unnecessary.
 
-Download the delivery script as your normal user and run its `install` action. It resolves the latest stable release once, checks the package checksum and GitHub build attestation, then requests authorization for APT. Installation ends after the configurator and its runtime dependencies are in place.
+If curl is missing, install the download prerequisite with your existing administrative access.
+
+```sh
+sudo apt update
+sudo apt install ca-certificates curl
+```
+
+Download the delivery script as your normal user and run its `install` action. The script is the bootstrap trust anchor. For an independently reviewed revision, substitute its full commit SHA for `main` in the download URL. The loader resolves the latest stable release once and checks both canonical and companion tag identities. Before APT requests authorization, it checks the Debian package digest, the signed build's main commit, workflow and runner, and the published plugin catalog. Installation ends after APT installs the configurator and its runtime dependencies.
 
 ```sh
 ( set -eu
@@ -26,9 +33,11 @@ Download the delivery script as your normal user and run its `install` action. I
 
 If only the local root account can authorize installation, replace the last command inside the parentheses with `/bin/sh "$delivery" install --auth su`. Native `su` will ask for the root password. For the usual sudo path, use the installing user's sudo password. [Administrative access](administration.md)
 
+The loader pins distribution-specific SHA-256 digests for the official Linux amd64 and arm64 builds of GitHub CLI and jq. It authenticates each download before unpacking or executing it as the normal user. The Sigstore verifier runs with a private HOME and a minimal environment. To refresh these tools, maintainers review the upstream release, compare the release asset digests with the published checksum files, update the pins in `install.sh` and verify a published package on the new verifier before release. [GitHub CLI 2.105.0 checksums](https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_checksums.txt) · [jq 1.8.2 checksums](https://github.com/jqlang/jq/releases/download/jq-1.8.2/sha256sum.txt)
+
 ## 🔄 Update the configurator
 
-Run the same delivery script with `update` to verify and install the latest stable package. The update ends at the APT transaction. Open the app yourself when you are ready.
+Run the same delivery script with `update` to verify and install the latest stable package. Download a fresh reviewed loader when replacing its pinned verification tools. The update ends at the APT transaction. Open the app yourself when you are ready.
 
 ```sh
 ( set -eu
@@ -54,9 +63,7 @@ System changes require a matching distribution, release, codename and architectu
 
 ## System packages
 
-Selecting **Hyprland, sound, portals and desktop dependencies** includes the desktop package set. Graphical login adds greetd, gtkgreet and Cage. The release lists the package names and which ones come from trixie-backports. APT selects candidates from signed Debian stable, updates, security and backports indexes. The installed catalog and source definitions are `packages.toml` and `debian.sources` under `/usr/lib/setup-system/config/base`.
-
-**Plan** refreshes indexes in a private run directory and simulates the complete transaction. Inspect the package changes before confirming. For a system change, the app then asks for the local authorization password. Apply simulates again and compares the intended actions and versions with the package operations APT supplies immediately before dpkg. Package installation can leave completed changes after a failure. Check the application's result and Debian's package logs before retrying. [Recovery](recovery.md)
+Open the plugin that owns the program. For example, **Hyprland** manages the compositor session, **Waybar** manages the panel and **Greeter** manages graphical login. Preview the selected action to review its package changes before applying them. Debian package operations use signed APT metadata and recheck the approved closure and installed state. A failed transaction can leave some packages installed. Check its result and Debian's package logs before retrying. [Desktop login](desktop_login.md) · [Recovery](recovery.md)
 
 ## Regional settings
 

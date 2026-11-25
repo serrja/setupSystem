@@ -4,18 +4,20 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=1,<2",
+  "sdk": ">=1.1,<2",
   "entry_point": "setup_plugin_telegram:Plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "root",
     "user-files"
   ],
   "capabilities": [
-    "debian-package"
+    "snap-package"
   ],
-  "dependencies": [],
+  "dependencies": [
+    "snap"
+  ],
   "actions": [
     {
       "cleanup_phase": null,
@@ -101,6 +103,19 @@
       "supports_rollback": true,
       "read_only": false,
       "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "remove-debian-package",
+      "label": "Remove previously managed Debian package",
+      "page": "actions",
+      "target": "remove-debian-package",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
+      "description": "Remove the exact Debian telegram-desktop package recorded before switching to Snap. APT preserves user data."
     }
   ],
   "environment_fields": {},
@@ -168,6 +183,12 @@
       "title": "LauncherProfile",
       "type": "object"
     },
+    "remove-debian-package": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
     "accounts": {
       "additionalProperties": false,
       "properties": {},
@@ -184,6 +205,7 @@
   "pages": [
     "Overview",
     "Settings",
+    "Accounts",
     "Actions",
     "Managed resources",
     "History",

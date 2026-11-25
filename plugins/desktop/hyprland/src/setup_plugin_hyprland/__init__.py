@@ -5,12 +5,22 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, ClassVar
 
 from pydantic import Field
 
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result, xkb
+from setup_system_sdk import (
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+    xkb,
+)
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import (
     PublishedAssets,
@@ -21,6 +31,11 @@ from setup_system_sdk.managed_assets import (
 
 from .displays import discover_outputs, validate_layouts
 from .models import AdvertisedMode, MonitorLayout
+
+
+class PluginAction(StrEnum):
+    SAVE_MONITOR = "save-monitor"
+    TEST_MONITOR = "test-monitor"
 
 
 class Display(Inputs):
@@ -58,15 +73,15 @@ class Plugin(DebianPackages, PublishedAssets):
     package_folder = FOLDER
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "configure": Inputs,
-        "save-monitor": Display,
-        "test-monitor": Display,
+        LifecycleAction.CHECK: Inputs,
+        LifecycleAction.CONFIGURE: Inputs,
+        PluginAction.SAVE_MONITOR: Display,
+        PluginAction.TEST_MONITOR: Display,
     }
     file_actions = frozenset(
         (
-            "configure",
-            "save-monitor",
+            LifecycleAction.CONFIGURE,
+            PluginAction.SAVE_MONITOR,
         )
     )
 
@@ -79,7 +94,7 @@ class Plugin(DebianPackages, PublishedAssets):
         paths = desktop_directories()
         directory = paths["config"] / "hypr/setup-system"
         context = desktop_context()
-        if action_id == "save-monitor":
+        if action_id == PluginAction.SAVE_MONITOR:
             if not isinstance(inputs, Display):
                 raise ValueError("Expected a reviewed monitor layout.")
             layout = MonitorLayout.model_validate(inputs.model_dump())
@@ -118,7 +133,7 @@ class Plugin(DebianPackages, PublishedAssets):
         return result
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id != "test-monitor":
+        if action_id != PluginAction.TEST_MONITOR:
             return super().prepare(action_id, settings, inputs)
         if not isinstance(inputs, Display):
             raise ValueError("Select a connected output and mode.")
@@ -143,7 +158,7 @@ class Plugin(DebianPackages, PublishedAssets):
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
-        if action_id != "test-monitor":
+        if action_id != PluginAction.TEST_MONITOR:
             return super().mutate(action_id, settings, inputs, plan)
         subprocess.run(
             [sys.executable, "-I", "-B", "-m", "setup_plugin_hyprland.displays"],

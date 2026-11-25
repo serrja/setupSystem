@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import os
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Self
 from urllib.parse import urlsplit
@@ -13,6 +14,7 @@ from pydantic import Field, IPvAnyAddress, IPvAnyNetwork, field_validator, model
 from setup_system.infrastructure.user_storage import inside_home
 from setup_system_sdk import (
     Inputs,
+    LifecycleAction,
     Outcome,
     Plan,
     PluginSettings,
@@ -23,6 +25,20 @@ from setup_system_sdk import (
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.native import FilesBackend, owned_file_removal, remove_owned_file
 from setup_system_sdk.secrets import SecretUnavailableError, read_secret
+
+
+class PluginAction(StrEnum):
+    EXPORT_ROUTE = "export-route"
+    FORGET_LOCAL = "forget-local"
+    FORGET_OWNED_FILES = "forget-owned-files"
+    IMPORT = "import"
+    RECONNECT = "reconnect"
+    REMOVE_SUBSCRIPTION = "remove-subscription"
+    SAVE_SUBSCRIPTION = "save-subscription"
+    START_SYSTEM_SERVICE = "start-system-service"
+    STOP_SYSTEM_SERVICE = "stop-system-service"
+    UPDATE_SUBSCRIPTION = "update-subscription"
+
 
 Slug = Annotated[str, Field(pattern="^[a-z][a-z0-9_-]{0,47}$", max_length=48)]
 Domain = Annotated[
@@ -186,29 +202,29 @@ class Plugin(DebianPackages, FilesBackend):
     executable = "/usr/bin/happ"
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "start-system-service": Inputs,
-        "stop-system-service": Inputs,
-        "save-subscription": Subscription,
-        "import": SubscriptionID,
-        "update-subscription": SubscriptionID,
-        "remove-subscription": SubscriptionID,
-        "forget-local": ForgetSubscription,
-        "forget-owned-files": ForgetAll,
-        "export-route": Route,
-        "reconnect": SubscriptionID,
+        LifecycleAction.CHECK: Inputs,
+        PluginAction.START_SYSTEM_SERVICE: Inputs,
+        PluginAction.STOP_SYSTEM_SERVICE: Inputs,
+        PluginAction.SAVE_SUBSCRIPTION: Subscription,
+        PluginAction.IMPORT: SubscriptionID,
+        PluginAction.UPDATE_SUBSCRIPTION: SubscriptionID,
+        PluginAction.REMOVE_SUBSCRIPTION: SubscriptionID,
+        PluginAction.FORGET_LOCAL: ForgetSubscription,
+        PluginAction.FORGET_OWNED_FILES: ForgetAll,
+        PluginAction.EXPORT_ROUTE: Route,
+        PluginAction.RECONNECT: SubscriptionID,
     }
-    file_actions = frozenset({"save-subscription", "export-route"})
+    file_actions = frozenset({PluginAction.SAVE_SUBSCRIPTION, PluginAction.EXPORT_ROUTE})
 
     def files(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> dict[Path, bytes]:
-        if action_id == "save-subscription" and isinstance(inputs, Subscription):
+        if action_id == PluginAction.SAVE_SUBSCRIPTION and isinstance(inputs, Subscription):
             return {
                 subscription_file(inputs.subscription): inputs.model_dump_json(
                     indent=2, exclude_none=True
                 ).encode()
                 + b"\n"
             }
-        if action_id == "export-route" and isinstance(inputs, Route):
+        if action_id == PluginAction.EXPORT_ROUTE and isinstance(inputs, Route):
             path, content = route_export(inputs)
             return {path: content}
         raise ValueError("Unexpected subscription action")
@@ -293,7 +309,8 @@ class Plugin(DebianPackages, FilesBackend):
 
     async def plan(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
         if isinstance(inputs, Subscription) or (
-            action_id in {"import", "update-subscription"} and isinstance(inputs, SubscriptionID)
+            action_id in {PluginAction.IMPORT, PluginAction.UPDATE_SUBSCRIPTION}
+            and isinstance(inputs, SubscriptionID)
         ):
             record = (
                 inputs

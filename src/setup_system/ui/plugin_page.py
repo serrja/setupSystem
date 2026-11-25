@@ -31,7 +31,7 @@ from setup_system.plugin_manager import (
 from setup_system.plugin_ui import panel_type
 from setup_system.ui.plugin_dialogs import Choose, Confirm, Prompt, SecretPrompt
 from setup_system.ui.schema_fields import SchemaForm
-from setup_system_sdk import Action, Outcome, Values
+from setup_system_sdk import Action, LifecycleAction, Outcome, Values
 from setup_system_sdk.protocol import Request
 from setup_system_sdk.ui import UIContext
 
@@ -80,6 +80,7 @@ class PluginPage(Vertical):
         self.active_action: Action | None = None
         self.drafts: dict[str, Values] = {}
         self.status_line = Static("", markup=False, classes="feedback")
+        self.observations = Static("", markup=False)
         self.review = Static("", markup=False)
         self.reference = Static("", markup=False)
 
@@ -99,6 +100,7 @@ class PluginPage(Vertical):
                     yield Vertical(id="custom-panel")
                     yield Button("Activate / update extension", id="activate")
                     yield Button("Inspect program", id="inspect")
+                    yield self.observations
                     yield Button("Disable extension", id="disable")
                     yield Button("Enable extension", id="enable")
                     yield Button("Remove extension", id="remove-extension")
@@ -223,6 +225,7 @@ class PluginPage(Vertical):
         if saved.values and saved.version != self.manifest.settings_version:
             raise ValueError("This profile needs migration")
         self.profile, self.saved = name, saved
+        self.observations.update("")
         container = self.query_one("#settings-form", Vertical)
         await container.remove_children()
         form = SchemaForm(
@@ -450,6 +453,8 @@ class PluginPage(Vertical):
                 " · ".join(r.message for r in results) or "No interrupted operations."
             )
         elif name == "inspect":
+            self.observations.update("")
+            profile = self.profile
             state = await self.manager.activation(plugin)
             reply = await query(
                 state,
@@ -462,7 +467,8 @@ class PluginPage(Vertical):
                 ),
                 self.manager.options,
             )
-            if reply.result:
+            if reply.result and profile == self.profile:
+                self.observations.update("\n".join(r.description() for r in reply.result.resources))
                 self.status_line.update(reply.result.outcome.value + " · " + reply.result.message)
         elif name == "save" and self.settings_form and self.saved:
             state = await self.manager.activation(plugin)
@@ -509,7 +515,7 @@ class PluginPage(Vertical):
                 plan.outcome != Outcome.READY
                 and not (
                     plan.outcome is Outcome.NO_CHANGES
-                    and self.active_action.id in ("install", "update")
+                    and self.active_action.id in (LifecycleAction.INSTALL, LifecycleAction.UPDATE)
                 )
             ) or not self.active_action.target
         elif name == "apply" and self.snapshot:

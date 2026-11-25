@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import runpy
 import shlex
 import shutil
@@ -49,6 +50,7 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "config/shared/palette.toml",
         "docs/administration.md",
         "debian/setup-system.1",
+        "debian/setup-system.desktop",
         "debian/build.py",
         "debian/publish",
         "debian/control",
@@ -123,6 +125,7 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
             "usr/share/doc/setup-system/README.md",
             "usr/share/doc/setup-system/docs/administration.md",
             "usr/share/man/man1/setup-system.1.gz",
+            "usr/share/applications/setup-system.desktop",
             "usr/lib/setup-system/Makefile",
             "usr/lib/setup-system/plugin_catalog/git.json",
             "usr/lib/setup-system/plugins/git/setup_plugin_git/Makefile",
@@ -252,10 +255,57 @@ def test_guard_admits_owner_ancestor_and_refuses_parallel_writer(tmp_path: Path)
     assert denied.returncode != 0 and "is busy" in denied.stderr
 
 
+def temporary_verifiers(assets: Path, receipt: Path, variant: str, arch: str) -> dict[str, str]:
+    # Stage synthetic release assets. No verifier is installed on the target PATH.
+    jq = shutil.which("jq")
+    assert jq is not None
+    parser = executable(
+        assets,
+        f"jq-linux-{arch}",
+        '#!/bin/sh\nset -eu\ntest -z "${GH_TOKEN:-}"\ntest -d "$HOME"\n'
+        f'exec {shlex.quote(jq)} "$@"\n',
+    )
+    source = assets.parent / "gh-fixture"
+    (source / "usr/bin").mkdir(parents=True)
+    (source / "DEBIAN").mkdir(mode=0o755)
+    (source / "DEBIAN").chmod(0o755)
+    (source / "DEBIAN/control").write_text(
+        f"Package: gh\nVersion: 1\nArchitecture: {arch}\n"
+        "Maintainer: Fixture <fixture@example.invalid>\nDescription: Synthetic verifier\n"
+    )
+    executable(
+        source / "usr/bin",
+        "gh",
+        "#!/bin/sh\nset -eu\n"
+        'test -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}${GH_CONFIG_DIR:-}"\n'
+        'test "$GH_PROMPT_DISABLED" = 1\n'
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(receipt))}\n"
+        f"exit {int(variant == 'signature')}\n",
+    )
+    archive = assets / f"gh_2.105.0_linux_{arch}.deb"
+    subprocess.run(
+        ["dpkg-deb", "--build", "--root-owner-group", source, archive],
+        capture_output=True,
+        check=True,
+    )
+    expected = {
+        key: hashlib.sha256(asset.read_bytes()).hexdigest()
+        for key, asset in (("jq", parser), ("gh", archive))
+    }
+    if variant == "verifier_digest":
+        archive.write_bytes(b"unverified verifier bytes")
+    elif variant == "parser_digest":
+        parser.write_text("#!/bin/sh\nexit 71\n")
+    return expected
+
+
 @pytest.mark.parametrize(
     "variant",
     [
         "valid",
+        "arm64",
+        "verifier_digest",
+        "parser_digest",
         "digest",
         "checksum",
         "signature",
@@ -333,6 +383,7 @@ case "$location" in
         [ "$VARIANT:$name" != missing_companion:deb-v1.2.3 ] || exit 22
         name=tag_$name ;;
     */releases/tags/*) name=release_$name ;;
+    https://github.com/cli/cli/releases/download/*) ;;
     */releases/download/*.deb)
         case "$VARIANT" in
             unknown_redirect) printf '%s' '302 https://untrusted.invalid/PRIVATE_QUERY'; exit ;;
@@ -350,24 +401,15 @@ cp "$RESPONSES/$name" "$destination"
 printf '200 '
 """,
     )
-    executable(
-        tools,
-        "gh",
-        """#!/bin/sh
-set -eu
-case "$*" in *--help*)
-    echo "--bundle --signer-workflow --signer-digest --source-ref --source-digest"
-    echo "--deny-self-hosted-runners --predicate-type"
-    exit ;;
-esac
-printf '%s\\n' "$@" > "$VERIFY"
-[ "$VARIANT" != signature ]
-""",
-    )
+    arch = "arm64" if variant == "arm64" else "amd64"
+    verify = tmp_path / "verify"
+    pins = temporary_verifiers(assets, verify, variant, arch)
+    for name in ("jq", "gh"):
+        executable(tools, name, '#!/bin/sh\necho unexpected >> "$TRACE"\nexit 70\n')
     executable(tools, "id", '#!/bin/sh\n[ "$1" = -u ] && echo 1000\n')
     for method in ("su", "sudo"):
         executable(tools, method, f'#!/bin/sh\necho {method} >> "$TRACE"\nexit 91\n')
-    executable(tools, "dpkg", '#!/bin/sh\n[ "$1" = --print-architecture ] && echo amd64\n')
+    executable(tools, "dpkg", f'#!/bin/sh\n[ "$1" = --print-architecture ] && echo {arch}\n')
     release = tmp_path / "os-release"
     codename = "unknown" if variant == "wrong_codename" else "trixie"
     release.write_text(f"ID=debian\nVERSION_ID=13\nVERSION_CODENAME={codename}\n")
@@ -377,6 +419,9 @@ printf '%s\\n' "$@" > "$VERIFY"
     content = content.replace(
         "PATH=/usr/sbin:/usr/bin:/sbin:/bin", f"PATH={shlex.quote(str(tools))}:/usr/bin:/bin"
     )
+    for name, pin in pins.items():
+        content, count = re.subn(rf"{name}_digest=[a-f0-9]{{64}}", f"{name}_digest={pin}", content)
+        assert count == 2
     script = executable(tmp_path, "install.sh", content)
     home = tmp_path / "desktop HOME"
     home.mkdir(mode=0o700)
@@ -386,12 +431,12 @@ printf '%s\\n' "$@" > "$VERIFY"
     (home / ".ecryptfs").mkdir()
     personal = old / "setup-system"
     personal.write_text("owner customization")
-    trace, verify = tmp_path / "trace", tmp_path / "verify"
+    trace = tmp_path / "trace"
     env = dict(
         os.environ,
         HOME=str(home),
         TRACE=str(trace),
-        VERIFY=str(verify),
+        GH_TOKEN="synthetic-token",
         RESPONSES=str(assets),
         VARIANT=variant,
         TMPDIR=str(tmp_path),
@@ -406,12 +451,13 @@ printf '%s\\n' "$@" > "$VERIFY"
     assert personal.read_text() == "owner customization"
     assert sorted(p.name for p in home.iterdir()) == [".ecryptfs", ".local"]
     assert list(old.iterdir()) == [personal]
+    assert not list(tmp_path.glob("tmp.*"))
     if variant == "wrong_codename":
         assert result.returncode != 0 and "trixie" in result.stderr and not trace.exists()
         return
     assert trace.read_text().splitlines().count("latest") == 1
     assert "unexpected" not in trace.read_text() and "PRIVATE_QUERY" not in result.stderr
-    if variant in ("valid", "trusted_cdn"):
+    if variant in ("valid", "arm64", "trusted_cdn"):
         assert result.returncode == 91, result.stderr
         assert trace.read_text().splitlines() == (
             ["latest", "cdn", auth] if variant == "trusted_cdn" else ["latest", auth]
@@ -428,6 +474,9 @@ printf '%s\\n' "$@" > "$VERIFY"
     else:
         assert result.returncode not in (0, 91)
         assert {"su", "sudo"}.isdisjoint(trace.read_text().splitlines())
+        if variant in {"verifier_digest", "parser_digest"}:
+            assert "Verification tool checksum mismatch" in result.stderr
+            assert not verify.exists()
 
 
 def test_reject_prerelease_and_malformed_tags_without_side_effects() -> None:

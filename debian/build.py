@@ -47,6 +47,7 @@ def export_source(root: Path, sha: str, source_root: Path) -> None:
         "docs",
         "README.md",
         "debian/setup-system.1",
+        "debian/setup-system.desktop",
         "THIRD_PARTY_NOTICES.md",
         "debian/control",
         "debian/setup-system.sh",
@@ -151,6 +152,10 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
     copy_file(
         source_root / "debian/setup-system.conf",
         base / "usr/lib/tmpfiles.d" / f"{package_name}.conf",
+    )
+    copy_file(
+        source_root / "debian/setup-system.desktop",
+        base / "usr/share/applications/setup-system.desktop",
     )
     copy_file(source_root / "LICENSE.md", documentation / "copyright")
     copy_file(

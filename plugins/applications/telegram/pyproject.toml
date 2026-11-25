@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system-plugin-telegram"
-version = "1.0.0"
+version = "1.1.0"
 requires-python = ">=3.12"
 description = "Telegram Desktop workstation plugin"
 license = "MIT"
-dependencies = ["setup-system>=0.6.0.dev0", "pydantic>=2.10,<3"]
+dependencies = ["setup-system>=0.6.0.dev0", "httpx>=0.27,<1", "pydantic>=2.10,<3", "pyyaml>=6,<7"]
 
 [project.entry-points."setup_system.plugins"]
 telegram = "setup_plugin_telegram:Plugin"

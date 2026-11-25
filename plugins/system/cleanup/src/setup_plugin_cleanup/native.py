@@ -10,8 +10,8 @@ import re
 import subprocess
 import sys
 import tomllib
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -19,7 +19,13 @@ from setup_system.infrastructure.native_target import current_target as current_
 from setup_system.infrastructure.processes import run_command
 from setup_system.layout import require_installed_resource
 
-Mode = Literal["remove", "purge", "autoremove"]
+
+class Mode(StrEnum):
+    REMOVE = "remove"
+    PURGE = "purge"
+    AUTOREMOVE = "autoremove"
+
+
 _ACTION = re.compile(r"(Remv|Purg) ([a-z0-9][a-z0-9+.-]*)(?::([a-z0-9-]+))?(?: \[([^\]]+)\])?")
 FRONTEND_LOCK = Path("/var/lib/dpkg/lock-frontend")
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "HOME": "/"}
@@ -74,7 +80,7 @@ def inventory(names: list[str], mode: Mode, arch: str) -> list[Package]:
             raise ValueError("Ambiguous package identity in dpkg inventory.")
         observed.add(name)
         if status in ("not-installed", "config-files") and not (
-            mode == "purge" and status == "config-files"
+            mode == Mode.PURGE and status == "config-files"
         ):
             continue
         if (
@@ -103,7 +109,7 @@ def verify_simulation(text: str, packages: list[Package], mode: Mode) -> None:
         if not line.startswith(("Inst ", "Conf ", "Remv ", "Purg ")):
             continue
         match = _ACTION.fullmatch(line)
-        if not match or match[1] != ("Purg" if mode == "purge" else "Remv") or match[2] in found:
+        if not match or match[1] != ("Purg" if mode == Mode.PURGE else "Remv") or match[2] in found:
             raise ValueError("The APT plan contains an unexpected action.")
         found[match[2]] = (match[3], match[4])
     if set(found) != {p.name for p in packages}:
@@ -168,8 +174,8 @@ def preview(mode: Mode, selected: list[str], uid: int, config: Path) -> list[Pac
         raise ValueError("Choose distinct reviewed package candidates.")
     packages = inventory(selected, mode, arch)
     selection = [p.name for p in packages]
-    if packages or mode == "autoremove":
-        args = [] if mode == "autoremove" else ["--", *selection]
+    if packages or mode == Mode.AUTOREMOVE:
+        args = [] if mode == Mode.AUTOREMOVE else ["--", *selection]
         response = command("/usr/bin/apt-get", "--simulate", mode, *args)
         verify_simulation(response.stdout, packages, mode)
     if any(candidates[name].requires_verified_editor for name in selection):
@@ -208,7 +214,7 @@ def apply(confirmation: Confirmation) -> None:
         subprocess.run(
             [
                 "/usr/bin/dpkg",
-                "--purge" if confirmation.mode == "purge" else "--remove",
+                "--purge" if confirmation.mode == Mode.PURGE else "--remove",
                 "--",
                 *[p.name for p in selected],
             ],

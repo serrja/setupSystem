@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
@@ -11,13 +12,26 @@ from setup_system.domain.identity import TargetUser
 from setup_system.infrastructure.identity import resolve_target, user_environment
 from setup_system.infrastructure.native_target import current_boot_identity, current_target
 from setup_system.layout import resource_root
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import (
+    Inputs,
+    LifecycleAction,
+    Outcome,
+    Plan,
+    PluginSettings,
+    Resource,
+    Result,
+)
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import desktop_directories
 from setup_system_sdk.native_play import run_native_play
 
 from .login import DesktopSystem
 from .models import DesktopPlan, LoginConsent
+
+
+class PluginAction(StrEnum):
+    ACTIVATE_LOGIN = "activate-login"
+
 
 FOLDER = Path(__file__).parent
 
@@ -105,12 +119,12 @@ class Plugin(DebianPackages):
     package_folder = FOLDER
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         **DebianPackages.package_inputs,
-        "check": Inputs,
-        "activate-login": Inputs,
+        LifecycleAction.CHECK: Inputs,
+        PluginAction.ACTIVATE_LOGIN: Inputs,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "uninstall":
+        if action_id == LifecycleAction.UNINSTALL:
             from .login_boot import manager_enabled
             from .login_files import DesktopPaths, LoginFiles
 
@@ -119,7 +133,7 @@ class Plugin(DebianPackages):
                     outcome=Outcome.BLOCKED,
                     summary="Select and verify another login manager before uninstalling greetd.",
                 )
-        if action_id == "activate-login":
+        if action_id == PluginAction.ACTIVATE_LOGIN:
             return activate_plan()
         return super().prepare(action_id, settings, inputs)
 
@@ -137,10 +151,10 @@ class Plugin(DebianPackages):
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    if action_id in ("install", "update", "uninstall"):
+    if action_id in (LifecycleAction.INSTALL, LifecycleAction.UPDATE, LifecycleAction.UNINSTALL):
         apply_packages("greeter", action_id, plan)
         return
-    if action_id != "activate-login" or activate_plan() != plan:
+    if action_id != PluginAction.ACTIVATE_LOGIN or activate_plan() != plan:
         raise ValueError("Login consent changed.")
     _, confirmation = snapshot()
     if (

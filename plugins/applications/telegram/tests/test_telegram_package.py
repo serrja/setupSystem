@@ -3,15 +3,17 @@
 from setup_plugin_telegram import Plugin
 
 from setup_system_sdk import Inputs, Manifest, Outcome, PluginSettings
-from setup_system_sdk.apt import Packages
 
 
 def test_package_and_manual_actions_match_the_contract():
     plugin = Plugin()
     path = plugin.package_folder
-    package = Packages.model_validate_json((path / "apt.json").read_bytes())
     manifest = Manifest.model_validate_json((path / "manifest.json").read_bytes())
-    assert manifest.id == "telegram" and package.names == ("telegram-desktop",)
+    assert manifest.id == "telegram" and manifest.dependencies == ["snap"]
+    from setup_system_sdk.apt import Packages
+
+    policy = Packages.model_validate_json((path / "apt.json").read_bytes())
+    assert not policy.candidates() and policy.retired_names == ("telegram-desktop",)
     assert {a.id for a in manifest.actions} == set(plugin.inputs)
     for action in plugin.manual:
         plan = plugin.prepare(action, PluginSettings(), Inputs())
@@ -60,7 +62,7 @@ def test_user_launch_profile_preserves_other_applications(monkeypatch, tmp_path)
     parsed = configparser.ConfigParser(interpolation=None)
     parsed.read(entry)
     assert parsed["Desktop Entry"]["Name"] == data.name
-    assert parsed["Desktop Entry"]["Exec"] == "/usr/bin/telegram-desktop -startintray"
+    assert parsed["Desktop Entry"]["Exec"] == "/usr/bin/snap run telegram-desktop -startintray"
     with ownership_context((row,)):
         assert plugin.prepare("configure-launcher", settings, data).outcome == Outcome.NO_CHANGES
         old = entry.read_bytes()

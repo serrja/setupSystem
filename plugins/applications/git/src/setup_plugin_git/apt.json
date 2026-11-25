@@ -1,8 +1,10 @@
 {
   "names": [
     "git",
-    "gh",
-    "libglib2.0-bin",
     "openssh-client"
+  ],
+  "retired_names": [
+    "gh",
+    "libglib2.0-bin"
   ]
 }

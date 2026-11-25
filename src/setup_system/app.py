@@ -56,7 +56,7 @@ from setup_system.profiles import preview_profile, read_profiles
 from setup_system.ui.help import Help
 from setup_system.ui.plugin_dialogs import Choose, Confirm, Prompt, SecretPrompt
 from setup_system.ui.plugin_page import PluginPage
-from setup_system_sdk import Outcome
+from setup_system_sdk import LifecycleAction, Outcome
 from setup_system_sdk.protocol import Request
 
 
@@ -286,6 +286,7 @@ class SetupApp(App[None]):
         detail += "\nBinary distributions\n" + "\n".join(
             f"{w.name} · SHA-256 {w.sha256}" for w in closure.wheels
         )
+        detail += "\nIf uv is unavailable, activation fetches the verified Astral runtime once."
         if not await self.push_screen_wait(Confirm(detail, "Trust and activate")):
             return
         if release.origin and release.digest not in policy.digests:
@@ -529,7 +530,8 @@ class SetupApp(App[None]):
         for snapshot in snapshots:
             if (
                 snapshot.mutation.plan.outcome == Outcome.NO_CHANGES
-                and snapshot.mutation.action_id not in ("install", "update")
+                and snapshot.mutation.action_id
+                not in (LifecycleAction.INSTALL, LifecycleAction.UPDATE)
             ):
                 continue
             state = await self.manager.activation(snapshot.plugin_id)

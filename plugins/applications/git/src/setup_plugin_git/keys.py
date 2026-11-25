@@ -198,6 +198,12 @@ def access(selection: Probe) -> Plan:
 
 
 def prepare(selection: Upload | Revoke) -> Plan:
+    if not Path("/usr/bin/gh").is_file():
+        return Plan(
+            outcome=Outcome.BLOCKED,
+            summary="Install the separate GitHub CLI plugin, sign into the selected account, "
+            "then preview this SSH key action again.",
+        )
     with account_api(selection) as api:
         inventory = keys(api)
     if isinstance(selection, Upload):

@@ -16,7 +16,7 @@ from setup_system.plugin_manager import PluginManager
 from setup_system.ui import plugin_page
 from setup_system.ui.plugin_dialogs import Confirm
 from setup_system.ui.plugin_page import PluginPage
-from setup_system_sdk import Action, Manifest, Outcome, Plan, PluginSettings, Result
+from setup_system_sdk import Action, Manifest, Outcome, Plan, PluginSettings, Resource, Result
 from setup_system_sdk.protocol import Reply
 
 
@@ -101,6 +101,27 @@ async def select(app, pilot, plugin):
     await pilot.press("enter")
     await pilot.pause()
     return app.query_one("#plugin-" + plugin, PluginPage)
+
+
+def test_overview_lists_observed_resources_without_claiming_them(tmp_path, monkeypatch):
+    app, mutations = workstation(tmp_path, monkeypatch)
+    revision = Resource(kind="snap-revision", identity="example@42", ownership="preexisting")
+
+    async def inspect(state, req, options):
+        assert req.method == "inspect"
+        return Reply(
+            result=Result(outcome=Outcome.NO_CHANGES, message="Present", resources=[revision])
+        )
+
+    async def exercise():
+        async with app.run_test(size=(110, 50)) as pilot:
+            page = await select(app, pilot, "alpha")
+            monkeypatch.setattr(plugin_page, "query", inspect)
+            await page._command("inspect")
+            assert "example@42" in str(page.observations.render())
+            assert not mutations and not await page.manager.ledger.holdings("alpha")
+
+    asyncio.run(exercise())
 
 
 def test_schema_fields_save_and_navigation_are_read_only(tmp_path, monkeypatch):

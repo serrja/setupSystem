@@ -33,6 +33,7 @@ from setup_system_sdk import (
     Configurable,
     Inputs,
     Installable,
+    LifecycleAction,
     Mutation,
     Outcome,
     Plan,
@@ -174,7 +175,7 @@ class NativeBackend(Backend):
         )
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
-        if action_id == "check":
+        if action_id == LifecycleAction.CHECK:
             present = os.access(self.executable, os.X_OK)
             return Plan(
                 outcome=Outcome.NO_CHANGES if present else Outcome.BLOCKED,
@@ -207,11 +208,11 @@ class NativeBackend(Backend):
             observed = await self.plan(target, settings, inputs)
             if observed != request.plan or observed.outcome != Outcome.READY:
                 return Result(outcome=Outcome.BLOCKED, message="Plan changed. Preview again.")
-            if target == "install" and isinstance(self, Installable):
+            if target == LifecycleAction.INSTALL and isinstance(self, Installable):
                 return await self.install(settings, inputs, observed)
-            if target == "configure" and isinstance(self, Configurable):
+            if target == LifecycleAction.CONFIGURE and isinstance(self, Configurable):
                 return await self.configure(settings, inputs, observed)
-            if target == "uninstall" and isinstance(self, Uninstallable):
+            if target == LifecycleAction.UNINSTALL and isinstance(self, Uninstallable):
                 return await self.uninstall(settings, inputs, observed)
             return await asyncio.to_thread(self.mutate, target, settings, inputs, request.plan)
 
@@ -258,8 +259,8 @@ def launcher_file(
         r"/usr/bin/[a-z][a-z0-9-]*", executable
     ):
         raise ValueError("Expected a packaged application and launcher namespace")
-    if not all(re.fullmatch(r"-{1,2}[a-z][a-z-]*", arg) for arg in args):
-        raise ValueError("The application launcher accepts only fixed native options")
+    if not all(re.fullmatch(r"(?:-{1,2})?[a-z][a-z0-9-]{0,63}", arg) for arg in args):
+        raise ValueError("The application launcher accepts only fixed native argument words")
     path = inside_home(
         Path(user_data_dir())
         / "applications"
@@ -280,7 +281,9 @@ class FilesBackend(NativeBackend):
     file_actions: ClassVar[frozenset[str]]
 
     async def configure(self, settings: PluginSettings, inputs: Inputs, plan: Plan) -> Result:
-        return await asyncio.to_thread(self.mutate, "configure", settings, inputs, plan)
+        return await asyncio.to_thread(
+            self.mutate, LifecycleAction.CONFIGURE, settings, inputs, plan
+        )
 
     def mode(self, path: Path) -> int:
         return 0o600
