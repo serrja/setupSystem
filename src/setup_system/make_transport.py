@@ -257,6 +257,7 @@ async def _authenticated(
         async def request_stop() -> None:
             report(Phase.CANCELLING)
             if authorized:
+                terminal_input.close()
                 await asyncio.to_thread(_cancel_at_boundary, env)
             else:
                 await _stop_group(process.pid, finished)
@@ -312,9 +313,11 @@ async def _authenticated(
                     async_=True,
                 )
                 if index == 0:
+                    terminal_input.close()
                     reached_eof = True
                     return await finished
                 if index == 2:
+                    terminal_input.close()
                     report(Phase.WAITING)
                     timeout = None
                 else:
@@ -325,7 +328,6 @@ async def _authenticated(
                         account + b" password: ",
                         b"Verification code: ",
                     ):
-                        terminal_input.close()
                         raise AuthorizationError("Additional native authentication is unsupported")
 
         failure: TransportError
@@ -346,6 +348,7 @@ async def _authenticated(
         finally:
             try:
                 if authorized and not reached_eof:
+                    terminal_input.close()
                     try:
                         report(Phase.INTERRUPTED)
                         await asyncio.to_thread(_cancel_at_boundary, env)

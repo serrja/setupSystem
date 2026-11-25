@@ -9,12 +9,13 @@ import stat
 import sys
 from enum import StrEnum
 from pathlib import Path
+from typing import get_args
 
 import typer
 from pydantic import Field, StrictBool, TypeAdapter
 
 from setup_system.application.recovery import recover
-from setup_system.domain.actions import FileAction, RestoreAction, SystemAction
+from setup_system.domain.actions import FileAction, RestoreAction, RestoreOperation, SystemAction
 from setup_system.domain.contracts import MAX_MESSAGE_BYTES, ContractModel
 from setup_system.domain.observations import ManagedPreview, NativeObservations, ProjectObservations
 from setup_system.domain.receipts import FileState
@@ -140,7 +141,7 @@ def recover_files(action: FileTask, envelope: RequestEnvelope) -> TaskResult:
             dict(kind="restore", path=path, operation=status, label=f"{status} {path}")
         )
         for path, status in rows
-        if status in {"would-restore", "would-create", "would-remove", "would-remove-directory"}
+        if status in get_args(RestoreOperation)
     )
     blockers = tuple(
         f"File conflict (changed after apply): {path}"

@@ -12,7 +12,12 @@ def recover(
     with journal.writer() if apply else nullcontext():
         operation = journal.load_operation(folder)
         if operation.status == "restored":
-            return [files.restored_entry(row) for row in operation.files]
+            entries = [files.restored_entry(row) for row in operation.files]
+            if apply:
+                for name, status in entries:
+                    if status == "conflict":
+                        raise ValueError(f"Rollback conflicts with a later edit: {name}")
+            return entries
         targets = []
         for row in operation.files:
             path, status = files.inspect(row)

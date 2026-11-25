@@ -114,7 +114,8 @@
         outcome:
           status: >-
             {{ 'partial' if mutation_started or changed_stages else ('cancelled' if cancel_requested
-               else ('failed' if (execute_run | default(false)) and plan is defined and (request.expected | to_json | native_same_plan(plan | to_json)) else 'blocked')) }}
+               else ('failed' if (execute_run | default(false)) and plan is defined
+               and (request.expected | to_json | native_same_plan(plan | to_json)) else 'blocked')) }}
           actions: "{{ changed_stages }}"
           blockers:
             - >-

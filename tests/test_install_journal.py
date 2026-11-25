@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue
 
 from setup_system.infrastructure.package_journal import historical_status
 
@@ -43,7 +44,7 @@ def test_historical_stages_are_preserved_outside_the_live_vocabulary(
     ],
 )
 def test_unknown_historical_receipt_is_preserved(
-    tmp_path: Path, changes: dict[str, object]
+    tmp_path: Path, changes: dict[str, JsonValue]
 ) -> None:
     path = tmp_path / "install.json"
     data = json.dumps({"schema": 1, "stage": "metadata", "status": "running", **changes}).encode()

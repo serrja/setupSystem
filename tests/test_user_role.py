@@ -82,6 +82,42 @@ def test_workspace_restore_reverts_changed_files_and_removes_created_paths(home:
     assert existing.read_bytes() == b"first"
 
 
+@pytest.mark.parametrize("later", ["changed", "mode", "recreated", "symlink"])
+def test_repeated_restore_reports_later_changes_without_overwriting(home: Path, later: str) -> None:
+    from setup_system.file_tasks import restore
+
+    target = home / "managed"
+    if later != "recreated":
+        apply_files({target: b"original"}, modes={target: 0o600})
+    operation = apply_files({target: b"managed"})
+    restore(operation.name, apply=True)
+    receipt = operation / "operation.json"
+    ownership = home / "state/setup-system/workstation.json"
+    records = [(file.read_bytes(), file.stat().st_mtime_ns) for file in (receipt, ownership)]
+    outside = home / "owner"
+    outside.write_bytes(b"original")
+    if later == "symlink":
+        target.unlink()
+        target.symlink_to(outside)
+    elif later == "mode":
+        target.chmod(0o640)
+    else:
+        target.write_bytes(b"managed")
+
+    assert restore(operation.name) == [(str(target), "conflict")]
+    with pytest.raises(ValueError, match="later edit"):
+        restore(operation.name, apply=True)
+    if later == "symlink":
+        assert target.readlink() == outside and outside.read_bytes() == b"original"
+    elif later == "mode":
+        assert target.stat().st_mode & 0o777 == 0o640 and target.read_bytes() == b"original"
+    else:
+        assert target.read_bytes() == b"managed"
+    assert [
+        (file.read_bytes(), file.stat().st_mtime_ns) for file in (receipt, ownership)
+    ] == records
+
+
 def test_interrupted_runner_keeps_recovery_and_only_verified_writes(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -311,9 +347,11 @@ def test_concurrent_edit_between_inspection_and_role_publication(
 def test_interrupted_displacement_is_recovered_before_another_apply(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import asyncio
+
     from setup_system.domain import receipts
-    from setup_system.file_tasks import restore
     from setup_system.infrastructure import file_publication, managed_files, receipt_repository
+    from setup_system.runner import AsyncMakeRunner, Command, Target
 
     target = home / "tool"
     target.write_bytes(b"owner's original")
@@ -343,9 +381,45 @@ def test_interrupted_displacement_is_recovered_before_another_apply(
     with pytest.raises(ValueError, match="Restore interrupted file publication"):
         apply_files({target: b"selected"})
     assert not target.exists()
-    assert restore(operation) == [(str(target), "would-return-displaced")]
-    restore(operation, apply=True)
+    runner = AsyncMakeRunner()
+    request = {"schema": 1, "settings": {"backup_id": operation}, "expected": None}
+    plan = asyncio.run(runner.execute(Command.capture(Target.RESTORE_PLAN, request)))
+    assert plan.status == "ready"
+    assert [(action.path, action.operation) for action in plan.actions] == [
+        (str(target), "would-return-displaced")
+    ]
+    assert not target.exists()
+    request["expected"] = plan.model_dump(mode="json", exclude_unset=True)
+    applied = asyncio.run(runner.execute(Command.capture(Target.RESTORE_APPLY, request)))
+    assert applied.status == "complete", applied.describe()
     assert target.read_bytes() == b"owner's original"
+
+
+def test_restore_after_publication_before_verification_is_journaled(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from setup_system.file_tasks import restore
+    from setup_system.infrastructure import managed_files, receipt_repository
+
+    target = home / "first-publication"
+    save_operation = managed_files.save_operation
+
+    def interrupt(folder, operation):
+        if target.exists():
+            raise KeyboardInterrupt
+        save_operation(folder, operation)
+
+    monkeypatch.setattr(managed_files, "save_operation", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        apply_files({target: b"published"})
+    ((run_id, _),) = receipt_repository.list_operations()
+    folder = receipt_repository.operation_folder(run_id)
+    assert not receipt_repository.load_operation(folder).files[0].verified
+    assert target.read_bytes() == b"published"
+    assert restore(run_id) == [(str(target), "would-remove")]
+    assert not receipt_repository.load_operation(folder).files[0].verified
+    assert restore(run_id, apply=True) == [(str(target), "removed")]
+    assert not target.exists()
 
 
 def test_owner_recreates_target_while_prior_inode_is_held(

@@ -164,7 +164,8 @@ def test_pty_read_failure_reaps_child_without_interrupting_mutation(
         """import getpass, os, time
 from pathlib import Path
 getpass.getpass("BECOME password: ")
-# The runner must leave the private channel and transaction alive until this boundary.
+Path("consumed").touch()
+# The runner must continue draining output until the native transaction finishes.
 cancel=Path(os.environ['SETUP_SYSTEM_CANCEL'])
 until=time.monotonic()+2
 while not cancel.exists() and time.monotonic()<until: time.sleep(.01)
@@ -194,6 +195,10 @@ Path("boundary").write_text("finished")
         nonlocal calls
         calls += 1
         if calls == (2 if after_auth else 1):
+            if after_auth:
+                async with asyncio.timeout(2):
+                    while not (tmp_path / "consumed").exists():
+                        await asyncio.sleep(0.005)
             raise OSError("private-test-transcript")
         return await expect(reader, *args, **kwargs)
 
@@ -640,3 +645,66 @@ Path("unexpected-input" if received else "dismissed").touch()
     with pytest.raises(transport.AuthorizationError, match="Additional native"):
         asyncio.run(run_transport(tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture")))
     assert (tmp_path / "dismissed").exists() and not (tmp_path / "unexpected-input").exists()
+
+
+@pytest.mark.parametrize("condition", ["reader_error", "cancel", "eof", "idle"])
+def test_interrupted_input_cannot_leave_a_second_read_waiting(tmp_path, monkeypatch, condition):
+    fixture_make(
+        tmp_path,
+        """import errno, getpass, os, select, sys
+from pathlib import Path
+assert getpass.getpass("SU password: ") == "fixture"
+Path("consumed").touch()
+if Path("eof").exists():
+    os.close(1)
+    os.close(2)
+else:
+    print("Another challenge", flush=True)
+if not select.select([0], [], [], 0.7)[0]:
+    sys.exit(2)
+try:
+    assert os.read(0, 32) == b""
+except OSError as exc:
+    assert exc.errno == errno.EIO
+Path("finished").touch()
+""",
+    )
+    # The child closes its output. Make retains a writer, so the fixture also
+    # delivers the EOF callback that a disconnected reader would receive.
+    if condition == "eof":
+        (tmp_path / "eof").touch()
+
+    async def exercise():
+        cancel = asyncio.Event()
+        expect = transport.fdspawn.expect
+        calls = 0
+
+        async def interrupt(reader, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                async with asyncio.timeout(2):
+                    while not (tmp_path / "consumed").exists():
+                        await asyncio.sleep(0.005)
+                if condition == "reader_error":
+                    raise OSError("simulated broken reader")
+                if condition == "cancel":
+                    cancel.set()
+                if condition == "eof":
+                    return 0
+            return await expect(reader, *args, **kwargs)
+
+        monkeypatch.setattr(transport.fdspawn, "expect", interrupt)
+        if condition == "idle":
+            monkeypatch.setattr(transport, "IDLE_TIMEOUT", 0.06)
+        operation = run_transport(
+            tmp_path, Target.ADMIN_APPLY, BecomePassword("fixture"), cancel=cancel
+        )
+        if condition == "reader_error":
+            with pytest.raises(transport.TransportError):
+                await operation
+        else:
+            await operation
+        assert (tmp_path / "finished").exists()
+
+    asyncio.run(exercise())

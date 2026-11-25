@@ -49,7 +49,9 @@ def test_receipt_validation_rejects_ambiguous_before_evidence() -> None:
 
 
 @pytest.mark.parametrize("version", [True, 1.0, "1", 2])
-def test_schema_versions_only_accept_the_published_integer(version: object) -> None:
+def test_schema_versions_only_accept_the_published_integer(
+    version: bool | int | float | str,
+) -> None:
     from setup_system.domain.receipts import Operation, Ownership
 
     for model, values in (

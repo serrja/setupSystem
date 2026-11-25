@@ -17,6 +17,7 @@ from textual.containers import Horizontal
 from textual.theme import Theme as TextualTheme
 from textual.widgets import (
     Button,
+    Checkbox,
     Footer,
     Header,
     Input,
@@ -241,6 +242,7 @@ class SetupApp(App[None]):
             else:
                 self.workspace_form.populate(saved.options)
             self.loaded[section] = saved
+            self.invalidate_changed_plan()
             if announce:
                 self.report(f"Reloaded {section} intentions")
         except ERRORS as exc:
@@ -294,6 +296,7 @@ class SetupApp(App[None]):
         try:
             if name in ("set-layout", "forget-layout"):
                 self.query_one(WorkspaceForm).update_layout(name == "forget-layout")
+                self.invalidate_changed_plan()
             elif name == "save":
                 if section not in self.saving:
                     options = self.options(section)
@@ -316,11 +319,6 @@ class SetupApp(App[None]):
             self.report(str(exc))
 
     def request(self, name: str, section: Section) -> None:
-        if name == "admin-plan":
-            username = self.query_one("#admin-account", Input).value.strip()
-            self.pending = None
-            self.start(name, {"username": username}, "base", ("admin", None))
-            return
         if name == "inspect":
             self.start(f"{section}-inspect", {}, section, None)
             return
@@ -345,32 +343,67 @@ class SetupApp(App[None]):
                 raise ValueError("Enter an existing project directory")
             self.start("project-check", {"project": project}, section, None)
             return
-        if name == "restore-plan":
-            backup = self.query_one("#backup", Input).value
+        task: PlanTask = section
+        if name == "admin-plan":
+            task, section = "admin", "base"
+        elif name == "restore-plan":
+            task, section = "restore", "workspace"
+        elif name == "cleanup-plan":
+            task, section = "cleanup", "workspace"
+        revision = None
+        if task in {"base", "workspace", "cleanup"}:
+            if section not in self.loaded:
+                raise ValueError(f"Review the {section} settings and reload")
+            revision = self.loaded[section].revision
+        settings = self.form_inputs(task)
+        self.pending = None
+        self.buttons()
+        self.start(f"{task}-plan", settings, section, (task, revision))
+
+    def form_inputs(self, task: PlanTask) -> dict[str, JsonValue]:
+        """Read the values that determine this plan from its persistent form."""
+        if task == "admin":
+            return {"username": self.base_form.query_one("#admin-account", Input).value}
+        if task == "restore":
+            backup = self.workspace_form.query_one("#backup", Input).value
             if not backup:
                 raise ValueError("Choose a recovery backup")
-            self.pending = None
-            self.start("restore-plan", {"backup_id": backup}, section, ("restore", None))
-            return
-        revision = self.loaded[section].revision if section in self.loaded else None
-        if revision is None:
-            raise ValueError(f"Review the {section} settings and reload")
-        task: PlanTask = section
-        if name == "cleanup-plan":
-            task = "cleanup"
-            settings = CleanupOptions.model_validate(
+            return {"backup_id": backup}
+        if task == "cleanup":
+            return CleanupOptions.model_validate(
                 {
-                    "cleanup": self.query_one("#cleanup", SelectionList).selected,
-                    "cleanup_mode": self.query_one("#cleanup-mode", Select).value,
+                    "cleanup": self.workspace_form.query_one("#cleanup", SelectionList).selected,
+                    "cleanup_mode": self.workspace_form.query_one("#cleanup-mode", Select).value,
                 }
             ).model_dump(mode="json")
-        else:
-            settings = self.options(section).model_dump(mode="json", exclude_none=True)
-            if section == "workspace":
-                settings.pop("cleanup", None)
-                settings.pop("cleanup_mode", None)
+        if task == "workspace":
+            return self.workspace_form.options().model_dump(
+                mode="json", exclude_none=True, exclude={"cleanup", "cleanup_mode"}
+            )
+        if task == "base":
+            return self.base_form.options().model_dump(mode="json", exclude_none=True)
+        raise ValueError("This plan uses a separate tool selection")
+
+    @on(Input.Changed, "BaseForm Input, WorkspaceForm Input")
+    @on(Checkbox.Changed, "BaseForm Checkbox, WorkspaceForm Checkbox")
+    @on(Select.Changed, "WorkspaceForm Select")
+    @on(SelectionList.SelectedChanged, "WorkspaceForm SelectionList")
+    def form_changed(self) -> None:
+        self.invalidate_changed_plan()
+
+    def invalidate_changed_plan(self) -> bool:
+        plan = self.pending
+        if plan is None or plan.task in PROJECT_PLANS.values():
+            return False
+        try:
+            if self.form_inputs(plan.task) == json.loads(plan.settings_json):
+                return False
+        except ValueError:
+            pass  # An incomplete edit also invalidates the previous confirmation.
         self.pending = None
-        self.start(f"{task}-plan", settings, section, (task, revision))
+        self.buttons()
+        self.report("Selections changed. Preview a new plan before Apply.")
+        return True
 
     def tool_request(self, choice: ToolChoice | None) -> None:
         if choice is None or self.cancel_event or not self.view_active:
@@ -391,6 +424,7 @@ class SetupApp(App[None]):
                 and self.navigation.screen.is_active
                 and self.pending is plan
                 and self.reviewing is plan
+                and not self.invalidate_changed_plan()
             )
 
         try:
@@ -519,6 +553,8 @@ class SetupApp(App[None]):
                         result.model_dump(mode="json", exclude_unset=True),
                         planning[1],
                     )
+                    if self.invalidate_changed_plan():
+                        return
                 details = result.describe()
                 if target.endswith("-inspect") or target == "project-check":
                     facts = [

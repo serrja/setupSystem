@@ -380,7 +380,9 @@ def test_version_inspection_does_not_launch_compositor_without_runtime(
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     monkeypatch.setattr(os, "access", lambda path, mode: True)
 
-    def execute(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def execute(
+        argv: list[str], *, text: bool, capture_output: bool, check: bool, timeout: int
+    ) -> subprocess.CompletedProcess[str]:
         assert argv[0] == "/usr/bin/dpkg-query"
         assert argv[-1] == "hyprland"
         return subprocess.CompletedProcess(argv, 0, f"install ok installed\t{version}\n", "")

@@ -82,7 +82,7 @@ class BaseForm(VerticalScroll):
             for key in ("hyprland", "graphical_login", "plymouth")
         }
         fields = {
-            key: self.query_one("#" + key, Input).value.strip() or None
+            key: self.query_one("#" + key, Input).value or None
             for key in ("timezone", "locale", "keyboard")
         }
         return BaseOptions.model_validate(values | fields)
@@ -172,7 +172,7 @@ class WorkspaceForm(VerticalScroll):
     def project_path(self) -> str | None:
         value = self.query_one("#project", Input).value
         if value.startswith("~/"):
-            value = str(self.suggestions.home / value[2:])
+            value = f"{self.suggestions.home}{value[1:]}"
         return value or None
 
     def update_layout(self, remove: bool) -> None:

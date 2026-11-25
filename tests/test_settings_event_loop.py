@@ -180,6 +180,7 @@ def test_navigation_during_settings_read(tmp_path, monkeypatch, stage):
             if stage == "plan":
                 await idle(app, pilot)
                 assert tasks.calls[-1][1]["settings"]["timezone"] == "UTC"
+                assert app.pending is None
             elif stage == "apply":
                 await wait_until(lambda: isinstance(app.screen, Consent))
                 await pilot.press("escape")
