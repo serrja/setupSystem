@@ -18,39 +18,49 @@
   "dependencies": [],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "remove",
       "label": "Remove",
+      "page": "actions",
       "target": "remove",
       "permissions": [
         "root",
         "remove-preexisting"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "purge",
       "label": "Purge",
+      "page": "actions",
       "target": "purge",
       "permissions": [
         "root",
         "remove-preexisting"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "autoremove",
       "label": "Autoremove",
+      "page": "actions",
       "target": "autoremove",
       "permissions": [
         "root",
         "remove-preexisting"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "description": "Load only caller-selected sources and explicitly declared environment names.",

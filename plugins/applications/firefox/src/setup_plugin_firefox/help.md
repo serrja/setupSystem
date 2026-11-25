@@ -6,4 +6,4 @@ Choose a tracking protection level and HTTPS-only mode. Enabling the optional ex
 
 ## 🧹 User data
 
-Bookmarks, login data, cookies and browser profiles stay outside the plan.
+Full cleanup can remove the precise generated policy when its contents, ownership and mode still match. Administrator-managed policies and edits require review. Bookmarks, login data, cookies and browser profiles stay outside the plan.

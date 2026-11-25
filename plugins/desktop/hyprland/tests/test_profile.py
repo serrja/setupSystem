@@ -29,7 +29,7 @@ def home(tmp_path, monkeypatch):
 
 def test_user_profile_is_read_only_until_apply_and_preserves_edits(home):
     backend = Plugin()
-    settings = Settings(effects=True, rounding=3, keyboard="us,ru")
+    settings = Settings(effects=True, rounding=3, keyboard=["us", "ru"])
     initial = backend.prepare("configure", settings, Inputs())
     assert initial.outcome == Outcome.READY and not any(home.iterdir())
     mutation = Mutation(
@@ -127,3 +127,19 @@ def test_each_renderer_owns_disjoint_files(home):
     for backend in (Plugin(), Hyprlock(), Waybar(), Foot()):
         rows += list(backend.files("configure", backend.settings_model(), Inputs()))
     assert len(set(rows)) == len(rows)
+
+
+def test_session_keyboard_selects_only_supported_layouts(home, monkeypatch):
+    from setup_system_sdk import xkb
+
+    monkeypatch.setattr(xkb, "keyboard_layouts", lambda: ["de", "ru", "us"])
+    backend = Plugin()
+    assert asyncio.run(backend.choices("keyboard", "U", Settings())) == ["ru", "us"]
+    field = Settings.model_json_schema()["properties"]["keyboard"]
+    assert field["type"] == "array" and field["ui"]["choice_provider"] == "keyboard"
+    for invalid in (["group"], ["us", "us"]):
+        with pytest.raises(ValueError, match="XKB layouts"):
+            backend.prepare("configure", Settings(keyboard=invalid), Inputs())
+    files = backend.files("configure", Settings(keyboard=["de", "us"]), Inputs())
+    rendered = next(data for path, data in files.items() if path.name == "keyboard.lua")
+    assert b'kb_layout = "de,us"' in rendered

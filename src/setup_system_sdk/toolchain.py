@@ -7,7 +7,6 @@ import hashlib
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import tempfile
 import uuid
@@ -20,10 +19,12 @@ from setup_system.extension_lifecycle import fingerprint, generation_lock, seal_
 from setup_system.infrastructure.file_publication import move_new, observe
 from setup_system.infrastructure.managed_files import apply_files
 from setup_system.infrastructure.processes import run_command
+from setup_system.infrastructure.recorded_tree import record_tree, remove_recorded
 from setup_system.infrastructure.user_storage import (
     checked_directory,
     inside_home,
     private_directory,
+    safe_file,
 )
 from setup_system_sdk import (
     Inputs,
@@ -69,6 +70,77 @@ def execute(argv: list[str], stage: Path, *, capture: bool = False) -> str:
     return result.stdout
 
 
+class Removal(Inputs):
+    generation: str
+    files: dict[str, tuple[int, int, int, str]]
+
+
+def _checked_generation(path: Path, digest: str | None) -> Removal | None:
+    checked_directory(path)
+    if path.name != digest:
+        raise ValueError("Tool generation differs from its installed identity")
+    marker = path / ".removing.json"
+    if os.path.lexists(marker):
+        safe_file(marker, os.getuid())
+        with os.fdopen(
+            os.open(marker, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb"
+        ) as stream:
+            data = stream.read(64 * 1024 * 1024 + 1)
+        if len(data) > 64 * 1024 * 1024:
+            raise ValueError("Tool retirement record exceeds the limit")
+        record = Removal.model_validate_json(data)
+        if record.generation != digest or any(
+            record.files.get(key) != entry for key, entry in record_tree(path, marker).items()
+        ):
+            raise ValueError("A tool generation changed during cleanup")
+        return record
+    seal = path / "generation.sha256"
+    if (
+        seal.is_symlink()
+        or not seal.is_file()
+        or seal.stat().st_size != 64
+        or fingerprint(path) != seal.read_text()
+    ):
+        raise ValueError("A tool generation changed after publication")
+    return None
+
+
+def _remove_generation(path: Path, digest: str | None) -> None:
+    with generation_lock(path, exclusive=True):
+        marker = path / ".removing.json"
+        record = _checked_generation(path, digest)
+        if record is None:
+            record = Removal(generation=path.name, files=record_tree(path))
+            _checked_generation(path, digest)
+            with tempfile.NamedTemporaryFile(dir=path.parent) as temporary:
+                temporary.write(record.model_dump_json().encode())
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                os.link(temporary.name, marker)
+            directory = os.open(path, os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        remove_recorded(path, record.files, marker)
+        marker.unlink()
+        path.rmdir()
+
+
+def _remove_wrapper(path: Path, row: Resource) -> None:
+    holding = path.with_name(".setup-system-retire-" + uuid.uuid4().hex)
+    move_new(path, holding)
+    try:
+        observed = observe(holding)
+        if observed is None or observed.sha256 != row.before or observed.mode != row.permissions:
+            raise ValueError("Command file changed during cleanup")
+        holding.unlink()
+    except (OSError, ValueError):
+        if holding.exists():
+            move_new(holding, path)
+        raise
+
+
 class Toolchain(DebianPackages):
     """Keep generations under one plugin and expose fixed tools to the user's editor."""
 
@@ -94,12 +166,12 @@ class Toolchain(DebianPackages):
         return self.binaries
 
     def links(self, generation: Path, settings: PluginSettings) -> dict[Path, bytes]:
-        return {
-            inside_home(
-                Path.home() / ".local/bin" / name
-            ): f'#!/bin/sh\nexec {shlex.quote(str(generation / binary))} "$@"\n'.encode()
-            for name, binary in self.commands(settings).items()
-        }
+        links = {}
+        for name, binary in self.commands(settings).items():
+            executable = shlex.quote(str(generation / binary))
+            body = f'#!/bin/sh\nexport PYTHONDONTWRITEBYTECODE=1\nexec {executable} "$@"\n'
+            links[inside_home(Path.home() / ".local/bin" / name)] = body.encode()
+        return links
 
     def status(self, settings: PluginSettings) -> Plan:
         names = self.commands(settings)
@@ -227,16 +299,7 @@ class Toolchain(DebianPackages):
                     raise ValueError("Tool generation path does not belong to this plugin")
                 if not path.exists() and not path.is_symlink():
                     continue
-                checked_directory(path)
-                seal = path / "generation.sha256"
-                if (
-                    path.name != item.after
-                    or seal.is_symlink()
-                    or not seal.is_file()
-                    or seal.stat().st_size != 64
-                    or fingerprint(path) != seal.read_text()
-                ):
-                    raise ValueError("A tool generation changed after publication")
+                _checked_generation(path, item.after)
             rows.append(
                 item.model_copy(update={"effect": "remove", "before": item.after, "after": None})
             )
@@ -251,35 +314,22 @@ class Toolchain(DebianPackages):
     def remove(self, plan: Plan) -> Result:
         if self.remove_plan() != plan:
             raise ValueError("Owned tool state changed before cleanup")
-        for row in plan.resources:
-            path = Path(row.identity)
-            holding = path.with_name(".setup-system-retire-" + uuid.uuid4().hex)
-            move_new(path, holding)
-            try:
+        done: list[Resource] = []
+        try:
+            for row in plan.resources:
+                path = Path(row.identity)
                 if row.kind == "file":
-                    observed = observe(holding)
-                    if (
-                        observed is None
-                        or observed.sha256 != row.before
-                        or observed.mode != row.permissions
-                    ):
-                        raise ValueError("Command file changed during cleanup")
-                    holding.unlink()
+                    _remove_wrapper(path, row)
                 else:
-                    with generation_lock(holding, exclusive=True):
-                        if fingerprint(holding) != (holding / "generation.sha256").read_text():
-                            raise ValueError("Tool generation changed during cleanup")
-                        shutil.rmtree(holding)
-            except (OSError, ValueError):
-                if holding.exists():
-                    move_new(holding, path)
-                return Result(
-                    outcome=Outcome.PARTIAL,
-                    message="Inspect changed tool resources before resuming",
-                )
-        return Result(
-            outcome=Outcome.CHANGED, message="Owned tools removed", resources=plan.resources
-        )
+                    _remove_generation(path, row.before)
+                done.append(row.model_copy(update={"verified": True}))
+        except (OSError, ValueError):
+            return Result(
+                outcome=Outcome.PARTIAL,
+                message="Inspect changed tool resources before resuming",
+                resources=done,
+            )
+        return Result(outcome=Outcome.CHANGED, message="Owned tools removed", resources=done)
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
         if action_id == "check":

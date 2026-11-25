@@ -104,3 +104,58 @@ def test_dns_and_order_stay_in_one_subscription(tmp_path, monkeypatch):
     )
     assert str(wire.domestic_ip) == "192.0.2.1" and wire.domestic_type == "DoU"
     assert wire.direct_sites == ["full:two.example", "full:one.example"]
+
+
+def test_local_subscription_cleanup_preserves_other_records(tmp_path, monkeypatch):
+    import setup_plugin_happ as app
+
+    from setup_system_sdk import ownership_context
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    async def secret(*a):
+        return SecretStr("https://example.invalid/fixture-secret")
+
+    monkeypatch.setattr(app, "read_secret", secret)
+    plugin = Plugin()
+    settings = PluginSettings()
+    records = []
+
+    def apply_checked(action, data):
+        with ownership_context(tuple(records)):
+            plan = asyncio.run(plugin.plan(action, settings, data))
+            assert plan.outcome == Outcome.READY
+            result = asyncio.run(
+                plugin.apply_request(
+                    action,
+                    Mutation(
+                        action_id=action,
+                        plan=plan,
+                        settings={},
+                        inputs=data.model_dump(mode="json"),
+                        holdings=tuple(records),
+                    ),
+                )
+            )
+            assert result.outcome == Outcome.CHANGED
+            return asyncio.run(plugin.verify(plan, settings, data))
+
+    for name in ("one", "two"):
+        record = Subscription(subscription=name, title="Example", url_reference=uuid4())
+        records.extend(apply_checked("save-subscription", record).resources)
+    fields = Route(subscription="one", domain="example.test")
+    checked = apply_checked("export-route", fields)
+    assert checked.outcome == Outcome.NEEDS_USER_ACTION and checked.resources[0].verified
+    records.extend(checked.resources)
+    assert asyncio.run(plugin.choices("subscriptions", "t", settings)) == ["two"]
+    source = SubscriptionID(subscription="one")
+    for action in ("import", "update-subscription", "remove-subscription", "reconnect"):
+        assert (
+            asyncio.run(plugin.plan(action, settings, source)).outcome == Outcome.NEEDS_USER_ACTION
+        )
+    removal = apply_checked("forget-local", app.ForgetSubscription(subscription="one"))
+    assert removal.outcome == Outcome.COMPLETE
+    assert not app.subscription_file("one").exists() and app.subscription_file("two").is_file()
+    assert not (app.root() / "one/user-route.happ").exists()

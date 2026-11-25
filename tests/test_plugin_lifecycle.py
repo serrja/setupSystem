@@ -17,16 +17,6 @@ from setup_system_sdk import Action, Manifest, Mutation, Outcome, Plan, Resource
 from setup_system_sdk.protocol import Reply
 
 
-@pytest.fixture
-def home(tmp_path, monkeypatch):
-    path = tmp_path / "Юникод home"
-    path.mkdir(mode=0o700)
-    monkeypatch.setenv("HOME", str(path))
-    for name in ("CONFIG", "STATE", "CACHE", "DATA"):
-        monkeypatch.setenv(f"XDG_{name}_HOME", str(path / name.lower()))
-    return path
-
-
 def activation(root):
     action = Action(id="configure", label="Configure", target="write")
     return Activation(

@@ -617,3 +617,47 @@ def test_native_consent_rejects_last_minute_changes(tmp_path, monkeypatch, chang
         system.revalidate(plan.consent, account, env, snapshot=snapshot)
     assert not system.paths.receipt.exists()
     assert not any("set-default" in call or "enable" in call for call in commands.calls)
+
+
+def test_activation_handoff_preserves_session_and_checks_default_target(tmp_path, monkeypatch):
+    import asyncio
+
+    import setup_plugin_greeter as plugin
+    from setup_plugin_greeter import login_boot, login_plan
+
+    from setup_system_sdk import Inputs, Outcome, PluginSettings
+
+    system, account, environment, commands, machine = system_fixture(tmp_path)
+    roots = {
+        key.removeprefix("XDG_").removesuffix("_HOME").lower(): Path(value)
+        for key, value in environment.items()
+    }
+    monkeypatch.setattr(plugin, "DesktopSystem", lambda root: system)
+    monkeypatch.setattr(plugin, "resolve_target", lambda name: account)
+    monkeypatch.setattr(plugin, "current_target", lambda: ("amd64", True))
+    monkeypatch.setattr(plugin, "current_boot_identity", lambda: "fixture-boot")
+    monkeypatch.setattr(plugin, "desktop_directories", lambda: roots)
+    monkeypatch.setattr(login_plan, "inspect_system", lambda home: machine)
+    monkeypatch.setattr(desktop, "_require_root", lambda: None)
+
+    def bridge(plugin_id, target, payload, method):
+        assert (plugin_id, target, method) == ("greeter", "activate.yml", "sudo")
+        change = plugin.Confirmation.model_validate(payload)
+        assert change.user == account.name and change.roots == roots
+        plugin.activate(change)
+
+    monkeypatch.setattr(plugin, "run_native_play", bridge)
+    backend, settings, inputs = plugin.Plugin(), PluginSettings(), Inputs()
+    plan = asyncio.run(backend.plan("activate-login", settings, inputs))
+    assert plan.outcome == Outcome.READY and plan.resources[-1].identity == "fixture-boot"
+    assert asyncio.run(backend.verify(plan, settings, inputs)).outcome == Outcome.PARTIAL
+    plugin.apply_native("activate-login", settings, inputs, plan)
+    assert commands.default == "graphical.target"
+    assert asyncio.run(backend.verify(plan, settings, inputs)).outcome == Outcome.CHANGED
+    repeated = asyncio.run(backend.plan("activate-login", settings, inputs))
+    assert repeated.outcome == Outcome.NO_CHANGES
+    with pytest.raises(ValueError, match="changed"):
+        plugin.apply_native("activate-login", settings, inputs, plan)
+    assert not any(set(args) & {"start", "restart", "reboot", "isolate"} for args in commands.calls)
+    monkeypatch.setattr(login_boot, "manager_enabled", lambda files: True)
+    assert asyncio.run(backend.plan("uninstall", settings, inputs)).outcome == Outcome.BLOCKED

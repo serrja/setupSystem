@@ -234,3 +234,51 @@ def test_installed_version_is_stable_across_repeated_plans_updates_and_uninstall
         assert removal.resources[0].before == "2" and removal.resources[0].effect == "remove"
         data["installed"] = None
         assert apt.verify_packages(removal).outcome == Outcome.COMPLETE
+
+
+def test_two_applications_share_a_transitive_library_after_uninstall(tmp_path, monkeypatch):
+    from setup_system_sdk import Outcome, ownership_context
+
+    versions = {}
+    monkeypatch.setattr(apt, "installed", versions.get)
+    monkeypatch.setattr(apt, "current_target", lambda: ("amd64", True))
+    monkeypatch.setattr(apt, "keyring", lambda path: None)
+    folders = {}
+    for name in ("app-a", "app-c"):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "apt.json").write_text('{"names":["' + name + '"]}')
+        folders[name] = folder
+
+    def query(argv, *args, **kwargs):
+        if argv[0].endswith("dpkg-query"):
+            return "install|||amd64"
+        if argv[0].endswith("apt-cache"):
+            return "SHA256: " + "c" * 64
+        if "remove" in argv:
+            assert argv[argv.index("--") + 1 :] == ["app-a"]
+            return "Remv app-a [1]"
+        if "--simulate" in argv:
+            names = [name for name in [argv[-1], "lib-common"] if name not in versions]
+            return "\n".join(
+                f"{verb} {name} (1 stable [amd64])" for verb in ("Inst", "Conf") for name in names
+            )
+        return ""
+
+    monkeypatch.setattr(apt, "query", query)
+    holdings = {}
+    for name, folder in folders.items():
+        stage = tmp_path / ("stage-" + name)
+        stage.mkdir()
+        install = apt.resolve(tmp_path, stage, folder, apt.Packages(names=(name,)))
+        versions.update({r.identity: r.after for r in install.resources})
+        assert apt.verify_packages(install).outcome == Outcome.COMPLETE
+        holdings[name] = tuple(install.resources)
+    library = next(r for r in holdings["app-a"] if r.identity == "lib-common")
+    assert library.ownership == "created" and not library.cleanup
+    with ownership_context(holdings["app-a"]):
+        removal = apt.uninstall_plan(folders["app-a"])
+    assert [r.identity for r in removal.resources] == ["app-a"]
+    versions.pop("app-a")
+    assert apt.verify_packages(removal).outcome == Outcome.COMPLETE
+    assert versions == {"app-c": "1", "lib-common": "1"}

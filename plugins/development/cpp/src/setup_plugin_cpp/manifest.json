@@ -26,6 +26,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -38,6 +39,7 @@
         "sudo"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -50,6 +52,7 @@
         "sudo"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -62,6 +65,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -74,9 +78,11 @@
         "sudo"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "properties": {

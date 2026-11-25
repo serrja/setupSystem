@@ -50,15 +50,21 @@ async def check_choices(
     for name, field in type(model).model_fields.items():
         extra = field.json_schema_extra
         ui = extra.get("ui") if isinstance(extra, dict) else None
-        if not isinstance(ui, dict) or ui.get("allow_custom") or not ui.get("choice_provider"):
-            continue
         value = getattr(model, name)
-        if value is None:
-            continue
         for item in value if isinstance(value, (tuple, list)) else (value,):
+            if isinstance(item, (Inputs, PluginSettings)):
+                await check_choices(backend, settings, item)
+            if (
+                item is None
+                or not isinstance(ui, dict)
+                or ui.get("allow_custom")
+                or not ui.get("choice_provider")
+            ):
+                continue
             provider = ui["choice_provider"]
-            if not isinstance(provider, str) or item not in await backend.choices(
-                provider, str(item), settings
+            if (
+                not isinstance(provider, str)
+                or item not in (await backend.choices(provider, str(item), settings))[:128]
             ):
                 raise ValueError("The selected choice is no longer available")
 

@@ -6,11 +6,11 @@ import asyncio
 import subprocess
 import sys
 from pathlib import Path
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, Result, xkb
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import (
     PublishedAssets,
@@ -42,11 +42,13 @@ FOLDER = Path(__file__).parent
 class Settings(PluginSettings):
     effects: bool = Field(default=False, title="Compositor effects")
     rounding: int = Field(default=12, ge=0, le=24, title="Window corner radius")
-    keyboard: str = Field(
-        default="us",
-        pattern=r"^[a-z][a-z0-9_-]{0,15}(,[a-z][a-z0-9_-]{0,15}){0,3}$",
+    keyboard: list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,15}$")]] = Field(
+        default=["us"],
+        min_length=1,
+        max_length=4,
         title="Session keyboard layouts",
-        description="One to four XKB layouts separated by commas.",
+        description="Select up to four XKB layouts. The first is the session default.",
+        json_schema_extra={"ui": {"widget": "selection_list", "choice_provider": "keyboard"}},
     )
 
 
@@ -83,15 +85,11 @@ class Plugin(DebianPackages, PublishedAssets):
             layout = MonitorLayout.model_validate(inputs.model_dump())
             validate_layouts((layout,))
             return {directory / "monitors.lua": (layout.rule() + "\n").encode()}
-        if not all(
-            (Path("/usr/share/X11/xkb/symbols") / key).is_file()
-            for key in settings.keyboard.split(",")
-        ):
-            raise ValueError("Unknown XKB layout.")
+        xkb.validate_layouts(settings.keyboard)
         context.update(
             effects="true" if settings.effects else "false",
             rounding=settings.rounding,
-            keyboard=settings.keyboard,
+            keyboard=",".join(settings.keyboard),
         )
         assets = FOLDER / "assets"
         result = {
@@ -177,6 +175,9 @@ class Plugin(DebianPackages, PublishedAssets):
         return await super().verify(plan, settings, inputs)
 
     async def choices(self, provider: str, query: str, settings: PluginSettings) -> list[str]:
+        if provider == "keyboard":
+            names = await asyncio.to_thread(xkb.keyboard_layouts)
+            return [name for name in names if query.casefold() in name][:128]
         if provider not in ("outputs", "modes"):
             return []
         outputs = await asyncio.to_thread(discover_outputs)

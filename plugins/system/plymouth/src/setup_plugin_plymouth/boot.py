@@ -34,6 +34,15 @@ STATE = Path("/var/lib/setup-system/boot")
 THEMES = Path("/usr/share/plymouth/themes")
 THEME = "setup-system-mocha"
 MIN_SPACE = 64 * 1024 * 1024
+CMDLINE = Path("/proc/cmdline")
+BOOT_TOOLS = (
+    Path("/usr/sbin/mkinitramfs"),
+    Path("/usr/bin/lsinitramfs"),
+    Path("/usr/sbin/grub-mkconfig"),
+    Path("/usr/bin/grub-script-check"),
+    Path("/usr/sbin/cryptsetup"),
+    Path("/usr/share/initramfs-tools/hooks/cryptroot"),
+)
 
 
 def _command(args: list[str]) -> str:
@@ -131,21 +140,13 @@ def _identity() -> str:
     if esp[2] != "/boot/efi" or esp[1] != "vfat" or not (SYS / "firmware/efi").is_dir():
         raise ValueError("A mounted EFI system partition and active Debian GRUB EFI are required")
     loader = _efi_loader()
-    if "nomodeset" in Path("/proc/cmdline").read_text().split() or not any(
+    if "nomodeset" in CMDLINE.read_text().split() or not any(
         (SYS / "class/drm").glob("card[0-9]*/device/driver")
     ):
         raise ValueError("A kernel modesetting graphics driver is required")
-    required = (
-        "/usr/sbin/mkinitramfs",
-        "/usr/bin/lsinitramfs",
-        "/usr/sbin/grub-mkconfig",
-        "/usr/bin/grub-script-check",
-        "/usr/sbin/cryptsetup",
-        "/usr/share/initramfs-tools/hooks/cryptroot",
-    )
-    for entry in required:
-        if not Path(entry).is_file():
-            raise ValueError("Missing Debian boot prerequisite: " + entry)
+    for tool in BOOT_TOOLS:
+        if not tool.is_file():
+            raise ValueError(f"Missing Debian boot prerequisite: {tool}")
     files = (
         BOOT / ("initrd.img-" + kernel),
         BOOT / ("vmlinuz-" + kernel),
@@ -182,6 +183,12 @@ def prerequisites() -> tuple[str, ...]:
 def inspect_unlock() -> UnlockPlan:
     try:
         identity = _identity()
+        try:
+            _check_password_unlock()
+        except PermissionError:
+            # Debian may restrict crypttab to root. The privileged action reads it again.
+            if os.geteuid() == 0:
+                raise
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         reason = (
             str(exc)

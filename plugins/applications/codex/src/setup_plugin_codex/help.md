@@ -11,3 +11,7 @@ Choose user settings or an explicit Git checkout. Account-visible models and eff
 ## 🔐 Accounts
 
 Sign in through the native client. Its authentication files and keyring records remain under the client's control. [Authentication](https://learn.chatgpt.com/docs/auth).
+
+## 🧩 MCP and skills
+
+Register one reviewed HTTPS MCP endpoint for the user or a selected checkout. It starts disabled unless Enable is selected. Configure separate authentication through the native client. Verify registration with `codex mcp list`. Choose and review each skill in the client’s skill manager. [Codex MCP configuration](https://learn.chatgpt.com/docs/mcp).

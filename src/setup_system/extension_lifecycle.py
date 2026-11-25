@@ -4,8 +4,8 @@ import fcntl
 import hashlib
 import os
 import re
-import shutil
 import stat
+import tempfile
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -18,6 +18,8 @@ from setup_system.extensions import (
     _private,
     _read_generation,
 )
+from setup_system.infrastructure.recorded_tree import record_tree, remove_recorded
+from setup_system_sdk import Inputs, Manifest
 
 _GENERATION = re.compile(r"^[0-9a-f]{32}$")
 _SEAL = "generation.sha256"
@@ -83,9 +85,34 @@ def toggle(env_root: Path, plugin: str, *, enable: bool) -> None:
             os.rename(root / source, root / dest)
 
 
+_RETIRING = ".retiring.json"
+
+
+class Retirement(Inputs):
+    manifest: Manifest
+    entries: tuple[str, ...]
+    files: dict[str, tuple[int, int, int, str]]
+
+
+def _retirement(root: Path) -> Retirement:
+    record = Retirement.model_validate_json(_local_file(root / _RETIRING, 64 * 1024 * 1024))
+    if record.manifest.id != root.name:
+        raise ValueError("The retirement record belongs to another extension")
+    return record
+
+
+def retirement_manifest(root: Path) -> Manifest:
+    return _retirement(root).manifest
+
+
 def removable(env_root: Path, plugin: str) -> tuple[str, ...]:
     root = _directory(env_root, plugin)
     _private(root)
+    if os.path.lexists(root / _RETIRING):
+        record = _retirement(root)
+        if any(record.files.get(k) != v for k, v in record_tree(root, root / _RETIRING).items()):
+            raise ValueError("Extension changed during interrupted removal")
+        return record.entries
     files = []
     pointers = [p for p in ("active.json", "disabled.json") if (root / p).is_file()]
     if len(pointers) != 1:
@@ -106,15 +133,32 @@ def removable(env_root: Path, plugin: str) -> tuple[str, ...]:
 def retire(env_root: Path, plugin: str, expected: tuple[str, ...]) -> None:
     root = _directory(env_root, plugin)
     with generation_lock(root, exclusive=True), ExitStack() as locks:
-        for name in expected:
-            if _GENERATION.fullmatch(name):
-                locks.enter_context(generation_lock(root / name, exclusive=True))
         if removable(env_root, plugin) != expected:
             raise ValueError("Extension changed after confirmation")
         for name in expected:
-            if _GENERATION.fullmatch(name):
-                shutil.rmtree(root / name)
-        for name in expected:
-            if name in ("active.json", "disabled.json"):
-                (root / name).unlink()
+            if _GENERATION.fullmatch(name) and (root / name).exists():
+                locks.enter_context(generation_lock(root / name, exclusive=True))
+        if not os.path.lexists(root / _RETIRING):
+            pointer_name = next(n for n in expected if n in ("active.json", "disabled.json"))
+            pointer = _Pointer.model_validate_json(_local_file(root / pointer_name, 4096))
+            state = _read_generation(root, pointer)
+            record = Retirement(
+                manifest=state.manifest, entries=expected, files=record_tree(root, root / _RETIRING)
+            )
+            if removable(env_root, plugin) != expected:
+                raise ValueError("Extension changed while preparing its retirement")
+            with tempfile.NamedTemporaryFile(dir=env_root) as staged:
+                staged.write(record.model_dump_json().encode())
+                staged.flush()
+                os.fsync(staged.fileno())
+                os.link(staged.name, root / _RETIRING)
+            directory_fd = os.open(root, os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        else:
+            record = _retirement(root)
+        remove_recorded(root, record.files, root / _RETIRING)
+        (root / _RETIRING).unlink()
         root.rmdir()

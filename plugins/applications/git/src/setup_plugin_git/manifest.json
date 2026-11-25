@@ -29,6 +29,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -41,6 +42,7 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -53,6 +55,7 @@
         "account-status"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -63,6 +66,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -73,6 +77,7 @@
       "target": "logout",
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -83,6 +88,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -95,6 +101,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -107,6 +114,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -119,6 +127,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -131,6 +140,7 @@
         "account-keys"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -143,6 +153,7 @@
         "account-keys"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -155,6 +166,7 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -167,6 +179,7 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -179,6 +192,7 @@
         "account-keys"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -191,6 +205,7 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -203,6 +218,7 @@
         "account-keys"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],

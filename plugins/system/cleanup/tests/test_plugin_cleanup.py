@@ -58,3 +58,51 @@ def test_purge_and_remove_readback(monkeypatch):
 def test_selection_is_reviewed(names):
     with pytest.raises(ValidationError):
         Candidates(packages=names)
+
+
+def test_solver_selection_to_protected_apply_then_unprivileged_readback(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import setup_plugin_cleanup as plugin
+
+    package = native.Package(
+        name="reportbug", architecture="all", version="2.0", status="installed"
+    )
+    present = [package]
+    inspected = []
+
+    def preview(mode, selected, uid, config):
+        assert mode == "remove" and selected == ["reportbug"] and uid == 1009 and config == tmp_path
+        inspected.append(mode)
+        return list(present)
+
+    monkeypatch.setattr(plugin, "os", SimpleNamespace(getuid=lambda: 1009))
+    monkeypatch.setattr(plugin, "user_config_path", lambda: tmp_path)
+    monkeypatch.setattr(native, "current_target", lambda: ("amd64", True))
+    monkeypatch.setattr(native, "preview", preview)
+    monkeypatch.setattr(native, "inventory", lambda *args: list(present))
+    monkeypatch.setattr(native, "digest", lambda rows: "b" * 64 if rows == [package] else "a" * 64)
+    called = []
+
+    def reviewed(plugin_id, target, payload, method):
+        assert (plugin_id, target, method) == ("cleanup", "clean.yml", "sudo")
+        change = native.Confirmation.model_validate(payload)
+        assert change.mode == "remove" and change.selected == ["reportbug"]
+        assert change.expected == "b" * 64
+        present.clear()
+        called.append(change)
+
+    monkeypatch.setattr(plugin, "run_native_play", reviewed)
+    backend, settings, inputs = Plugin(), PluginSettings(), Candidates(packages=["reportbug"])
+    assert asyncio.run(backend.choices("candidates", "rtbu", settings)) == ["reportbug"]
+    assert "reportbug" in asyncio.run(backend.inspect(settings)).message
+    plan = asyncio.run(backend.plan("remove", settings, inputs))
+    assert plan.outcome == Outcome.READY and plan.resources[0].effect == "remove"
+    assert asyncio.run(backend.verify(plan, settings, inputs)).outcome == Outcome.PARTIAL
+    plugin.apply_native("remove", settings, inputs, plan)
+    result = asyncio.run(backend.verify(plan, settings, inputs))
+    assert result.outcome == Outcome.COMPLETE and result.resources == plan.resources
+    assert asyncio.run(backend.plan("remove", settings, inputs)).outcome == Outcome.NO_CHANGES
+    with pytest.raises(ValueError, match="closure changed"):
+        plugin.apply_native("remove", settings, inputs, plan)
+    assert len(called) == 1 and len(inspected) == 4

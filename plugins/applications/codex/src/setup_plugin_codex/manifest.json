@@ -27,6 +27,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -38,7 +39,8 @@
       "permissions": [
         "user-files"
       ],
-      "supports_rollback": false,
+      "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -50,7 +52,8 @@
       "permissions": [
         "user-files"
       ],
-      "supports_rollback": false,
+      "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -62,7 +65,8 @@
       "permissions": [
         "user-files"
       ],
-      "supports_rollback": false,
+      "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -73,6 +77,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -85,6 +90,7 @@
         "account-status"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -97,6 +103,7 @@
         "account-status"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -107,6 +114,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -117,6 +125,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -129,6 +138,20 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure-mcp",
+      "label": "Register a reviewed HTTPS MCP server",
+      "page": "actions",
+      "target": "configure-mcp",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "read_only": false,
       "description": ""
     }
   ],
@@ -137,37 +160,54 @@
     "additionalProperties": false,
     "properties": {
       "permission": {
-        "default": "workspace-write",
+        "default": "inherit",
         "enum": [
+          "inherit",
           "read-only",
-          "workspace-write"
+          "workspace-write",
+          ":read-only",
+          ":workspace"
         ],
-        "title": "Sandbox mode",
+        "title": "Sandbox or named permission profile",
         "type": "string"
       },
       "approval": {
-        "default": "on-request",
+        "default": "inherit",
         "enum": [
-          "on-request",
-          "untrusted"
+          "inherit",
+          "on-request"
         ],
         "title": "Approval policy",
         "type": "string"
       },
       "model": {
-        "default": "",
-        "maxLength": 160,
+        "anyOf": [
+          {
+            "maxLength": 160,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
         "title": "Model",
-        "type": "string",
         "ui": {
           "choice_provider": "models"
         }
       },
       "effort": {
-        "default": "",
-        "maxLength": 64,
+        "anyOf": [
+          {
+            "maxLength": 64,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
         "title": "Reasoning effort",
-        "type": "string",
         "ui": {
           "choice_provider": "efforts"
         }
@@ -249,6 +289,50 @@
       "additionalProperties": false,
       "properties": {},
       "title": "Inputs",
+      "type": "object"
+    },
+    "configure-mcp": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leave empty for the current user's config.",
+          "title": "Project checkout"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "MCP server name",
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Reviewed HTTPS MCP endpoint",
+          "type": "string"
+        },
+        "enable": {
+          "default": false,
+          "title": "Enable this server for the selected scope",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "title": "McpServer",
       "type": "object"
     },
     "skills": {

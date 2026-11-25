@@ -380,3 +380,59 @@ def test_direct_link_rejects_the_wrong_interpreter_and_unsafe_generated_commands
     stage.mkdir()
     with pytest.raises(ValueError, match="unsafe or overlapping command"):
         extensions._verify_layout([(primary, payload), (stamp, data)], stage, source)
+
+
+@pytest.mark.parametrize("limit", ["MAX_FILES", "EXPANDED_BYTES"])
+def test_entire_wheel_closure_is_bounded_before_staging(tmp_path, monkeypatch, limit):
+    manifest = descriptor("bounded")
+    plugin = wheel(tmp_path, "bounded", "1.0", "ext_bounded", "", manifest=manifest)
+    dependency = wheel(tmp_path, "dependency", "1.0", "dependency", "")
+    contents = []
+    maxima = []
+    for archive in (plugin, dependency):
+        data = archive.read_bytes()
+        contents.append((Wheel(name=archive.name, sha256=hashlib.sha256(data).hexdigest()), data))
+        with ZipFile(archive) as opened:
+            entries = opened.infolist()
+            maxima.append(
+                len(entries) if limit == "MAX_FILES" else sum(e.file_size for e in entries)
+            )
+    monkeypatch.setattr(extensions, limit, max(maxima))
+    selected = ReleaseRecord(
+        manifest=Manifest.model_validate(manifest), wheels=tuple(w for w, _ in contents)
+    )
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    with pytest.raises(ValueError, match="aggregate expansion"):
+        extensions._verify_layout(contents, stage, selected)
+    assert not list(stage.iterdir())
+
+
+def test_debian_dependency_readback_requires_approved_origin_version_and_extras(monkeypatch):
+    from types import SimpleNamespace
+
+    def dist(requirements, *, version="1", root=None):
+        return SimpleNamespace(
+            requires=requirements,
+            version=version,
+            locate_file=lambda _: root or Path(sys.prefix),
+        )
+
+    installed = {
+        "app": dist(["client[auth]>=1", "missing; python_version < '2'"]),
+        "client": dist(["token; extra == 'auth'"]),
+        "token": dist(["client"]),
+    }
+    monkeypatch.setattr(extensions, "distribution", installed.__getitem__)
+    extensions.verify_debian_dependencies(["app", "app"])
+    installed["token"] = dist([], root=Path("/unapproved-environment"))
+    with pytest.raises(ValueError, match="unapproved Python"):
+        extensions.verify_debian_dependencies(["app"])
+    installed["token"] = dist([], root=Path("/usr/lib/python3/dist-packages"))
+    extensions.verify_debian_dependencies(["app"])
+    installed["client"] = dist([], version="0.5")
+    with pytest.raises(ValueError, match="reviewed requirement"):
+        extensions.verify_debian_dependencies(["app"])
+    installed["app"] = dist(["client @ https://example.invalid/client"])
+    with pytest.raises(ValueError, match="reviewed requirement"):
+        extensions.verify_debian_dependencies(["app"])

@@ -286,6 +286,7 @@ class Plugin(DebianPackages):
                     selected,
                     "plugin:enable" if inputs.enabled else "plugin:disable",
                     "id=" + inputs.feature,
+                    "filter=core",
                 )
         else:
             raise ValueError("Unexpected vault action")

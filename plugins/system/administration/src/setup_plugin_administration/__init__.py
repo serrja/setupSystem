@@ -120,18 +120,22 @@ class Plugin(Backend):
             )
         if plan.resources[0].kind == "policy-check":
             return Result(
-                outcome=Outcome.COMPLETE,
-                message="Effective sudo policy and login identity verified.",
-                resources=plan.resources,
+                outcome=Outcome.NEEDS_USER_ACTION,
+                message="Authenticate again to verify the effective sudo policy for this login.",
             )
         return Result(
-            outcome=Outcome("needs_user_action"),
-            message="Start a new session to use the verified sudo membership.",
+            outcome=Outcome.CHANGED,
+            message=(
+                "Verified the login's group membership. Start a new session, then select "
+                "Verify effective access to check its current sudo policy."
+            ),
             resources=plan.resources,
         )
 
 
-def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
+def apply_native(
+    action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
+) -> Result | None:
     from setup_system_sdk.native_play import run_native_play
 
     if action_id not in ("grant-sudo", "verify-sudo") or not isinstance(inputs, Login):
@@ -147,3 +151,13 @@ def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan:
         },
         "su",
     )
+    if action_id == "verify-sudo":
+        account = native.observe(inputs.username)
+        if not account.member or native.fingerprint(account) != resource.after:
+            return Result(outcome=Outcome.PARTIAL, message="The verified login identity changed.")
+        return Result(
+            outcome=Outcome.COMPLETE,
+            message="Effective sudo policy and login identity verified.",
+            resources=[resource.model_copy(update={"verified": True})],
+        )
+    return None

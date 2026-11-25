@@ -32,6 +32,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -44,6 +45,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -56,6 +58,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -66,6 +69,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -76,6 +80,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -88,6 +93,7 @@
         "client-context"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -100,6 +106,7 @@
         "user-service"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -112,6 +119,7 @@
         "user-service"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -122,6 +130,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -132,6 +141,7 @@
       "target": "logout",
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -144,6 +154,7 @@
         "remove-selected"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -156,6 +167,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -168,6 +180,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -180,6 +193,7 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
@@ -192,6 +206,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],

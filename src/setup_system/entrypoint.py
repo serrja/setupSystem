@@ -9,7 +9,7 @@ from typing import Annotated
 
 import typer
 
-from setup_system.authorization import _environment, encoded_preferences
+from setup_system.authorization import encoded_preferences, session_environment, ssh_socket
 from setup_system.configuration import APPLICATION_ENV_PREFIX, Settings
 from setup_system.layout import INSTALLED, PACKAGE, resource_root
 
@@ -39,7 +39,7 @@ def open_app(
         typer.echo("Run setup-system as a normal user", err=True)
         raise typer.Exit(2)
     root = resource_root()
-    env = _environment()
+    env = session_environment() | ssh_socket()
     try:
         preferences = Settings.application()
         env["SETUP_SYSTEM_PLUGIN_OVERRIDES"] = encoded_preferences()

@@ -27,6 +27,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -39,6 +40,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -51,6 +53,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -61,6 +64,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -73,6 +77,20 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-policy",
+      "label": "Remove generated policy",
+      "page": "actions",
+      "target": "remove-policy",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
@@ -129,6 +147,12 @@
       "type": "object"
     },
     "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-policy": {
       "additionalProperties": false,
       "properties": {},
       "title": "Inputs",

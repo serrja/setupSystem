@@ -7,7 +7,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from pydantic import Field
@@ -82,3 +82,24 @@ class Journal:
 
     async def history(self, plugin: str | None = None) -> list[Event]:
         return await asyncio.to_thread(self._history, plugin)
+
+    async def export(self) -> Path:
+        """Export the same bounded, allowlisted events as the global history."""
+        events = await self.history()
+
+        def write() -> Path:
+            folder = self.directory.parent / "reports"
+            name = "history-" + uuid4().hex + ".jsonl"
+            with private_directory(folder) as fd:
+                descriptor = os.open(
+                    name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=fd
+                )
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    for event in events:
+                        stream.write(event.model_dump_json() + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.fsync(fd)
+            return folder / name
+
+        return await asyncio.to_thread(write)

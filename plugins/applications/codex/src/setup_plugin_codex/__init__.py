@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import ClassVar, Literal
 
 import tomlkit
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field, field_validator
 
 from setup_system.domain.managed_text import managed_block
 from setup_system.infrastructure.file_publication import observe
@@ -28,20 +28,18 @@ class PolicySource(Inputs):
 
 
 class Settings(PluginSettings):
-    permission: Literal["inherit","read-only", "workspace-write",":read-only",":workspace"] = Field(
-        default="inherit", title="Sandbox or named permission profile"
+    permission: Literal["inherit", "read-only", "workspace-write", ":read-only", ":workspace"] = (
+        Field(default="inherit", title="Sandbox or named permission profile")
     )
-    approval: Literal["inherit","on-request"] = Field(
-        default="inherit", title="Approval policy"
-    )
-    model: str = Field(
-        default="",
+    approval: Literal["inherit", "on-request"] = Field(default="inherit", title="Approval policy")
+    model: str | None = Field(
+        default=None,
         max_length=160,
         title="Model",
         json_schema_extra={"ui": {"choice_provider": "models"}},
     )
-    effort: str = Field(
-        default="",
+    effort: str | None = Field(
+        default=None,
         max_length=64,
         title="Reasoning effort",
         json_schema_extra={"ui": {"choice_provider": "efforts"}},
@@ -57,6 +55,29 @@ class Project(Inputs):
     )
 
 
+class McpServer(Project):
+    name: str = Field(
+        min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$", title="MCP server name"
+    )
+    url: AnyHttpUrl = Field(title="Reviewed HTTPS MCP endpoint", max_length=2048)
+    enable: bool = Field(default=False, title="Enable this server for the selected scope")
+
+    @field_validator("url")
+    @classmethod
+    def https_endpoint(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        if (
+            value.scheme != "https"
+            or value.username
+            or value.password
+            or value.query
+            or value.fragment
+        ):
+            raise ValueError(
+                "Choose a public HTTPS endpoint without credentials, queries or fragments"
+            )
+        return value
+
+
 def program() -> Path:
     path = shutil.which("codex")
     return Path(path) if path else release.binary()
@@ -70,7 +91,7 @@ def original(path: Path) -> bytes:
 class Plugin(FilesBackend):
     executable = "/usr/bin/codex"
     settings_model = Settings
-    file_actions = frozenset({"configure"})
+    file_actions = frozenset({"configure", "configure-mcp"})
     inputs: ClassVar[dict[str, type[Inputs]]] = {
         "check": Inputs,
         "install": Inputs,
@@ -81,6 +102,7 @@ class Plugin(FilesBackend):
         "status": Inputs,
         "logout": Inputs,
         "mcp": Inputs,
+        "configure-mcp": McpServer,
         "skills": Inputs,
     }
     manual: ClassVar[dict[str, str]] = {
@@ -120,6 +142,16 @@ class Plugin(FilesBackend):
                 summary="Codex CLI verified"
                 if rc == 0 and version.strip()
                 else "Version unavailable",
+            )
+        if action_id == "configure-mcp" and isinstance(inputs, McpServer):
+            plan = super().prepare(action_id, settings, inputs)
+            return plan.model_copy(
+                update={
+                    "warnings": [
+                        f"Review {inputs.url.host} before enabling its tools. "
+                        "Use native credential storage."
+                    ]
+                }
             )
         if action_id in {"status", "logout"}:
             if not program().is_file():
@@ -164,7 +196,7 @@ class Plugin(FilesBackend):
         ):
             return []
         values = await client.models(program())
-        options = list(values) if provider == "models" else values.get(settings.model, [])
+        options = list(values) if provider == "models" else values.get(settings.model or "", [])
         return [o for o in options if query.casefold() in o.casefold()][:64]
 
     def files(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> dict[Path, bytes]:
@@ -183,22 +215,37 @@ class Plugin(FilesBackend):
             instructions = config
         path = config / "config.toml"
         parsed = tomlkit.parse(original(path).decode())
-        named="default_permissions" in parsed or "permissions" in parsed
+        if isinstance(inputs, McpServer):
+            servers = parsed.setdefault("mcp_servers", tomlkit.table())
+            if not isinstance(servers, dict):
+                raise ValueError("Existing MCP server configuration requires review")
+            entry = servers.setdefault(inputs.name, tomlkit.table())
+            if (
+                not isinstance(entry, dict)
+                or set(entry) - {"url", "enabled"}
+                or entry.get("url", str(inputs.url)) != str(inputs.url)
+            ):
+                raise ValueError("An existing server identity or credentials require native review")
+            entry.update({"url": str(inputs.url), "enabled": inputs.enable})
+            return {path: tomlkit.dumps(parsed).encode()}
+        named = "default_permissions" in parsed or "permissions" in parsed
         if settings.permission.startswith(":"):
             if "sandbox_workspace_write" in parsed:
-                raise ValueError("Review existing workspace permissions before switching to a named profile")
-            parsed.pop("sandbox_mode",None)
-            parsed["default_permissions"]=settings.permission
-        elif settings.permission!="inherit":
+                raise ValueError(
+                    "Review existing workspace permissions before switching to a named profile"
+                )
+            parsed.pop("sandbox_mode", None)
+            parsed["default_permissions"] = settings.permission
+        elif settings.permission != "inherit":
             if named:
                 raise ValueError("Review the existing named profile before changing sandbox mode")
-            parsed["sandbox_mode"]=settings.permission
+            parsed["sandbox_mode"] = settings.permission
         elif not named:
-            parsed.setdefault("sandbox_mode","workspace-write")
-        if settings.approval!="inherit":
-            parsed["approval_policy"]=settings.approval
+            parsed.setdefault("sandbox_mode", "workspace-write")
+        if settings.approval != "inherit":
+            parsed["approval_policy"] = settings.approval
         else:
-            parsed.setdefault("approval_policy","on-request")
+            parsed.setdefault("approval_policy", "on-request")
         if settings.model:
             parsed["model"] = settings.model
         if settings.effort:

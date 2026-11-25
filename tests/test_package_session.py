@@ -16,7 +16,13 @@ def fixture(tmp_path, monkeypatch):
     plan = Plan(
         summary="Confirmed",
         resources=[
-            Resource(kind="package", identity="tree", ownership="created", after="1#" + "f" * 64)
+            Resource(
+                kind="package",
+                identity="tree",
+                ownership="created",
+                after="1",
+                source_sha256="f" * 64,
+            )
         ],
     )
     approval = apt.Approval(plugin_id="example", action_id="install", plan=plan)

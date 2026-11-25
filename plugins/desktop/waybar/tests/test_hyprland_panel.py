@@ -24,8 +24,12 @@ sys.modules[panel.__name__] = panel
 exec(compile((ASSETS / "panel.py").read_text(), panel.__file__, "exec"), panel.__dict__)
 
 
-@pytest.fixture(scope="module")
-def waybar_template() -> str:
+@pytest.fixture
+def waybar_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    home = tmp_path.resolve()
+    monkeypatch.setenv("HOME", str(home))
+    for kind in ("CONFIG", "DATA", "STATE", "CACHE"):
+        monkeypatch.setenv(f"XDG_{kind}_HOME", str(home / kind.lower()))
     files = Plugin().files("configure", Settings(), Inputs())
     return next(data.decode() for path, data in files.items() if path.name == "waybar.json")
 
@@ -356,3 +360,108 @@ def test_boolean_workspace_id_cannot_mark_first_workspace_active(monkeypatch):
     )
     state = panel.workspace_state()
     assert all("active" not in row["class"] for row in state.values())
+
+
+@pytest.mark.parametrize("signature", [".", "..", "nested/name", ""])
+def test_runtime_requires_one_real_session_signature(tmp_path, monkeypatch, signature):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", signature)
+    with pytest.raises(ValueError, match="private Hyprland runtime"):
+        panel._runtime()
+
+
+@pytest.mark.parametrize("oversized", [True, False])
+def test_broker_consumes_fragmented_events_and_reaps_the_process_after_eof(
+    waybar_template, tmp_path, monkeypatch, oversized
+):
+    import threading
+
+    runtime = tmp_path / "runtime"
+    endpoint = runtime / "hypr/test/.socket2.sock"
+    endpoint.parent.mkdir(parents=True)
+    runtime.chmod(0o700)
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    (profile / "waybar.json").write_text(waybar_template)
+    (profile / "style.css").touch()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    pid = tmp_path / "pid"
+    started = tmp_path / "started"
+    executable(
+        tools / "waybar",
+        "import os,signal,sys\nfrom pathlib import Path\n"
+        "path=Path(sys.argv[sys.argv.index('-c')+1])\n"
+        "signal.signal(signal.SIGRTMIN+8, lambda *args: None)\n"
+        "Path(os.environ['WPID']).write_text(str(os.getpid()))\n"
+        "Path(os.environ['WFOLDER']).write_text(str(path.parent))\n"
+        "(path.parent/'ready').touch()\n"
+        "while True: signal.pause()\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tools))
+    monkeypatch.setenv("WPID", str(pid))
+    monkeypatch.setenv("WFOLDER", str(started))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/proc/self/cwd/runtime")
+    monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "test")
+    state = {"active": 1}
+    monkeypatch.setattr(panel, "MAX_REPLY", 48)
+    monkeypatch.setattr(
+        panel, "_query", lambda topic: {"id": state["active"]} if topic == "activeworkspace" else []
+    )
+    observed = []
+    errors = []
+
+    def serve(server):
+        try:
+            channel, _ = server.accept()
+            with channel:
+                deadline = time.monotonic() + 5
+                while not started.is_file():
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("Fixture Waybar did not start")
+                    time.sleep(0.01)
+                if oversized:
+                    channel.sendall(b"x" * 100)
+                    return
+                folder = Path(started.read_text())
+                state["active"] = 3
+                channel.sendall(b"ignored>>x\nwork")
+                channel.sendall(b"spacev2>>3,3\n")
+                while True:
+                    flags = json.loads((folder / "workspace-3.json").read_text())["class"]
+                    if "active" in flags:
+                        observed.append(True)
+                        return
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("No update for complete workspace event")
+                    time.sleep(0.01)
+        except BaseException as exc:
+            errors.append(exc)
+
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind("runtime/hypr/test/.socket2.sock")
+            server.listen(1)
+            server.settimeout(5)
+            peer = threading.Thread(target=serve, args=(server,))
+            peer.start()
+            try:
+                if oversized:
+                    with pytest.raises(ValueError, match="event exceeds"):
+                        panel.run(profile)
+                else:
+                    assert panel.run(profile) == 0
+            finally:
+                peer.join(6)
+            assert not peer.is_alive() and not errors
+    finally:
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+    assert observed == ([] if oversized else [True])
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid.read_text()), 0)
+    assert not list(runtime.glob("setup-system-panel-*"))

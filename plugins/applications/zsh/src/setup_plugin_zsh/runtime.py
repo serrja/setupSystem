@@ -199,6 +199,15 @@ def validate_shell(
                 )
 
 
+def history_directory(status: ShellStatus) -> Path:
+    history_dir = Path(os.environ.get("XDG_STATE_HOME") or status.home / ".local/state") / "zsh"
+    if not history_dir.resolve().is_relative_to(status.home):
+        raise ValueError("XDG_STATE_HOME outside home requires a scoped install")
+    if history_dir.is_symlink() or (history_dir.exists() and not history_dir.is_dir()):
+        raise ValueError("Invalid Zsh history directory")
+    return history_dir
+
+
 def apply_shell(
     root: Path, *, reviewed: dict[Path, FileState | None] | None = None
 ) -> tuple[Path, list[tuple[Path, str]], ShellStatus]:
@@ -206,9 +215,7 @@ def apply_shell(
     status = inspect_shell()
     if status.zsh is None:
         raise ValueError("Installed Zsh executable is required")
-    history_dir = Path(os.environ.get("XDG_STATE_HOME") or status.home / ".local/state") / "zsh"
-    if not history_dir.resolve().is_relative_to(status.home):
-        raise ValueError("XDG_STATE_HOME outside home requires a scoped install")
+    history_dir = history_directory(status)
     targets, expected, changes = _snapshot(root, status)
     if reviewed is not None:
         if targets.keys() != reviewed.keys() or any(

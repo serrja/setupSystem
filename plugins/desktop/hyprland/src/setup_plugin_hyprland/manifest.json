@@ -22,15 +22,18 @@
   ],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "check",
       "label": "Check program",
       "page": "actions",
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "install",
       "label": "Install",
       "page": "actions",
@@ -39,9 +42,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "update",
       "label": "Update",
       "page": "actions",
@@ -50,9 +55,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
       "page": "actions",
@@ -61,10 +68,11 @@
         "root"
       ],
       "supports_rollback": false,
-      "description": "",
-      "cleanup_phase": "program"
+      "read_only": false,
+      "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "configure",
       "label": "Save configuration",
       "page": "actions",
@@ -73,9 +81,11 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "save-monitor",
       "label": "Save monitor layout",
       "page": "actions",
@@ -84,19 +94,24 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "test-monitor",
       "label": "Test monitor temporarily",
+      "page": "actions",
       "target": "test-monitor",
       "permissions": [
         "session-output"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": "Restore the original output after twelve seconds."
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "properties": {
@@ -113,11 +128,22 @@
         "type": "integer"
       },
       "keyboard": {
-        "default": "us",
-        "description": "One to four XKB layouts separated by commas.",
-        "pattern": "^[a-z][a-z0-9_-]{0,15}(,[a-z][a-z0-9_-]{0,15}){0,3}$",
+        "default": [
+          "us"
+        ],
+        "description": "Select up to four XKB layouts. The first is the session default.",
+        "items": {
+          "pattern": "^[a-z][a-z0-9_-]{0,15}$",
+          "type": "string"
+        },
+        "maxItems": 4,
+        "minItems": 1,
         "title": "Session keyboard layouts",
-        "type": "string"
+        "type": "array",
+        "ui": {
+          "choice_provider": "keyboard",
+          "widget": "selection_list"
+        }
       }
     },
     "title": "Settings",

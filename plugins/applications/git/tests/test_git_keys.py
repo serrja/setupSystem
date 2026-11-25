@@ -13,8 +13,9 @@ from setup_plugin_git import Plugin, Settings, keys
 from setup_system_sdk import Mutation, Outcome, ownership_context
 
 
+@pytest.mark.parametrize("cleanup", [False, True])
 def test_create_verify_revoke_only_owned_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup: bool
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     public = (
@@ -67,23 +68,28 @@ def test_create_verify_revoke_only_owned_key(
     assert checked.outcome == Outcome.COMPLETE and checked.resources[0].remote_id == "28"
     delete = keys.Revoke(account="sample", key_id=28)
     assert asyncio.run(plugin.plan("revoke-key", Settings(), delete)).outcome == Outcome.BLOCKED
+    from setup_plugin_git import CleanupKeys
+
+    action = "remove-owned-keys" if cleanup else "revoke-key"
+    selection = CleanupKeys() if cleanup else delete
     with ownership_context(tuple(checked.resources)):
-        plan = asyncio.run(plugin.plan("revoke-key", Settings(), delete))
+        plan = asyncio.run(plugin.plan(action, Settings(), selection))
     assert plan.outcome == Outcome.READY
     result = asyncio.run(
         plugin.apply_request(
-            "revoke-key",
+            action,
             Mutation(
-                action_id="revoke-key",
+                action_id=action,
                 plan=plan,
                 settings={},
-                inputs=delete.model_dump(mode="json"),
+                inputs=selection.model_dump(mode="json"),
                 holdings=tuple(checked.resources),
             ),
         )
     )
     assert result.outcome == Outcome.CHANGED
-    assert asyncio.run(plugin.verify(plan, Settings(), delete)).outcome == Outcome.COMPLETE
+    with ownership_context(tuple(checked.resources)):
+        assert asyncio.run(plugin.verify(plan, Settings(), selection)).outcome == Outcome.COMPLETE
     assert path.read_bytes() == public
 
 

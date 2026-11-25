@@ -69,8 +69,10 @@ class PublishedAssets(FilesBackend):
         owned = {(r.kind, r.identity): r for r in owned_resources()}
         for row in plan.resources:
             previous = owned.get((row.kind, row.identity))
-            if previous and previous.after is not None and (
-                row.before != previous.after or row.permissions != previous.permissions
+            if (
+                previous
+                and previous.after is not None
+                and (row.before != previous.after or row.permissions != previous.permissions)
             ):
                 return Plan(
                     summary=f"Review local changes to {row.identity}.",

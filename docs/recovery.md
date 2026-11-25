@@ -91,3 +91,9 @@ initramfs and these directories until normal and recovery boots have succeeded.
 Historical entries can omit these fields. Confirm their mode independently. Follow the [graphical unlock recovery procedure](graphical_unlock.md).
 
 When an older journal is migrated in place, its original bytes are saved in the adjacent `.v0.json` file. The `.v0.retained-*` entry keeps the original inode so later writes through an open editor remain recoverable. If migration reports a concurrent edit, inspect the current file and the retained or conflict files before retrying.
+
+## 🧹 Resume a partial cleanup
+
+Open **Managed resources → Check interrupted operations** to inspect prepared changes. If an administrative inspection requires a fresh authorization, review its resources and authorize the readback. A lost connection to a mutating action never triggers an automatic retry. **Review remaining cleanup** verifies completed deletions and offers a new confirmation for the remaining owned resources. Full cleanup restores successive managed-file revisions in reverse order. A local edit that changes the next expected fingerprint stops recovery.
+
+After interrupted extension retirement, use **Remove extension** to resume removal of the recorded files. New or modified files require review. **Export history** writes a private JSONL report containing the same bounded, allowlisted events shown in global history.

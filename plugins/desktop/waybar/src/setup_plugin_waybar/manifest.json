@@ -16,15 +16,18 @@
   "dependencies": [],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "check",
       "label": "Check program",
       "page": "actions",
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "install",
       "label": "Install",
       "page": "actions",
@@ -33,9 +36,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "update",
       "label": "Update",
       "page": "actions",
@@ -44,9 +49,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
       "page": "actions",
@@ -55,10 +62,11 @@
         "root"
       ],
       "supports_rollback": false,
-      "description": "",
-      "cleanup_phase": "program"
+      "read_only": false,
+      "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "configure",
       "label": "Save configuration",
       "page": "actions",
@@ -67,9 +75,11 @@
         "user-files"
       ],
       "supports_rollback": true,
+      "read_only": false,
       "description": ""
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "properties": {

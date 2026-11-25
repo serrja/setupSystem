@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -75,7 +76,7 @@ class PluginPage(Vertical):
         self.settings_form: SchemaForm | None = None
         self.snapshot: Snapshot | None = None
         self.forms: dict[str, SchemaForm] = {}
-        self.choice_cache: dict[tuple[str, str, str, str], tuple[float, list[str]]] = {}
+        self.choice_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
         self.active_action: Action | None = None
         self.drafts: dict[str, Values] = {}
         self.status_line = Static("", markup=False, classes="feedback")
@@ -144,6 +145,7 @@ class PluginPage(Vertical):
                     yield Static(id="holdings", markup=False)
                     yield Button("Refresh resources", id="refresh-resources")
                     yield Button("Check interrupted operations", id="reconcile")
+                    yield Button("Review remaining cleanup", id="resume-cleanup")
                     yield Button("Roll back a file operation", id="rollback", disabled=True)
             with TabPane("History", id="history"):
                 with VerticalScroll():
@@ -191,21 +193,23 @@ class PluginPage(Vertical):
 
     async def dynamic_choices(self, provider: str, query_text: str) -> list[str]:
         state = await self.manager.activation(self.manifest.id)
-        key = (state.digest, self.profile, provider, query_text)
+        request = Request(
+            method="choices",
+            plugin_id=self.manifest.id,
+            provider=provider,
+            query=query_text,
+            saved=self.saved.values if self.saved else {},
+            overrides=self.unsaved_values(),
+        )
+        key = (
+            state.digest,
+            self.profile,
+            hashlib.sha256(request.model_dump_json().encode()).hexdigest(),
+        )
         cached = self.choice_cache.get(key)
         if cached and time.monotonic() - cached[0] < 2:
             return cached[1]
-        result = await query(
-            state,
-            Request(
-                method="choices",
-                plugin_id=self.manifest.id,
-                provider=provider,
-                query=query_text,
-                overrides=self.saved.values if self.saved else {},
-            ),
-            self.manager.options,
-        )
+        result = await query(state, request, self.manager.options)
         values = list(result.choices[: self.manager.options.suggestion_results])
         if len(self.choice_cache) >= self.manager.options.suggestion_cache_directories:
             self.choice_cache.pop(next(iter(self.choice_cache)))
@@ -349,7 +353,10 @@ class PluginPage(Vertical):
             if profile:
                 await self.change_profile(profile)
         elif name in ("disable", "enable"):
-            await asyncio.to_thread(toggle, self.manager.env_root, plugin, enable=name == "enable")
+            async with self.manager.ledger.writer(plugin):
+                await asyncio.to_thread(
+                    toggle, self.manager.env_root, plugin, enable=name == "enable"
+                )
             await self.refresh_state()
         elif name == "remove-extension":
             if await self.manager.ledger.pending(plugin):
@@ -361,7 +368,12 @@ class PluginPage(Vertical):
                     "Remove extension",
                 )
             ):
-                await asyncio.to_thread(retire, self.manager.env_root, plugin, entries)
+                async with self.manager.ledger.writer(plugin):
+                    if await self.manager.ledger.pending(plugin):
+                        raise ValueError(
+                            "Resolve interrupted operations before removing the worker"
+                        )
+                    await asyncio.to_thread(retire, self.manager.env_root, plugin, entries)
                 await self.refresh_state()
         elif name == "full-cleanup":
             cleanup = await preview_cleanup(
@@ -390,8 +402,47 @@ class PluginPage(Vertical):
                     result = await self.manager.rollback(plugin, chosen, recovery)
                     self.status_line.update(result.outcome.value + " · " + result.message)
                     await self.refresh_state()
+        elif name == "resume-cleanup":
+            remaining = await self.manager.remaining_cleanup(plugin)
+            if not remaining:
+                self.status_line.update("No interrupted cleanup can safely resume.")
+                return
+            chosen = await self.app.push_screen_wait(
+                Choose(
+                    "Interrupted cleanup",
+                    [(s.mutation.action_id, str(s.operation_id)) for s in remaining],
+                )
+            )
+            snap = next((s for s in remaining if str(s.operation_id) == chosen), None)
+            if snap:
+                plan = snap.mutation.plan
+                detail = "\n".join(
+                    [plan.summary, *plan.warnings, *(r.description() for r in plan.resources)]
+                )
+                if await self.app.push_screen_wait(Confirm(detail, "Resume remaining removals")):
+                    state = await self.manager.activation(plugin)
+                    password = await self.authorize(descriptor(state, snap.mutation.action_id))
+                    result = await self.manager.resume_cleanup(snap, password)
+                    self.status_line.update(result.outcome.value + " · " + result.message)
         elif name == "reconcile":
-            results = await self.manager.reconcile(plugin)
+
+            async def approve_readback(action: Action, snapshot: Snapshot) -> BecomePassword | None:
+                plan = snapshot.mutation.plan
+                detail = "\n".join(
+                    [
+                        action.label,
+                        plan.summary,
+                        *plan.warnings,
+                        *(r.description() for r in plan.resources),
+                    ]
+                )
+                if await self.app.push_screen_wait(
+                    Confirm(detail, "Inspect with administrative access")
+                ):
+                    return await self.authorize(action)
+                return None
+
+            results = await self.manager.reconcile(plugin, approve_readback)
             self.status_line.update(
                 " · ".join(r.message for r in results) or "No interrupted operations."
             )
@@ -446,10 +497,7 @@ class PluginPage(Vertical):
                 + "\n".join(
                     [
                         *plan.warnings,
-                        *[
-                            f"{r.effect} {r.kind} · {r.identity} · {r.ownership}"
-                            for r in plan.resources
-                        ],
+                        *(r.description() for r in plan.resources),
                     ]
                 )
             )
@@ -471,7 +519,7 @@ class PluginPage(Vertical):
                 action.label,
                 plan.summary,
                 *plan.warnings,
-                *[f"{r.effect} {r.kind} · {r.identity} · {r.ownership}" for r in plan.resources],
+                *[r.description() for r in plan.resources],
             ]
             if not action.supports_rollback:
                 review.append("Operation rollback is unavailable.")

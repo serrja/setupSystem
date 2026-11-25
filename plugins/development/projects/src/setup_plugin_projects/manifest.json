@@ -20,15 +20,18 @@
   ],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "inspect-projects",
       "label": "inspect projects",
       "page": "actions",
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "prepare-directories",
       "label": "prepare directories",
       "page": "actions",
@@ -37,9 +40,11 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "template-cache",
       "label": "template cache",
       "page": "actions",
@@ -48,9 +53,11 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "template-create",
       "label": "template create",
       "page": "actions",
@@ -59,9 +66,11 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "template-update",
       "label": "template update",
       "page": "actions",
@@ -70,37 +79,48 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "open-editor",
       "label": "Open in Neovim",
+      "page": "actions",
       "target": "open-editor",
       "permissions": [
         "user-session"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "open-codex",
       "label": "Open in Codex",
+      "page": "actions",
       "target": "open-codex",
       "permissions": [
         "user-session"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "template-versions",
       "label": "List template releases",
+      "page": "actions",
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "properties": {

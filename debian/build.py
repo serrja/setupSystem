@@ -189,20 +189,12 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
     return f"{package_name}_{version}_all.deb"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--version")
-    options = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
-    sha = git(root, "rev-parse", "HEAD").decode().strip()
-    version = options.version or f"0~local+g{sha[:12]}"
-    if options.version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        parser.error("expected a stable Debian release version such as 1.2.3")
+def build(root: Path, output: Path, sha: str, version: str) -> Path:
+    """Publish one archive from the supplied committed identity."""
     environment = dict(
         os.environ, SOURCE_DATE_EPOCH=git(root, "show", "-s", "--format=%ct", sha).decode().strip()
     )
-    out = options.output.resolve()
+    out = output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".setup-system-", dir=out) as temp:
         source = Path(temp) / "source"
@@ -216,7 +208,20 @@ def main() -> None:
             check=True,
         )
         artifact.replace(out / package)
-        print(out / package)
+        return out / package
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--version")
+    options = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    sha = git(root, "rev-parse", "HEAD").decode().strip()
+    version = options.version or f"0~local+g{sha[:12]}"
+    if options.version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        parser.error("expected a stable Debian release version such as 1.2.3")
+    print(build(root, options.output, sha, version))
 
 
 if __name__ == "__main__":

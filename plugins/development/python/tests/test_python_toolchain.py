@@ -98,3 +98,45 @@ def test_uv_installs_the_exact_local_wheel_and_refuses_changed_hash(tmp_path):
         backend.install_tools(
             tmp_path, tmp_path / "different", lock.replace(digest.encode(), b"0" * 64)
         )
+
+
+def test_interrupted_generation_retirement_preserves_new_files_and_can_continue(
+    tmp_path, monkeypatch
+):
+    from setup_system.extension_lifecycle import seal_generation
+    from setup_system_sdk import Resource, toolchain
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    plugin = Plugin()
+    folder = plugin.storage() / ("a" * 64)
+    folder.mkdir(parents=True, mode=0o700)
+    (folder / "first").write_text("one")
+    (folder / "second").write_text("two")
+    seal_generation(folder)
+    row = Resource(
+        kind="toolchain_generation",
+        identity=str(folder),
+        after=folder.name,
+        ownership="created",
+        cleanup=True,
+    )
+    remove = toolchain.remove_recorded
+
+    def interrupt(root, records, keep):
+        (root / "first").unlink()
+        raise OSError("Fixture interruption")
+
+    with ownership_context((row,)):
+        initial = plugin.remove_plan()
+        monkeypatch.setattr(toolchain, "remove_recorded", interrupt)
+        assert plugin.remove(initial).outcome == Outcome.PARTIAL
+        assert (folder / ".removing.json").is_file() and (folder / "second").is_file()
+        (folder / "new").write_text("user data")
+        with pytest.raises(ValueError, match="changed during cleanup"):
+            plugin.remove_plan()
+        assert (folder / "new").read_text() == "user data"
+        (folder / "new").unlink()
+        monkeypatch.setattr(toolchain, "remove_recorded", remove)
+        assert plugin.remove(plugin.remove_plan()).outcome == Outcome.CHANGED
+    assert not folder.exists()

@@ -203,18 +203,54 @@ def verify(artifacts: Path, debian_dir: Path) -> None:
             subprocess.run(command, cwd=root, env=environment, timeout=300, check=True)
         environment["PATH"] = str(executable.parent) + os.pathsep + environment["PATH"]
         (stage / "pyproject.toml").write_bytes((root / "pyproject.toml").read_bytes())
+        smoke = [
+            str(executable),
+            "-I",
+            "-B",
+            str(root / "docker/verify-installed.py"),
+            "--wheel",
+            str(wheels[0]),
+        ]
+        subprocess.run(smoke, cwd=stage, env=environment, timeout=120, check=True)
         subprocess.run(
             [
+                "uv",
+                "pip",
+                "install",
+                "--reinstall",
+                "--no-deps",
+                "--no-index",
+                "--python",
                 str(executable),
-                "-I",
-                "-B",
-                str(root / "docker/verify-installed.py"),
-                "--wheel",
                 str(wheels[0]),
             ],
             cwd=stage,
             env=environment,
-            timeout=120,
+            timeout=60,
+            check=True,
+        )
+        subprocess.run(smoke, cwd=stage, env=environment, timeout=120, check=True)
+        subprocess.run(
+            ["uv", "pip", "uninstall", "--python", str(executable), PACKAGE],
+            cwd=stage,
+            env=environment,
+            timeout=60,
+            check=True,
+        )
+        if os.path.lexists(executable.parent / "setup-system"):
+            raise ValueError("The removed wheel still exposes its public command")
+        subprocess.run(
+            [
+                str(executable),
+                "-I",
+                "-c",
+                "from importlib.util import find_spec; import sys; "
+                "names = ('setup_system', 'setup_system_sdk'); "
+                "sys.exit(any(find_spec(name) is not None for name in names))",
+            ],
+            cwd=stage,
+            env=environment,
+            timeout=15,
             check=True,
         )
 

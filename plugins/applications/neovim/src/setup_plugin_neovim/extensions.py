@@ -11,6 +11,8 @@ from pathlib import Path
 
 from pydantic import Field, TypeAdapter
 
+from setup_system.infrastructure.file_publication import move_new
+from setup_system.infrastructure.file_publication import observe as file_state
 from setup_system.infrastructure.processes import run_command
 from setup_system.infrastructure.user_storage import (
     checked_directory,
@@ -306,9 +308,11 @@ def verify_parsers(plan: Plan, languages: list[str]) -> Result:
         languages,
     )
     rows = [
-        r.model_copy(update={"after": fingerprint, "verified": True})
+        r.model_copy(
+            update={"after": observed.sha256, "permissions": observed.mode, "verified": True}
+        )
         for r in plan.resources
-        if (fingerprint := checksum(Path(r.identity)))
+        if (observed := file_state(Path(r.identity))) is not None
     ]
     return Result(
         outcome=Outcome.COMPLETE
@@ -318,4 +322,71 @@ def verify_parsers(plan: Plan, languages: list[str]) -> Result:
         if checked
         else "Review parser, formatter and language-server state",
         resources=rows,
+    )
+
+
+def parser_removal() -> Plan:
+    root = directory("editor-parsers") / "parser"
+    rows = []
+    for held in owned_resources():
+        if held.kind != "parser" or not held.cleanup or held.ownership != "created":
+            continue
+        path = Path(held.identity)
+        if path.parent != root or not re.fullmatch(r"[a-z][a-z0-9_]*\.so", path.name):
+            return Plan(outcome=Outcome.BLOCKED, summary="Review the recorded parser location")
+        state = file_state(path)
+        if state is None:
+            continue
+        if state.sha256 != held.after or state.mode != held.permissions:
+            return Plan(outcome=Outcome.BLOCKED, summary=f"Review the changed parser {path.name}")
+        rows.append(
+            Resource(
+                kind="parser",
+                identity=str(path),
+                ownership="created",
+                effect="remove",
+                before=state.sha256,
+                permissions=state.mode,
+                cleanup=True,
+            )
+        )
+    return Plan(
+        outcome=Outcome.READY if rows else Outcome.NO_CHANGES,
+        summary="Remove the reviewed compiled parsers",
+        resources=sorted(rows, key=lambda row: row.identity),
+    )
+
+
+def remove_parsers(plan: Plan) -> Result:
+    if plan != parser_removal() or plan.outcome != Outcome.READY:
+        return Result(outcome=Outcome.BLOCKED, message="The set of managed parsers changed")
+    removed: list[Resource] = []
+    for row in plan.resources:
+        path = Path(row.identity)
+        with private_directory(path.parent, create=False):
+            stage = Path(tempfile.mkdtemp(dir=path.parent, prefix=".setup-system-parser-"))
+            claimed = stage / "parser.so"
+            try:
+                move_new(path, claimed)
+                state = file_state(claimed)
+                if (
+                    not state
+                    or state.sha256 != row.before
+                    or state.mode != row.permissions
+                    or os.path.lexists(path)
+                ):
+                    return Result(
+                        outcome=Outcome.PARTIAL,
+                        message="A parser changed during removal",
+                        resources=removed,
+                    )
+                claimed.unlink()
+                removed.append(row.model_copy(update={"verified": True}))
+            finally:
+                if os.path.lexists(claimed) and not os.path.lexists(path):
+                    move_new(claimed, path)
+                if not any(stage.iterdir()):
+                    stage.rmdir()
+    return Result(
+        outcome=Outcome.CHANGED, message="Removed the managed compiled parsers", resources=removed
     )

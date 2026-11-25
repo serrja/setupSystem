@@ -22,6 +22,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -34,6 +35,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -46,6 +48,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -58,6 +61,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],

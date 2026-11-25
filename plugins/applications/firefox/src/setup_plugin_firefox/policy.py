@@ -4,12 +4,14 @@ import hashlib
 import os
 import stat
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, JsonValue, TypeAdapter
 
+from setup_system.infrastructure.atomic_rename import move_new
 from setup_system.infrastructure.native_target import current_target
 from setup_system.infrastructure.system_files import validate_system_path
 from setup_system.infrastructure.system_paths import protected
@@ -20,7 +22,7 @@ from setup_system.infrastructure.system_publication import (
     save_backup,
 )
 from setup_system.layout import require_installed_resource
-from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource
+from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Resource, owned_resources
 
 PATH = Path("/etc/firefox/policies/policies.json")
 JSON = TypeAdapter(dict[str, JsonValue])
@@ -214,7 +216,94 @@ def preview(settings: Settings) -> Plan:
     )
 
 
+def removal() -> Plan:
+    held = next(
+        (
+            row
+            for row in owned_resources()
+            if row.kind == "file"
+            and row.identity == str(PATH)
+            and row.cleanup
+            and row.ownership == "created"
+        ),
+        None,
+    )
+    if held is None:
+        return Plan(
+            outcome=Outcome.NO_CHANGES, summary="No plugin-created Firefox policy to remove"
+        )
+    data, mode = snapshot(PATH)
+    if data is None:
+        return Plan(outcome=Outcome.NO_CHANGES, summary="The Firefox policy is absent")
+    digest = hashlib.sha256(data).hexdigest()
+    if mode != 0o644 or mode != held.permissions or digest != held.after or not generated(data):
+        return Plan(
+            outcome=Outcome.BLOCKED, summary="The Firefox policy requires administrator review"
+        )
+    return Plan(
+        summary=f"Remove the verified generated Firefox policy at {PATH}",
+        resources=[
+            Resource(
+                kind="file",
+                identity=str(PATH),
+                ownership="created",
+                effect="remove",
+                before=digest,
+                permissions=mode,
+                cleanup=True,
+            )
+        ],
+    )
+
+
+def generated(data: bytes) -> bool:
+    return any(
+        render(b"", Settings(protection=protection, https_only=secure, install_ublock=extension))
+        == data
+        for protection in ("strict", "standard")
+        for secure in (False, True)
+        for extension in (False, True)
+    )
+
+
+def remove_generated(plan: Plan) -> None:
+    (row,) = plan.resources
+    before = observe_file(PATH)
+    if (
+        before is None
+        or row.identity != str(PATH)
+        or row.kind != "file"
+        or row.effect != "remove"
+        or not row.cleanup
+        or row.ownership != "created"
+        or before.mode != row.permissions
+        or before.mode != 0o644
+        or before.digest != row.before
+        or before.access_acl is not None
+        or not generated(before.data)
+    ):
+        raise ValueError("The selected policy differs from the confirmed generated file")
+    stage = Path(tempfile.mkdtemp(prefix=".setup-system-policy-", dir=PATH.parent))
+    original = stage / "original"
+
+    def check(directory: Path) -> None:
+        validate_system_path(directory, is_directory=True)
+
+    try:
+        move_new(PATH, original, check_directory=check)
+        if observe_file(original) != before or os.path.lexists(PATH):
+            raise ValueError(f"Firefox policy changed during removal. Check {stage}")
+        original.unlink()
+    finally:
+        if original.exists():
+            if not os.path.lexists(PATH):
+                move_new(original, PATH, check_directory=check)
+        if not any(stage.iterdir()):
+            stage.rmdir()
+
+
 class Approval(Inputs):
+    action_id: Literal["configure", "remove-policy"] = "configure"
     settings: Settings
     plan: Plan
 
@@ -227,6 +316,9 @@ def apply(approval: Approval) -> None:
     if os.geteuid() != 0 or not current_target()[1]:
         raise ValueError("System policy requires an authenticated Debian administrator")
     require_installed_resource(Path(__file__), "plugins/firefox/setup_plugin_firefox/policy.py")
+    if approval.action_id == "remove-policy":
+        remove_generated(approval.plan)
+        return
     if preview(approval.settings) != approval.plan:
         raise ValueError("Firefox policy changed after confirmation")
     checked = inspect(PATH, approval.settings)

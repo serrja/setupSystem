@@ -39,7 +39,7 @@ _EXTRA = TypeAdapter(dict[str, JsonValue])
 class PrivilegedChange(Protocol):
     def __call__(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
-    ) -> None: ...
+    ) -> Result | None: ...
 
 
 def public_parameters(extra: dict[str, JsonValue]) -> str:
@@ -146,7 +146,9 @@ async def execute(
                 outcome=Outcome.BLOCKED, message="The confirmed plan changed. Preview again."
             )
         try:
-            await asyncio.to_thread(change, action, settings, inputs, observed)
+            evidence = await asyncio.to_thread(change, action, settings, inputs, observed)
+            if evidence is not None:
+                return evidence
             return await backend.verify(observed, settings, inputs)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             return Result(

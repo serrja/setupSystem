@@ -30,7 +30,7 @@ def test_profile_preview_requires_no_apply_and_detaches_saved_values(tmp_path):
 
     class Stub:
         async def activation(self, plugin):
-            return SimpleNamespace(manifest=SimpleNamespace(dependencies=[]))
+            return SimpleNamespace(manifest=SimpleNamespace(dependencies=[], settings_version=1))
 
         async def preview(self, plugin, action, options, inputs, *, saved):
             calls.append((plugin, action, options, inputs, saved))

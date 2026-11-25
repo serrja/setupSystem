@@ -194,7 +194,7 @@ def _members(archive: ZipFile) -> set[str]:
     return names - dirs
 
 
-def _wheel_data(name: str, payload: bytes) -> tuple[set[str], dict[str, bytes]]:
+def _wheel_data(name: str, payload: bytes) -> tuple[set[str], dict[str, bytes], int, int]:
     distribution, version, _, _ = parse_wheel_filename(name)
     if len(payload) > WHEEL_BYTES:
         raise ValueError("Wheel exceeds size limit")
@@ -249,7 +249,12 @@ def _wheel_data(name: str, payload: bytes) -> tuple[set[str], dict[str, bytes]]:
                     raise ValueError(
                         "Wheel uses an unsupported installation hook or relocated data"
                     )
-            return files, data
+            return (
+                files,
+                data,
+                len(archive.infolist()),
+                sum(e.file_size for e in archive.infolist()),
+            )
     except (BadZipFile, NotImplementedError, RuntimeError) as exc:
         raise ValueError("Invalid wheel archive") from exc
 
@@ -270,7 +275,7 @@ def _entrypoints(data: bytes) -> _EntryPoints:
 
 def wheel_manifest(filename: str, payload: bytes) -> Manifest:
     """Inspect the wheel as data, including entry-point and distribution agreement."""
-    files, data = _wheel_data(filename, payload)
+    files, data, _, _ = _wheel_data(filename, payload)
     manifests = [p for p in data if p.endswith("/manifest.json")]
     entry_files = [p for p in data if p.endswith("/entry_points.txt")]
     if len(manifests) != 1 or len(entry_files) != 1:
@@ -500,7 +505,8 @@ def _state(env_root: Path, plugin_id: str, *, disabled: bool) -> Activation | No
 
 def active(env_root: Path, plugin_id: str) -> Activation | None:
     """Inspect a specific venv's distribution metadata without loading its modules."""
-    if os.path.lexists(_directory(env_root, plugin_id) / "disabled.json"):
+    root = _directory(env_root, plugin_id)
+    if any(os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json")):
         return None
     return _state(env_root, plugin_id, disabled=False)
 
@@ -513,6 +519,11 @@ def installed(env_root: Path) -> tuple[CatalogEntry, ...]:
     result = []
     for path in sorted(env_root.iterdir()):
         try:
+            if os.path.lexists(path / ".retiring.json"):
+                from setup_system.extension_lifecycle import retirement_manifest
+
+                result.append(CatalogEntry(retirement_manifest(path), source=path, disabled=True))
+                continue
             disabled = os.path.lexists(path / "disabled.json")
             if disabled and os.path.lexists(path / "active.json"):
                 raise ValueError("Extension has conflicting active and disabled receipts")
@@ -562,12 +573,18 @@ def _verify_layout(
     occupied: set[str] = set()
     directories: set[str] = set()
     commands: set[str] = set()
+    total_entries = 0
+    expanded_bytes = 0
     for index, (wheel, content) in enumerate(wheels):
         if _digest(content) != wheel.sha256:
             raise ValueError("Downloaded wheel digest differs from the confirmed release")
         if index == 0 and wheel_manifest(wheel.name, content) != selected.manifest:
             raise ValueError("Plugin identity differs from the confirmed manifest")
-        files, meta = _wheel_data(wheel.name, content)
+        files, meta, count, expanded = _wheel_data(wheel.name, content)
+        total_entries += count
+        expanded_bytes += expanded
+        if total_entries > MAX_FILES or expanded_bytes > EXPANDED_BYTES:
+            raise ValueError("Wheel closure exceeds aggregate expansion limits")
         for path, data in meta.items():
             if not path.endswith("/entry_points.txt"):
                 continue
@@ -589,6 +606,7 @@ def _verify_layout(
             raise ValueError("Wheels contain conflicting installation paths")
         occupied.update(files)
         directories.update(parents)
+    for wheel, content in wheels:
         (directory / wheel.name).write_bytes(content)
 
 
@@ -600,7 +618,9 @@ def _activate(root: Path, prior: bytes | None, pointer: _Pointer) -> None:
             current = _local_file(root / "active.json", 4096)
         except FileNotFoundError:
             current = None
-        if current != prior or os.path.lexists(root / "disabled.json"):
+        if current != prior or any(
+            os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json")
+        ):
             raise ValueError("Plugin activation changed during staging")
         with tempfile.NamedTemporaryFile(dir=root, delete=False) as staged:
             temporary = Path(staged.name)
@@ -665,6 +685,8 @@ async def install_release(
     root = _directory(env_root, selected.manifest.id)
     await asyncio.to_thread(_private, env_root, create=True)
     await asyncio.to_thread(_private, root, create=True)
+    if await asyncio.to_thread(os.path.lexists, root / ".retiring.json"):
+        raise ValueError("Finish the interrupted extension removal before updating")
     if await asyncio.to_thread(os.path.lexists, root / "disabled.json"):
         raise ValueError("Enable the disabled extension before updating it")
     try:

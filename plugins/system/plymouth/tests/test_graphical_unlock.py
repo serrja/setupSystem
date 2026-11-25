@@ -282,3 +282,123 @@ def test_interrupted_boot_publication_returns_actual_displaced_inode(boot_tree, 
     assert path.read_bytes() == b"previous image"
     (journal,) = unlock.STATE.glob("*/operation.json")
     assert json.loads(journal.read_bytes())["status"] == "restored"
+
+
+def test_plugin_handoff_observes_initramfs_and_preserves_native_boot_acceptance(
+    boot_tree, monkeypatch
+):
+    import asyncio
+
+    import setup_plugin_plymouth as plugin
+
+    from setup_system_sdk import Inputs, Outcome, PluginSettings
+
+    settings, inputs = PluginSettings(), Inputs()
+    backend = plugin.Plugin()
+    monkeypatch.setattr(plugin, "current_target", lambda: ("amd64", True))
+    monkeypatch.setattr(plugin, "observations", lambda home: ["Simulated graphical console."])
+    monkeypatch.setattr(unlock, "_command", boot_commands)
+    initial = asyncio.run(backend.inspect(settings))
+    assert initial.outcome == Outcome.NEEDS_USER_ACTION and "Simulated" in initial.message
+    plan = asyncio.run(backend.plan("configure", settings, inputs))
+    assert plan.outcome == Outcome.READY
+    assert plan.resources[0].identity == "f" * 64
+    assert asyncio.run(backend.verify(plan, settings, inputs)).outcome == Outcome.PARTIAL
+
+    def native(plugin_id, target, payload, method):
+        assert (plugin_id, target, method) == ("plymouth", "configure.yml", "sudo")
+        plugin.apply_boot(plugin.Confirmation.model_validate(payload))
+
+    monkeypatch.setattr(plugin, "run_native_play", native)
+    plugin.apply_native("configure", settings, inputs, plan)
+    result = asyncio.run(backend.verify(plan, settings, inputs))
+    assert result.outcome == Outcome.NEEDS_REBOOT and result.resources == plan.resources
+    assert asyncio.run(backend.plan("check", settings, inputs)).outcome == Outcome.NO_CHANGES
+    with pytest.raises(ValueError, match="changed"):
+        plugin.apply_native("configure", settings, inputs, plan)
+    assert len(list(unlock.STATE.glob("*/operation.json"))) == 1
+
+
+def test_plugin_requires_regional_keyboard_and_verified_boot_identity(boot_tree, monkeypatch):
+    import setup_plugin_plymouth as plugin
+
+    from setup_system_sdk import Outcome
+
+    monkeypatch.setattr(plugin, "current_target", lambda: ("amd64", False))
+    assert plugin.prepare("configure").outcome == Outcome.BLOCKED
+    monkeypatch.setattr(plugin, "current_target", lambda: ("amd64", True))
+    monkeypatch.setattr(unlock, "prerequisites", lambda: ("console-setup",))
+    plan = plugin.prepare("install")
+    assert plan.outcome == Outcome.BLOCKED and "Regional" in plan.summary
+    monkeypatch.setattr(unlock, "prerequisites", lambda: ("plymouth-themes",))
+    assert plugin.prepare("configure").outcome == Outcome.BLOCKED
+
+    (unlock.ETC / "crypttab").write_text("root UUID=test /private/key luks\n")
+    assert plugin.prepare("check").outcome == Outcome.BLOCKED
+    assert not list(unlock.STATE.iterdir())
+
+
+def test_debian_grub_firmware_and_initramfs_topology_is_part_of_the_confirmation(
+    tmp_path, monkeypatch
+):
+    boot, sysfs, etc = (tmp_path / name for name in ("boot", "sys", "etc"))
+    (boot / "grub").mkdir(parents=True)
+    (sysfs / "firmware/efi").mkdir(parents=True)
+    (sysfs / "class/drm/card0/device/driver").mkdir(parents=True)
+    etc.mkdir()
+    cmdline = tmp_path / "cmdline"
+    cmdline.write_text("root=/dev/mapper/root quiet splash")
+    kernels = (boot / "initrd.img-6.1", boot / "vmlinuz-6.1", boot / "grub/grub.cfg")
+    for file in kernels:
+        file.write_bytes(b"fixture image")
+    (etc / "crypttab").write_text("root UUID=test none luks\n")
+    tools = []
+    for original in unlock.BOOT_TOOLS:
+        path = tmp_path / original.name
+        path.touch()
+        tools.append(path)
+    monkeypatch.setattr(unlock, "BOOT", boot)
+    monkeypatch.setattr(unlock, "SYS", sysfs)
+    monkeypatch.setattr(unlock, "ETC", etc)
+    monkeypatch.setattr(unlock, "CMDLINE", cmdline)
+    monkeypatch.setattr(unlock, "BOOT_TOOLS", tuple(tools))
+    monkeypatch.setattr(unlock.platform, "release", lambda: "6.1")
+    monkeypatch.setattr(unlock, "prerequisites", lambda: ())
+    mounts = {
+        "/": "/dev/mapper/root ext4 /",
+        "/boot": "/dev/sda2 ext4 /boot",
+        "/boot/efi": "/dev/sda1 vfat /boot/efi",
+    }
+    layers = {
+        "/dev/mapper/root": "crypt ext4\npart crypto_LUKS\ndisk",
+        "/dev/sda2": "part ext4\ndisk",
+    }
+    firmware = [r"Boot0001* Debian HD(...)\EFI\debian\shimx64.efi"]
+
+    def command(args):
+        match Path(args[0]).name:
+            case "findmnt":
+                return mounts[args[-1]]
+            case "lsblk":
+                return layers[args[-1]]
+            case "efibootmgr":
+                return "BootCurrent: 0001\n" + firmware[0]
+        pytest.fail("Boot preflight called an unexpected tool")
+
+    monkeypatch.setattr(unlock, "_command", command)
+    accepted = unlock.inspect_unlock()
+    assert not accepted.blockers and accepted.identity
+    kernels[1].write_bytes(b"new kernel")
+    assert unlock.inspect_unlock().identity != accepted.identity
+    firmware[0] = r"Boot0001* EFI Custom Loader\EFI\custom\kernel.efi"
+    assert "Debian GRUB" in unlock.inspect_unlock().blockers[0]
+    firmware[0] = r"Boot0001* debian\EFI\debian\grubx64.efi"
+    cmdline.write_text("nomodeset quiet")
+    assert "modesetting" in unlock.inspect_unlock().blockers[0]
+    cmdline.write_text("quiet")
+    tools[0].unlink()
+    assert "boot prerequisite" in unlock.inspect_unlock().blockers[0]
+    mounts["/boot/efi"] = "/dev/sda1 ext4 /boot/efi"
+    assert "EFI system partition" in unlock.inspect_unlock().blockers[0]
+    mounts["/boot"] = "ambiguous source"
+    assert "block device" in unlock.inspect_unlock().blockers[0]

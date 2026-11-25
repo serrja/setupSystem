@@ -51,16 +51,46 @@ def test_project_configuration_and_model_availability(
     )
     assert (root / "AGENTS.md").is_file() and not (tmp_path / ".codex").exists()
 
-def test_existing_named_profile_inherits_without_broadening_access(tmp_path,monkeypatch):
-    monkeypatch.setenv("HOME",str(tmp_path))
-    cfg=tmp_path/".codex/config.toml"
+
+def test_existing_named_profile_inherits_without_broadening_access(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = tmp_path / ".codex/config.toml"
     cfg.parent.mkdir()
-    monkeypatch.setenv("CODEX_HOME",str(cfg.parent))
-    cfg.write_text('default_permissions = "owner-profile"\napproval_policy="never"\n[permissions.owner-profile]\nextends=":read-only"\n')
-    values=tomllib.loads(Plugin().files("configure",Settings(),Project())[cfg].decode())
-    assert values["default_permissions"]=="owner-profile" and "sandbox_mode" not in values
-    assert values["approval_policy"]=="never"
+    monkeypatch.setenv("CODEX_HOME", str(cfg.parent))
+    cfg.write_text(
+        'default_permissions = "owner-profile"\napproval_policy="never"\n'
+        '[permissions.owner-profile]\nextends=":read-only"\n'
+    )
+    values = tomllib.loads(Plugin().files("configure", Settings(), Project())[cfg].decode())
+    assert values["default_permissions"] == "owner-profile" and "sandbox_mode" not in values
+    assert values["approval_policy"] == "never"
     with pytest.raises(ValueError, match="existing named profile"):
-        Plugin().files("configure",Settings(permission="workspace-write"),Project())
-    selected=tomllib.loads(Plugin().files("configure",Settings(permission=":workspace"),Project())[cfg].decode())
-    assert selected["default_permissions"]==":workspace" and "owner-profile" in selected["permissions"]
+        Plugin().files("configure", Settings(permission="workspace-write"), Project())
+    selected = tomllib.loads(
+        Plugin().files("configure", Settings(permission=":workspace"), Project())[cfg].decode()
+    )
+    assert (
+        selected["default_permissions"] == ":workspace"
+        and "owner-profile" in selected["permissions"]
+    )
+
+
+def test_only_reviewed_mcp_endpoint_is_registered(tmp_path, monkeypatch):
+    from pydantic import ValidationError
+    from setup_plugin_codex import McpServer
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+    with pytest.raises(ValidationError):
+        McpServer(name="tools", url="https://example.test/mcp?token=never-accept")
+    cfg = tmp_path / ".codex/config.toml"
+    cfg.parent.mkdir()
+    cfg.write_text('model="owner-choice"\n[mcp_servers.keep]\ncommand="native"\n')
+    selection = McpServer.model_validate({"name": "tools", "url": "https://example.test/mcp"})
+    plan = Plugin().prepare("configure-mcp", Settings(), selection)
+    assert plan.outcome == Outcome.READY and "example.test" in plan.warnings[0]
+    assert Plugin().mutate("configure-mcp", Settings(), selection, plan).outcome == Outcome.CHANGED
+    root = tomllib.loads(cfg.read_text())
+    assert root["model"] == "owner-choice" and root["mcp_servers"]["keep"]["command"] == "native"
+    assert root["mcp_servers"]["tools"] == {"url": "https://example.test/mcp", "enabled": False}

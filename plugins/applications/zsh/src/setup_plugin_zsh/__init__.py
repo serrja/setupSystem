@@ -6,7 +6,13 @@ from typing import ClassVar, Literal
 
 from pydantic import Field
 
-from setup_plugin_zsh.runtime import _snapshot, apply_shell, inspect_shell, validate_shell
+from setup_plugin_zsh.runtime import (
+    _snapshot,
+    apply_shell,
+    history_directory,
+    inspect_shell,
+    validate_shell,
+)
 from setup_system.domain.receipts import digest
 from setup_system.infrastructure.file_publication import observe
 from setup_system_sdk import (
@@ -79,10 +85,22 @@ class Plugin(DebianPackages):
                     cleanup=original is None,
                 )
             )
+        history = history_directory(status)
+        existing = history.exists()
+        rows.append(
+            Resource(
+                kind="directory",
+                identity=str(history),
+                ownership="preexisting" if existing else "created",
+                before="present" if existing else None,
+                after="present",
+                cleanup=False,
+            )
+        )
         return Plan(
             summary="Configure Zsh startup fragments. Your login shell and history are preserved.",
             resources=rows,
-            outcome=Outcome.READY if changes else Outcome.NO_CHANGES,
+            outcome=Outcome.READY if changes or not existing else Outcome.NO_CHANGES,
         )
 
     def mutate(
@@ -90,11 +108,17 @@ class Plugin(DebianPackages):
     ) -> Result:
         if action_id != "configure":
             raise ValueError("Unknown user action")
-        current = {Path(r.identity): observe(Path(r.identity)) for r in plan.resources}
+        files = [r for r in plan.resources if r.kind == "file"]
+        directory = next(r for r in plan.resources if r.kind == "directory")
+        if Path(directory.identity).exists() != (directory.before == "present"):
+            return Result(
+                outcome=Outcome.BLOCKED, message="History directory changed after preview"
+            )
+        current = {Path(r.identity): observe(Path(r.identity)) for r in files}
         if any(
             (state.sha256 if state else None) != r.before
             or (state.mode if state else None) != r.before_permissions
-            for r, state in zip(plan.resources, current.values(), strict=True)
+            for r, state in zip(files, current.values(), strict=True)
         ):
             return Result(outcome=Outcome.BLOCKED, message="Shell startup files changed")
         backup, _, _ = apply_shell(self.package_folder, reviewed=current)
@@ -115,6 +139,11 @@ class Plugin(DebianPackages):
                 and state.sha256 == r.after
                 and state.mode == r.permissions
                 for r in plan.resources
+                if r.kind == "file"
+            ) and all(
+                Path(r.identity).is_dir() and not Path(r.identity).is_symlink()
+                for r in plan.resources
+                if r.kind == "directory"
             )
 
         ok = await asyncio.to_thread(matches)

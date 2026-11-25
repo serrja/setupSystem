@@ -11,7 +11,8 @@ from setup_system_sdk import Outcome, Plan
 
 def test_files_have_exact_palette_and_search_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    for scope in ("CONFIG", "DATA", "STATE", "CACHE"):
+        monkeypatch.setenv(f"XDG_{scope}_HOME", str(tmp_path / scope.lower()))
     files = Plugin().files("configure", Settings(), Inputs())
     assert all(b"@{" not in b for b in files.values())
     config = files[tmp_path / "config/nvim/init.lua"]
@@ -47,6 +48,7 @@ def test_resolve_stable_annotated_tag_and_guard_dirty_checkout(monkeypatch, tmp_
 
 def test_unverified_editor_or_failed_smoke_cannot_claim_success(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     with pytest.raises(ValueError, match="Verify the managed"):
         extensions.nvim("version", [])
     monkeypatch.setattr(extensions, "nvim", lambda *a: False)

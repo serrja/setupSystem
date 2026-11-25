@@ -377,13 +377,16 @@ def resolve(root: Path, stage: Path, folder: Path, packages: Packages) -> Plan:
                 before=before,
                 after=new,
                 source_sha256=hashes.pop(),
-                cleanup=old is None,
+                cleanup=old is None and name in packages.names,
             )
         )
     return Plan(
         summary="Install the reviewed signed Debian package closure",
         resources=resources,
-        warnings=["Installed packages and maintainer-script changes have limited rollback."],
+        warnings=[
+            "Installed packages and maintainer-script changes have limited rollback.",
+            "Keep shared dependencies for other programs. Review APT autoremove separately.",
+        ],
         outcome=Outcome.READY if rows else Outcome.NO_CHANGES,
     )
 

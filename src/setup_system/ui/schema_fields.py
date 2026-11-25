@@ -81,10 +81,12 @@ class ValueEditor(Vertical):
         self.label = spec.title or self.spec.title or key
         self.initial = value
         self.definitions = definitions
+        self.choice_dependencies: Values | None = None
         self.choices = choices
         self.fields: list[ValueEditor] = []
         self.control: Input | Switch | Select[str] | SelectionList[str] | None = None
         self.entries = Vertical(classes="entries")
+        self.custom: Input | None = None
 
     def child(self, key: str, spec: FieldSpec, value: JsonValue) -> ValueEditor:
         return ValueEditor(key, spec, value, self.definitions, self.choices)
@@ -98,7 +100,8 @@ class ValueEditor(Vertical):
     def compose(self) -> ComposeResult:
         spec = self.spec
         value = self.initial
-        yield Label(self.label, markup=False)
+        units = spec.ui.get("units")
+        yield Label(f"{self.label} ({units})" if units else self.label, markup=False)
         if spec.description:
             yield Static(spec.description, markup=False, classes="description")
         provider = spec.ui.get("choice_provider")
@@ -146,6 +149,11 @@ class ValueEditor(Vertical):
                 disabled=readonly,
             )
             yield self.control
+            if provider and spec.ui.get("allow_custom"):
+                self.custom = Input(
+                    placeholder="Custom value", max_length=spec.maximum_length, disabled=readonly
+                )
+                yield self.custom
         elif spec.type == "boolean":
             self.control = Switch(value=bool(value), disabled=readonly)
             yield self.control
@@ -243,6 +251,8 @@ class ValueEditor(Vertical):
         if isinstance(self.control, Switch):
             return self.control.value
         if isinstance(self.control, Select):
+            if self.custom and self.custom.value:
+                return self.custom.value
             if self.control.value is Select.BLANK:
                 return None
             return str(self.control.value)
@@ -291,6 +301,16 @@ class SchemaForm(Vertical):
             and f.spec.type not in ("integer", "number")
         }
         for field in self.fields:
+            dependencies = field.spec.ui.get("depends_on")
+            if (
+                isinstance(dependencies, list)
+                and dependencies
+                and field.spec.ui.get("choice_provider")
+            ):
+                context = {k: current.get(k) for k in dependencies if isinstance(k, str)}
+                if context != field.choice_dependencies:
+                    field.choice_dependencies = context
+                    field.refresh_choices("")
             for key, attribute in (("visible_when", "display"), ("enabled_when", "disabled")):
                 conditions = field.spec.ui.get(key)
                 if isinstance(conditions, dict) and conditions:

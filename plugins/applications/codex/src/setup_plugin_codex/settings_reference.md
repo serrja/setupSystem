@@ -6,10 +6,10 @@ Generated from the plugin's Pydantic settings and action inputs.
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
-| `permission` | Sandbox mode | `"workspace-write"` | `{"enum": ["read-only", "workspace-write"]}` |
-| `approval` | Approval policy | `"on-request"` | `{"enum": ["on-request", "untrusted"]}` |
-| `model` | Model | `""` | `{"maxLength": 160}` |
-| `effort` | Reasoning effort | `""` | `{"maxLength": 64}` |
+| `permission` | Sandbox or named permission profile | `"inherit"` | `{"enum": ["inherit", "read-only", "workspace-write", ":read-only", ":workspace"]}` |
+| `approval` | Approval policy | `"inherit"` | `{"enum": ["inherit", "on-request"]}` |
+| `model` | Model | `null` | `—` |
+| `effort` | Reasoning effort | `null` | `—` |
 | `instructions` | Include the pinned engineering instructions | `false` | `—` |
 
 ## Check Codex
@@ -53,3 +53,12 @@ This operation has no editable parameters.
 ## Uninstall managed CLI
 
 This operation has no editable parameters.
+
+## Register a reviewed HTTPS MCP server
+
+| Field | Description | Default | Constraints |
+| --- | --- | --- | --- |
+| `project` | Leave empty for the current user's config. | `null` | `—` |
+| `name` | MCP server name | `required` | `{"maxLength": 64, "minLength": 1, "pattern": "^[a-z][a-z0-9_-]*$"}` |
+| `url` | Reviewed HTTPS MCP endpoint | `required` | `{"format": "uri", "maxLength": 2048, "minLength": 1}` |
+| `enable` | Enable this server for the selected scope | `false` | `—` |

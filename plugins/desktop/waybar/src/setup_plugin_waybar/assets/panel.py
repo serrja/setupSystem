@@ -211,6 +211,7 @@ def _runtime() -> Path:
         or not runtime.is_dir()
         or runtime.stat().st_uid != os.getuid()
         or runtime.stat().st_mode & 0o077
+        or signature in {".", ".."}
         or re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", signature) is None
     ):
         raise ValueError("Panel needs the real user's private Hyprland runtime directory")

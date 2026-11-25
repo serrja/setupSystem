@@ -18,56 +18,72 @@
   "dependencies": [],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "update",
       "label": "Update regional tools",
+      "page": "actions",
       "target": "update",
       "permissions": [
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": "Use the signed Debian locale and console keyboard packages."
     },
     {
+      "cleanup_phase": null,
       "id": "install",
       "label": "Install regional tools",
+      "page": "actions",
       "target": "install",
       "permissions": [
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": "Use the signed Debian locale and console keyboard packages."
     },
     {
+      "cleanup_phase": null,
       "id": "timezone",
       "label": "Set timezone",
+      "page": "actions",
       "target": "timezone",
       "permissions": [
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "locale",
       "label": "Set locale",
+      "page": "actions",
       "target": "locale",
       "permissions": [
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "keyboard",
       "label": "Set keyboard",
+      "page": "actions",
       "target": "keyboard",
       "permissions": [
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "description": "Load only caller-selected sources and explicitly declared environment names.",
@@ -76,6 +92,18 @@
     "type": "object"
   },
   "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
     "locale": {
       "additionalProperties": false,
       "properties": {
@@ -139,18 +167,6 @@
         "value"
       ],
       "title": "Timezone",
-      "type": "object"
-    },
-    "install": {
-      "additionalProperties": false,
-      "properties": {},
-      "title": "Inputs",
-      "type": "object"
-    },
-    "update": {
-      "additionalProperties": false,
-      "properties": {},
-      "title": "Inputs",
       "type": "object"
     }
   },

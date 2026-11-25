@@ -1,10 +1,14 @@
 """Confirm and verify a single local managed-file recovery receipt."""
 
 import sys
+from pathlib import Path
 
 from pydantic import Field
 
 from setup_system.application.recovery import restore
+from setup_system.domain.receipts import FileState, rollback_status
+from setup_system.infrastructure import receipt_repository
+from setup_system.infrastructure.restore_files import LocalRecoveryFiles
 from setup_system_sdk import Inputs, Outcome, Result
 from setup_system_sdk.protocol import LIMIT
 
@@ -16,6 +20,36 @@ class RecoveryPlan(Inputs):
     @classmethod
     def inspect(cls, receipt: str) -> "RecoveryPlan":
         return cls(receipt=receipt, entries=tuple(restore(receipt)))
+
+    @classmethod
+    def projected(cls, receipt: str, states: dict[str, FileState | None]) -> "RecoveryPlan":
+        """Plan an older receipt against the verified result of newer restorations."""
+        current = cls.inspect(receipt)
+        folder = receipt_repository.operation_folder(receipt)
+        if receipt_repository.receipt_source(folder) is None:
+            return current
+        operation = receipt_repository.load_operation(folder)
+        if operation.status == "restored":
+            return current
+        files = LocalRecoveryFiles()
+        entries = []
+        paths = []
+        for row in operation.files:
+            path, status = files.inspect(row)
+            name = str(path)
+            if name in states:
+                status = rollback_status(row, states[name], published=row.verified)
+            entries.append((name, status))
+            paths.append(path)
+            if status != "conflict":
+                states[name] = row.before
+        disappearing = {Path(name) for name, state in states.items() if state is None}
+        directories = files.directories(operation, paths)
+        for path, entry in files.removable_directories(directories, disappearing):
+            if entry.relative in operation.requested_directories:
+                entries.append((str(path), "would-remove-directory"))
+            states[str(path)] = None
+        return cls(receipt=receipt, entries=tuple(entries))
 
     def apply(self) -> Result:
         if self != self.inspect(self.receipt) or any(s == "conflict" for _, s in self.entries):

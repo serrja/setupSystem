@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from setup_system.application.recovery import restore
+from setup_system.authorization import session_environment
 from setup_system.diagnostics import PartialApplyError
 from setup_system.domain.receipts import FileState
 from setup_system.infrastructure.file_publication import observe
@@ -47,6 +48,15 @@ def command(*argv: str, capture: bool = False) -> tuple[int, str]:
     for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
         if name in os.environ:
             env[name] = os.environ[name]
+    if os.geteuid() != 0:
+        session = session_environment()
+        env.update(
+            {
+                name: session[name]
+                for name in ("DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY")
+                if name in session
+            }
+        )
     result = run_command(
         list(argv),
         timeout=20,

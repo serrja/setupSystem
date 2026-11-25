@@ -1,19 +1,24 @@
 """Compose a reviewed cleanup from package actions, receipts and exact user-owned resources."""
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, TypeAdapter
 
 from setup_system.application.rollback import RecoveryPlan
 from setup_system.authorization import BecomePassword
 from setup_system.configuration import Settings
 from setup_system.configuration.store import forget_profile, profiles
+from setup_system.domain.receipts import FileState
 from setup_system.extension_lifecycle import removable, retire
+from setup_system.infrastructure.user_storage import capture_receipt
 from setup_system.journal import Event
 from setup_system.plugin_manager import PluginManager, Snapshot
+from setup_system.resource_ledger import LocalSnapshot
 from setup_system_sdk import Action, Identifier, Inputs, Outcome, Plan, Resource, Result, Values
 from setup_system_sdk.secrets import forget_secret, secret_exists, store_secret
 
@@ -35,6 +40,7 @@ class Cleanup(Inputs):
     steps: tuple[Step, ...]
     recovery: tuple[RecoveryStep, ...]
     secrets: tuple[Resource, ...]
+    holdings: tuple[Resource, ...]
     settings: tuple[Resource, ...]
     generations: tuple[str, ...]
     blockers: tuple[str, ...]
@@ -46,7 +52,7 @@ class Cleanup(Inputs):
             plan = step.snapshot.mutation.plan
             lines.append(f"{step.phase} · {step.snapshot.mutation.action_id} · {plan.summary}")
             lines.extend(plan.warnings)
-            lines.extend(f"{r.effect} {r.kind} · {r.identity}" for r in plan.resources)
+            lines.extend(r.description() for r in plan.resources)
         for record in self.recovery:
             lines.extend(f"{status} · {name}" for name, status in record.plan.entries)
         lines.extend("Remove keyring entry · " + r.identity for r in self.secrets)
@@ -99,10 +105,13 @@ async def preview_cleanup(
                 continue
             steps.append(Step(phase=phase, snapshot=snapshot))
             covered.update((r.kind, r.identity) for r in plan.resources)
+    native_removals = covered.copy()
+    projected: dict[str, FileState | None] = {}
     for operation, receipt in await manager.ledger.recoveries(plugin):
         record = await asyncio.to_thread(RecoveryPlan.inspect, receipt)
-        if record.entries and all(("file", name) in covered for name, _ in record.entries):
+        if record.entries and all(("file", name) in native_removals for name, _ in record.entries):
             continue
+        record = await asyncio.to_thread(RecoveryPlan.projected, receipt, projected)
         if any(s == "conflict" for _, s in record.entries):
             blockers.append("Review later edits for receipt " + receipt)
         recoveries.append(RecoveryStep(operation=operation, plan=record))
@@ -140,6 +149,7 @@ async def preview_cleanup(
     return Cleanup(
         plugin=plugin,
         digest=state.digest,
+        holdings=tuple(holds),
         steps=tuple(steps),
         recovery=tuple(recoveries),
         secrets=tuple(secrets),
@@ -163,11 +173,25 @@ async def save_profile(
     version: int,
     revision: str,
 ) -> None:
+    async with manager.ledger.writer(plugin):
+        await _save_profile(manager, store, plugin, profile, values, version, revision)
+
+
+async def _save_profile(
+    manager: PluginManager,
+    store: Settings,
+    plugin: str,
+    profile: str,
+    values: Values,
+    version: int,
+    revision: str,
+) -> None:
     operation = uuid4()
     row = Resource(
         kind="plugin_settings",
         identity=profile_path(store, plugin, profile),
         before=revision,
+        source_sha256=_values_digest(values),
         ownership="created" if revision.endswith(":absent") else "modified",
         cleanup=revision.endswith(":absent"),
     )
@@ -196,6 +220,20 @@ async def save_profile(
 
 
 async def apply_cleanup(
+    manager: PluginManager,
+    store: Settings,
+    plan: Cleanup,
+    authorize: Callable[[Action], Awaitable[BecomePassword | None]],
+) -> Result:
+    async with manager.ledger.writer(plan.plugin):
+        if tuple(await manager.ledger.holdings(plan.plugin)) != plan.holdings:
+            return Result(
+                outcome=Outcome.BLOCKED, message="Ownership changed after the cleanup preview"
+            )
+        return await _apply_cleanup(manager, store, plan, authorize)
+
+
+async def _apply_cleanup(
     manager: PluginManager,
     store: Settings,
     plan: Cleanup,
@@ -251,6 +289,11 @@ async def apply_cleanup(
             await remove_keyring_entry(manager, plan.plugin, secret)
         for row in plan.settings:
             await forget_profile(store, manager.ledger, plan.plugin, row)
+        if await manager.ledger.pending(plan.plugin) or any(
+            r.cleanup and r.ownership == "created"
+            for r in await manager.ledger.holdings(plan.plugin)
+        ):
+            raise ValueError("Resource ownership still requires its installed worker")
         await asyncio.to_thread(retire, manager.env_root, plan.plugin, plan.generations)
     except (ValueError, OSError, RuntimeError):
         result = Result(
@@ -273,7 +316,14 @@ async def apply_cleanup(
 
 
 async def save_keyring_entry(manager: PluginManager, plugin: str, value: SecretStr) -> UUID:
+    async with manager.ledger.writer(plugin):
+        return await _save_secret(manager, plugin, value)
+
+
+async def _save_secret(manager: PluginManager, plugin: str, value: SecretStr) -> UUID:
     operation, reference = uuid4(), uuid4()
+    if await secret_exists(plugin, reference):
+        raise ValueError("Keyring reference collision")
     row = Resource(
         kind="secret-reference",
         identity=str(reference),
@@ -335,3 +385,56 @@ async def remove_keyring_entry(manager: PluginManager, plugin: str, row: Resourc
             resources=[change],
         ),
     )
+
+
+def _values_digest(values: Values) -> str:
+    return hashlib.sha256(
+        TypeAdapter(Values).dump_json(
+            {k: values[k] for k in sorted(values) if values[k] is not None}
+        )
+    ).hexdigest()
+
+
+async def reconcile_local(manager: PluginManager, plugin: str, snapshot: LocalSnapshot) -> Result:
+    row = snapshot.resource
+    if row.kind == "secret-reference":
+        present = await secret_exists(plugin, UUID(row.identity))
+        complete = present == (row.effect != "remove")
+        unchanged = not complete
+        readback = row
+    elif row.kind == "plugin_settings":
+        import tomllib
+
+        path = Path(row.identity)
+        try:
+            state = await asyncio.to_thread(capture_receipt, path)
+        except FileNotFoundError:
+            state = None
+        revision = Settings._revision(path.name, state)
+        unchanged = revision == row.before
+        if row.effect == "remove":
+            complete = state is None
+        else:
+            complete = bool(
+                state
+                and _values_digest(
+                    TypeAdapter(Values).validate_python(
+                        tomllib.loads(state.data.decode())["values"]
+                    )
+                )
+                == row.source_sha256
+            )
+        readback = row.model_copy(update={"after": None if row.effect == "remove" else revision})
+    else:
+        raise ValueError("Unknown local operation")
+    result = Result(
+        outcome=Outcome.COMPLETE
+        if complete
+        else Outcome.CANCELLED
+        if unchanged
+        else Outcome.PARTIAL,
+        message="Inspected the locally prepared resource",
+        resources=[readback] if complete else [],
+    )
+    await manager.ledger.finish(snapshot.operation_id, result)
+    return result

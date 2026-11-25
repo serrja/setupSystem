@@ -10,7 +10,7 @@ from zoneinfo import available_timezones
 from pydantic import Field
 
 from setup_system.infrastructure.native_target import current_boot_identity, current_target
-from setup_system_sdk import Backend, Inputs, Outcome, Plan, PluginSettings, Resource, Result
+from setup_system_sdk import Backend, Inputs, Outcome, Plan, PluginSettings, Resource, Result, xkb
 from setup_system_sdk.apt import apply_packages, package_plan, verify_packages
 from setup_system_sdk.native_play import run_native_play
 
@@ -67,8 +67,7 @@ def choices(provider: str) -> list[str]:
             }
         )
     if provider == "keyboard":
-        symbols = Path("/usr/share/X11/xkb/symbols")
-        return sorted(p.name for p in symbols.iterdir() if p.is_file()) if symbols.is_dir() else []
+        return xkb.keyboard_layouts()
     return []
 
 

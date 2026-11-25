@@ -17,6 +17,6 @@ Select a program in the catalog. Its Overview identifies the extension, and Chec
 
 ## 🧹 User data and removal
 
-Uninstall previews the application resources recorded as created. Existing packages, repositories, Docker volumes, vault notes and other personal documents require separate ownership decisions. Open the plugin’s Help for its specific cleanup behavior.
+Uninstall previews the application resources recorded as created. The ledger records the complete APT transaction. Uninstall removes directly requested packages created by this plugin. Additional libraries remain available to other consumers. Review candidates in the separate APT autoremove action. Repositories, Docker volumes, vault notes and other personal documents stay under user control. Open the plugin’s Help for its specific cleanup behavior.
 
 The program guides describe independent actions and the native steps required by external services. [Git profiles](git_profiles.md) · [Happ routing](happ_guide.md) · [ChatGPT Desktop](chatgpt_guide.md) · [Neovim](neovim_guide.md).

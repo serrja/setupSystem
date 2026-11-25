@@ -6,4 +6,4 @@ Choose language profiles, Wayland clipboard and login-editor integration, then p
 
 ## 🧹 Data
 
-Git repositories and edited documents stay outside the editor configuration plan. The file journal retains prior settings for recovery.
+Full cleanup removes the exact compiler output files still matching their recorded digests and modes. It preserves changed parsers, plugin Git repositories and edited documents. The file journal retains prior settings for recovery.

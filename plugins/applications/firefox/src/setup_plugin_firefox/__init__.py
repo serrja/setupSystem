@@ -18,15 +18,25 @@ class Plugin(DebianPackages):
         **DebianPackages.package_inputs,
         "check": Inputs,
         "configure": Inputs,
+        "remove-policy": Inputs,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
+        if action_id == "remove-policy":
+            return policy.removal()
         if action_id == "configure" and isinstance(settings, policy.Settings):
             return policy.preview(settings)
         return super().prepare(action_id, settings, inputs)
 
     async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
         if plan.resources[0].kind == "file" and isinstance(settings, policy.Settings):
+            if plan.resources[0].effect == "remove":
+                data, _ = await asyncio.to_thread(policy.snapshot, policy.PATH)
+                return Result(
+                    outcome=Outcome.COMPLETE if data is None else Outcome.PARTIAL,
+                    message="Checked the removed Firefox policy",
+                    resources=plan.resources,
+                )
             checked = await asyncio.to_thread(policy.preview, settings)
             ok = (
                 checked.outcome == Outcome.NO_CHANGES
@@ -41,8 +51,12 @@ class Plugin(DebianPackages):
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    if action_id == "configure" and isinstance(settings, policy.Settings):
-        approved = policy.Approval(settings=settings, plan=plan)
+    if action_id in ("configure", "remove-policy") and isinstance(settings, policy.Settings):
+        approved = policy.Approval(
+            action_id="configure" if action_id == "configure" else "remove-policy",
+            settings=settings,
+            plan=plan,
+        )
         run_native_play(
             "firefox", "policy.yml", {"approval": approved.model_dump(mode="json")}, "sudo"
         )

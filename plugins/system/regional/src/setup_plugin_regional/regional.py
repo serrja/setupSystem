@@ -13,6 +13,7 @@ from setup_system.domain.system_facts import InspectionPaths
 from setup_system.infrastructure import processes, system_files
 from setup_system.infrastructure.clock import timezone_file, validate_timezone
 from setup_system.infrastructure.system_paths import protected
+from setup_system_sdk import xkb
 
 from .models import RegionalKind, RegionalReceipt
 
@@ -102,17 +103,11 @@ def validate(setting: str, value: str | None) -> str:
         return value
     if setting == "keyboard":
         layouts = value.split(",")
-        symbols = Path("/usr/share/X11/xkb/symbols")
-        if 1 <= len(layouts) <= 4 and all(
-            re.fullmatch(r"[a-z][a-z0-9_-]{0,15}", layout) and (symbols / layout).is_file()
-            for layout in layouts
-        ):
-            return value
+        xkb.validate_layouts(layouts)
+        return value
     if setting == "locale" and re.fullmatch(r"(?:C|[a-z]{2,3}_[A-Z]{2})\.UTF-8", value):
-        if (
-            not _generated(value)
-            and SUPPORTED.is_file()
-            and value + " UTF-8" not in SUPPORTED.read_text().splitlines()
+        if not _generated(value) and (
+            not SUPPORTED.is_file() or value + " UTF-8" not in SUPPORTED.read_text().splitlines()
         ):
             raise ValueError(f"Locale {value} is not supported by Debian locale data")
         return value

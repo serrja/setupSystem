@@ -92,3 +92,76 @@ def test_previous_unknown_receipt_stops_native_command(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         regional.apply("timezone", "Europe/Moscow", "UTC")
     assert path.read_bytes() == original
+
+
+def test_keyboard_choice_through_native_plan_and_repeat(tmp_path, monkeypatch):
+    import asyncio
+    from importlib import import_module
+    from types import SimpleNamespace
+
+    import setup_plugin_regional as plugin
+
+    from setup_system_sdk import Outcome, PluginSettings
+
+    native = import_module("setup_plugin_regional.change")
+    xkb = tmp_path / "xkb"
+    (xkb / "rules").mkdir(parents=True)
+    (xkb / "symbols").mkdir()
+    # Symbols can also be internal composition files and variants.
+    for name in ("us", "ru", "group"):
+        (xkb / "symbols" / name).touch()
+    (xkb / "rules/base.lst").write_text(
+        "! layout\n us English\n ru Russian\n custom User-defined\n! variant\n group internals\n"
+    )
+    monkeypatch.setattr(regional.xkb, "XKB", xkb)
+    keyboard = tmp_path / "keyboard"
+    keyboard.write_text('XKBMODEL="pc105"\nXKBLAYOUT="us"\n')
+    locale = tmp_path / "locale"
+    locale.write_text("LANG=C.UTF-8\n")
+    monkeypatch.setattr(regional, "KEYBOARD", keyboard)
+    monkeypatch.setattr(regional, "LOCALE", locale)
+    monkeypatch.setattr(regional, "STATE", tmp_path / "state")
+    monkeypatch.setattr(regional, "protected", lambda path, **kw: path.relative_to(tmp_path))
+    monkeypatch.setattr(native, "os", SimpleNamespace(geteuid=lambda: 0))
+    checked = []
+    monkeypatch.setattr(
+        native, "require_installed_resource", lambda path, dest: checked.append(dest)
+    )
+    for module in (plugin, native):
+        monkeypatch.setattr(module, "current_boot_identity", lambda: "synthetic-boot")
+        monkeypatch.setattr(module, "current_target", lambda: ("amd64", True))
+    calls = []
+    monkeypatch.setattr(regional, "_command", lambda args: calls.append(args))
+
+    def bridge(plugin_id, target, payload, method):
+        assert (plugin_id, target, method) == ("regional", "configure.yml", "sudo")
+        native.apply(native.Confirmation.model_validate(payload))
+
+    monkeypatch.setattr(plugin, "run_native_play", bridge)
+    backend, settings, selection = (
+        plugin.Plugin(),
+        PluginSettings(),
+        plugin.Keyboard(layouts=["us", "ru"]),
+    )
+    assert asyncio.run(backend.choices("keyboard", "", settings)) == ["ru", "us"]
+    assert asyncio.run(backend.choices("keyboard", "R", settings)) == ["ru"]
+    assert "keyboard=us" in asyncio.run(backend.inspect(settings)).message
+    plan = asyncio.run(backend.plan("keyboard", settings, selection))
+    assert plan.outcome == Outcome.READY and plan.resources[0].before == "us"
+    assert asyncio.run(backend.verify(plan, settings, selection)).outcome == Outcome.PARTIAL
+    plugin.apply_native("keyboard", settings, selection, plan)
+    assert asyncio.run(backend.verify(plan, settings, selection)).outcome == Outcome.CHANGED
+    assert asyncio.run(backend.plan("keyboard", settings, selection)).outcome == Outcome.NO_CHANGES
+    assert checked == ["plugins/regional/setup_plugin_regional/change.py"]
+    assert calls == [["/usr/bin/setupcon", "--keyboard-only", "--save-only"]]
+    assert 'XKBMODEL="pc105"' in keyboard.read_text()
+    with pytest.raises(ValueError, match="changed"):
+        plugin.apply_native("keyboard", settings, selection, plan)
+    for value in ("us,us", "group", "custom", "us/../../etc", "us,ru,us,ru,us"):
+        with pytest.raises(ValueError):
+            native.apply(
+                native.Confirmation(
+                    setting="keyboard", value=value, before="us,ru", boot="synthetic-boot"
+                )
+            )
+    assert len(calls) == 1

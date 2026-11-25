@@ -11,7 +11,7 @@ from pydantic import Field, field_validator
 
 from setup_plugin_neovim import extensions
 from setup_system.infrastructure.user_storage import inside_home
-from setup_system_sdk import Inputs, Plan, PluginSettings, Result
+from setup_system_sdk import Inputs, Outcome, Plan, PluginSettings, Result
 from setup_system_sdk.apt import DebianPackages, apply_packages
 from setup_system_sdk.managed_assets import PublishedAssets, desktop_context, render_desktop
 
@@ -55,10 +55,13 @@ class Plugin(DebianPackages, PublishedAssets):
         "configure": Inputs,
         "install-plugins": Inputs,
         "install-parsers": Inputs,
+        "remove-parsers": Inputs,
         "verify-editor": Inputs,
     }
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
+        if action_id == "remove-parsers":
+            return extensions.parser_removal()
         if action_id == "install-plugins":
             return extensions.plan_plugins()
         if action_id == "install-parsers" and isinstance(settings, Settings):
@@ -70,6 +73,8 @@ class Plugin(DebianPackages, PublishedAssets):
     def mutate(
         self, action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan
     ) -> Result:
+        if action_id == "remove-parsers":
+            return extensions.remove_parsers(plan)
         if action_id == "install-plugins":
             return extensions.update(plan)
         if action_id == "install-parsers" and isinstance(settings, Settings):
@@ -86,6 +91,15 @@ class Plugin(DebianPackages, PublishedAssets):
             and all(r.kind == "parser" for r in plan.resources)
             and isinstance(settings, Settings)
         ):
+            if all(row.effect == "remove" for row in plan.resources):
+                absent = await asyncio.to_thread(
+                    lambda: all(not os.path.lexists(row.identity) for row in plan.resources)
+                )
+                return Result(
+                    outcome=Outcome.COMPLETE if absent else Outcome.PARTIAL,
+                    message="Checked the selected parser files",
+                    resources=plan.resources,
+                )
             return await asyncio.to_thread(
                 extensions.verify_parsers, plan, list(settings.languages)
             )

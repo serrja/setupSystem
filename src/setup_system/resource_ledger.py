@@ -1,16 +1,19 @@
 """Durable operation and ownership records, independent of diagnostic output."""
 
 import asyncio
+import fcntl
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from uuid import UUID
 
 import aiosqlite
 
 from setup_system.infrastructure.user_storage import private_directory, safe_file
-from setup_system_sdk import Outcome, Plan, Resource, Result
+from setup_system_sdk import Inputs, Outcome, Plan, Resource, Result
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS operations(
@@ -42,9 +45,51 @@ CREATE TABLE IF NOT EXISTS reservations(
 """
 
 
+class LocalSnapshot(Inputs):
+    local: bool = True
+    operation_id: UUID
+    action: str
+    resource: Resource
+
+
+_owner: ContextVar[tuple[Path, str] | None] = ContextVar("plugin_writer", default=None)
+
+
 class ResourceLedger:
     def __init__(self, path: Path) -> None:
         self.path = path
+
+    @asynccontextmanager
+    async def writer(self, plugin: str) -> AsyncIterator[None]:
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", plugin):
+            raise ValueError("Invalid lock namespace")
+        key = (self.path, plugin)
+        if _owner.get() == key:
+            yield
+            return
+
+        def acquire() -> int:
+            with private_directory(self.path.parent / "locks" / plugin) as directory:
+                fd = os.dup(directory)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    os.close(fd)
+                    raise ValueError("An operation is active in another session") from None
+                return fd
+
+        opening = asyncio.create_task(asyncio.to_thread(acquire))
+        try:
+            fd = await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            os.close(await opening)
+            raise
+        token = _owner.set(key)
+        try:
+            yield
+        finally:
+            _owner.reset(token)
+            os.close(fd)
 
     def _prepare(self) -> None:
         with private_directory(self.path.parent) as directory:
@@ -83,6 +128,14 @@ class ResourceLedger:
                 "INSERT INTO operations(id,plugin,action,release,phase) VALUES(?,?,?,?,'planned')",
                 (key, plugin, action, digest),
             )
+            if (
+                snapshot is None
+                and action in ("save-settings", "remove-profile", "save-secret", "remove-secret")
+                and len(plan.resources) == 1
+            ):
+                snapshot = LocalSnapshot(
+                    operation_id=operation, action=action, resource=plan.resources[0]
+                ).model_dump_json()
             if snapshot:
                 await db.execute(
                     "INSERT INTO confirmations(operation,snapshot) VALUES(?,?)", (key, snapshot)
@@ -150,8 +203,13 @@ class ResourceLedger:
                 )
             await db.execute("UPDATE operations SET phase='prepared' WHERE id=?", (key,))
 
-    async def applied(self, operation: UUID) -> None:
+    async def applied(self, operation: UUID, recovery: str | None = None) -> None:
         async with self.connection() as db:
+            if recovery:
+                await db.execute(
+                    "UPDATE confirmations SET recovery=? WHERE operation=?",
+                    (recovery, str(operation)),
+                )
             await db.execute(
                 "UPDATE operations SET phase='applied' WHERE id=? AND phase='prepared'",
                 (str(operation),),

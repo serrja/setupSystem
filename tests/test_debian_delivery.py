@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -36,6 +37,10 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # these declared product inputs are copied into the disposable repository.
     for name in (
         "README.md",
+        "hatch_build.py",
+        "uv.lock",
+        "src/setup_system/__init__.py",
+        "src/setup_system_sdk/__init__.py",
         "pyproject.toml",
         "docker/plugin_artifacts.py",
         "src/setup_system_sdk/worker.py",
@@ -85,19 +90,11 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "Prepare package fixture",
         cwd=fixture,
     )
-    # Exercise the builder under the current CI interpreter as well as through Make below.
-    command(
-        sys.executable,
-        "-I",
-        "-B",
-        "debian/build.py",
-        "--version",
-        VERSION,
-        "--output",
-        str(out),
-        cwd=fixture,
-    )
-    return out / FILENAME
+    builder = runpy.run_path(str(ROOT / "debian/build.py"))
+    sha = command("git", "rev-parse", "HEAD", cwd=fixture)
+    artifact = builder["build"](fixture, out, sha, VERSION)
+    assert artifact == out / FILENAME
+    return artifact
 
 
 def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path) -> None:
@@ -474,6 +471,7 @@ def publication(package: Path, tmp_path: Path):
 import hashlib
 import json
 import os
+import runpy
 import shutil
 import sys
 from pathlib import Path
@@ -959,3 +957,68 @@ def test_draft_stays_private_if_a_standalone_plugin_is_missing_from_the_bundle(p
     file.write_text(json.dumps(proof))
     result = publish()
     assert result.returncode and (service / "draft").read_text() == "yes"
+
+
+def test_resource_verifier_cross_checks_archives_and_rejects_changed_bytes(
+    package, tmp_path, monkeypatch
+):
+    import zipfile
+
+    import hatchling.build
+
+    # Start from the exact fixture commit even if another case dirtied its checkout.
+    source = tmp_path / "source"
+    command(
+        "git",
+        "clone",
+        "--quiet",
+        "--local",
+        "--no-hardlinks",
+        "--",
+        str(package.parent / "source"),
+        str(source),
+    )
+    monkeypatch.chdir(source)
+    output = tmp_path / "release"
+    output.mkdir()
+    wheel = output / hatchling.build.build_wheel(str(output))
+    sdist = output / hatchling.build.build_sdist(str(output))
+    verify = runpy.run_path(str(ROOT / "docker/verify_native.py"))["verify_resources"]
+    verify(source, wheel, sdist, package)
+    with zipfile.ZipFile(wheel) as valid:
+        originals = {item.filename: valid.read(item) for item in valid.infolist()}
+    for number, (target, reason) in enumerate(
+        (
+            ("setup_system/app.py", "Wheel modules"),
+            ("setup_system/bundle/config/shared/palette.toml", "Wheel runtime resources"),
+            ("setup_system/bundle/plugin_catalog/git.json", "release differs"),
+        )
+    ):
+        broken = tmp_path / f"broken-{number}.whl"
+        with zipfile.ZipFile(broken, "w") as edited:
+            for name, data in originals.items():
+                if name == target:
+                    if name.endswith(".json"):
+                        document = json.loads(data)
+                        document["releases"][0]["wheels"][0]["sha256"] = "0" * 64
+                        data = json.dumps(document).encode()
+                    else:
+                        data += b"changed"
+                edited.writestr(name, data)
+        with pytest.raises(ValueError, match=reason):
+            verify(source, broken, sdist, package)
+
+    # A valid dpkg archive with an altered protected payload must fail independently.
+    tree = tmp_path / "package-tree"
+    command("dpkg-deb", "--raw-extract", str(package), str(tree))
+    asset = tree / "usr/lib/setup-system/plugins/git/setup_plugin_git/Makefile"
+    asset.chmod(0o666)
+    rewrapped = tmp_path / "changed.deb"
+    command("dpkg-deb", "--root-owner-group", "--build", str(tree), str(rewrapped))
+    with pytest.raises(ValueError, match="Invalid Debian resource"):
+        verify(source, wheel, sdist, rewrapped)
+    asset.chmod(0o644)
+    asset.write_bytes(b"changed")
+    command("dpkg-deb", "--root-owner-group", "--build", str(tree), str(rewrapped))
+    with pytest.raises(ValueError, match="Debian resources disagree"):
+        verify(source, wheel, sdist, rewrapped)

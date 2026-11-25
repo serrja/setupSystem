@@ -88,3 +88,68 @@ def test_malicious_member_and_changed_archive_never_execute(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="archive member"):
         release.install("install", release.plan("install", artifact))
     assert not release.binary().exists()
+
+
+def test_stable_release_pins_the_archive_and_binary_to_official_assets(monkeypatch):
+    import base64
+    import json
+
+    monkeypatch.setattr(release.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(release.platform, "machine", lambda: "x86_64")
+    member = "codex-x86_64-unknown-linux-musl"
+    binary_hash = "f" * 64
+    entry = {
+        "kind": "hashedrekord",
+        "spec": {"data": {"hash": {"algorithm": "sha256", "value": binary_hash}}},
+    }
+    evidence = json.dumps(
+        {
+            "rekorBundle": {
+                "Payload": {"body": base64.b64encode(json.dumps(entry).encode()).decode()}
+            }
+        }
+    ).encode()
+    tag = "rust-v1.2.3"
+    base = f"https://github.com/openai/codex/releases/download/{tag}/{member}"
+    assets = [
+        {
+            "name": member + "." + suffix,
+            "browser_download_url": base + "." + suffix,
+            "digest": "sha256:" + sha,
+        }
+        for suffix, sha in [
+            ("tar.gz", "e" * 64),
+            ("sigstore", hashlib.sha256(evidence).hexdigest()),
+        ]
+    ]
+    metadata = {
+        "draft": False,
+        "prerelease": False,
+        "published_at": "2026-09-11",
+        "tag_name": tag,
+        "assets": assets,
+    }
+
+    def read(url, policy):
+        if url == "https://api.github.com/repos/openai/codex/releases/latest":
+            assert not policy.follow_redirects
+            return json.dumps(metadata).encode()
+        assert url == base + ".sigstore"
+        return evidence
+
+    monkeypatch.setattr(release, "read_https", read)
+    artifact = release.resolve()
+    assert (artifact.version, artifact.sha256, artifact.binary_sha256) == (
+        "1.2.3",
+        "e" * 64,
+        binary_hash,
+    )
+    assets[1]["digest"] = "sha256:" + "0" * 64
+    with pytest.raises(ValueError, match="evidence changed"):
+        release.resolve()
+    assets[0]["browser_download_url"] = "https://other.invalid/codex.tar.gz"
+    with pytest.raises(ValueError, match="verified asset"):
+        release.resolve()
+    metadata["prerelease"] = True
+    with pytest.raises(ValueError, match="stable"):
+        release.resolve()

@@ -9,6 +9,7 @@ import sys
 import tomllib
 from pathlib import Path
 from typing import ClassVar
+from urllib.parse import urlsplit, urlunsplit
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -137,6 +138,7 @@ class SetupApp(App[None]):
                 yield OptionList(id="catalog")
                 yield Button("Add from link", id="add-link")
                 yield Button("Global history", id="global-history")
+                yield Button("Export history", id="export-history")
                 yield Button("Profiles", id="workstation-profiles")
                 yield Button("Help and recovery", id="help")
             with ContentSwitcher(initial="welcome", id="pages"):
@@ -177,6 +179,13 @@ class SetupApp(App[None]):
                 disabled.append(entry.reason)
             if entry.manifest:
                 self.entries[entry.manifest.id] = entry
+        for entry in enabled:
+            if entry.manifest and entry.disabled and entry.manifest.id in self.entries:
+                from dataclasses import replace
+
+                self.entries[entry.manifest.id] = replace(
+                    self.entries[entry.manifest.id], disabled=True
+                )
         categories = sorted(
             {entry.manifest.category for entry in self.entries.values() if entry.manifest}
         )
@@ -238,9 +247,13 @@ class SetupApp(App[None]):
         manifest = entry.manifest
         policy = await asyncio.to_thread(source_policy)
         permissions = ", ".join(manifest.permissions) or "none"
+        origin = "Local package"
+        if release.origin:
+            parsed = urlsplit(release.origin)
+            origin = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
         detail = (
             f"{manifest.name} {manifest.version}\nAuthor: {manifest.author}\n"
-            f"Source: {manifest.source}\nSDK: {manifest.sdk}\n"
+            f"Publisher source: {manifest.source}\nDownloaded from: {origin}\nSDK: {manifest.sdk}\n"
             f"Permissions: {permissions}\nSHA-256: {release.digest}"
         )
         if not await self.push_screen_wait(Confirm(detail, "Trust and activate")):
@@ -294,13 +307,16 @@ class SetupApp(App[None]):
                     raise ValueError("Profile changed during migration")
                 save_values(after, manifest.id, name, values, manifest.settings_version, revision)
 
-        await install_release(
-            release,
-            policy=policy,
-            env_root=self.manager.env_root,
-            wheelhouse=entry.source.parent if entry.source else None,
-            validate_settings=verify_profiles,
-        )
+        async with self.manager.ledger.writer(manifest.id):
+            if await self.manager.ledger.pending(manifest.id):
+                raise ValueError("Reconcile interrupted operations before updating the extension")
+            await install_release(
+                release,
+                policy=policy,
+                env_root=self.manager.env_root,
+                wheelhouse=entry.source.parent if entry.source else None,
+                validate_settings=verify_profiles,
+            )
         self.query_one("#feedback", Static).update(manifest.name + " extension activated.")
 
     @on(Button.Pressed, "#add-link")
@@ -472,7 +488,7 @@ class SetupApp(App[None]):
                     *item.plan.warnings,
                 ]
             )
-            detail.extend(f"{r.effect} {r.kind} · {r.identity}" for r in item.plan.resources)
+            detail.extend(r.description() for r in item.plan.resources)
         if not await self.push_screen_wait(Confirm("\n".join(detail), "Apply profile")):
             return
         if any(
@@ -529,6 +545,12 @@ class SetupApp(App[None]):
                 "Close",
             )
         )
+
+    @on(Button.Pressed, "#export-history")
+    @work(exit_on_error=False)
+    async def export_history(self) -> None:
+        path = await self.manager.journal.export()
+        self.query_one("#feedback", Static).update(f"Saved history report to {path}")
 
     async def action_quit(self) -> None:
         await self.manager.drain()

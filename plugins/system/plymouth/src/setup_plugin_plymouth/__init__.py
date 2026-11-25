@@ -84,7 +84,8 @@ def prepare(action: str) -> Plan:
     return Plan(
         summary="Back up selected boot files, rebuild initramfs and verify the GRUB fallback.",
         warnings=[
-            "Package rollback is limited. Test graphical and text unlock on the authorized target."
+            "The protected action rechecks crypttab for existing interactive password entries.",
+            "Package rollback is limited. Test graphical and text unlock on the authorized target.",
         ],
         resources=resources,
         outcome=Outcome.NO_CHANGES

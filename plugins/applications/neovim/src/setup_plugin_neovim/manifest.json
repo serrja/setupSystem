@@ -30,6 +30,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -42,6 +43,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -54,6 +56,7 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -64,6 +67,7 @@
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -76,6 +80,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -88,6 +93,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -100,6 +106,7 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
@@ -112,6 +119,20 @@
         "user-files"
       ],
       "supports_rollback": false,
+      "read_only": false,
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-parsers",
+      "label": "Remove managed parsers",
+      "page": "actions",
+      "target": "remove-parsers",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
@@ -188,6 +209,12 @@
       "type": "object"
     },
     "install-parsers": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-parsers": {
       "additionalProperties": false,
       "properties": {},
       "title": "Inputs",

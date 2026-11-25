@@ -29,3 +29,7 @@ This operation has no editable parameters.
 ## Configure privacy policy
 
 This operation has no editable parameters.
+
+## Remove generated policy
+
+This operation has no editable parameters.

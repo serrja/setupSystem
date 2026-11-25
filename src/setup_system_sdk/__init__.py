@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from enum import StrEnum
 from typing import Annotated, ClassVar, Literal, Self
+from urllib.parse import urlsplit
 
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
@@ -174,6 +175,29 @@ class Resource(Inputs):
     permissions: int | None = Field(default=None, ge=0, le=0o7777)
     consumers: tuple[Identifier, ...] = ()
 
+    def description(self) -> str:
+        """Show exact approved versions, remote objects and permissions in consent."""
+        values = [f"{self.effect} {self.kind} · {self.identity} · {self.ownership}"]
+        for label, value in (
+            ("Before", self.before),
+            ("After", self.after),
+            ("Source SHA-256", self.source_sha256),
+            ("Remote ID", self.remote_id),
+        ):
+            if value is not None:
+                values.append(f"{label}: {value}")
+        for label, mode in (
+            ("Previous permissions", self.before_permissions),
+            ("Permissions", self.permissions),
+        ):
+            if mode is not None:
+                values.append(f"{label}: {mode:04o}")
+        if self.consumers:
+            values.append("Consumers: " + ", ".join(self.consumers))
+        return " · ".join(
+            "".join(c if c.isprintable() else repr(c)[1:-1] for c in v) for v in values
+        )
+
 
 _ownership: ContextVar[tuple[Resource, ...]] = ContextVar("owned_resources", default=())
 
@@ -213,6 +237,7 @@ class Action(Inputs):
     target: Identifier | None = None
     permissions: list[str] = Field(default_factory=list)
     supports_rollback: bool = False
+    read_only: bool = False
     description: str = ""
 
 
@@ -243,6 +268,27 @@ class Manifest(Inputs):
             or Version(self.version).is_prerelease
         ):
             raise ValueError("Unsupported plugin version or SDK")
+        source = urlsplit(self.source)
+        if (
+            source.scheme != "https"
+            or not source.hostname
+            or source.username is not None
+            or source.password is not None
+            or source.fragment
+            or source.query
+        ):
+            raise ValueError("Expected a public HTTPS publisher source")
+        metadata = [
+            self.name,
+            self.author,
+            self.category,
+            self.source,
+            *self.permissions,
+            *self.capabilities,
+            *(a.label for a in self.actions),
+        ]
+        if any(not s or len(s) > 4096 or not s.isprintable() for s in metadata):
+            raise ValueError("Invalid plugin display metadata")
         prefix = "SETUP_PLUGIN_" + self.id.upper().replace("-", "_") + "_"
         properties = self.settings_schema.get("properties", {})
         if not isinstance(properties, dict):

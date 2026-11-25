@@ -19,15 +19,18 @@
   ],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "check",
       "label": "Check program",
       "page": "actions",
       "target": null,
       "permissions": [],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "install",
       "label": "Install",
       "page": "actions",
@@ -36,9 +39,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "update",
       "label": "Update",
       "page": "actions",
@@ -47,9 +52,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "uninstall",
       "label": "Uninstall",
       "page": "actions",
@@ -58,9 +65,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "activate-login",
       "label": "Activate graphical login",
       "page": "actions",
@@ -69,9 +78,11 @@
         "root"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "description": "Load only caller-selected sources and explicitly declared environment names.",

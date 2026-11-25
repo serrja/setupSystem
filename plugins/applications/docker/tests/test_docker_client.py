@@ -92,6 +92,7 @@ def test_rootless_daemon_merge_preserves_other_settings(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     config = tmp_path / "cfg/docker/daemon.json"
     config.parent.mkdir(parents=True)
     config.write_text('{"dns":["192.0.2.5"],"log-opts":{"compress":"true"}}')

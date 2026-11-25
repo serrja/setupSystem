@@ -18,28 +18,35 @@
   "dependencies": [],
   "actions": [
     {
+      "cleanup_phase": null,
       "id": "grant-sudo",
       "label": "Grant sudo access",
+      "page": "actions",
       "target": "grant-sudo",
       "permissions": [
         "root",
         "su"
       ],
       "supports_rollback": false,
+      "read_only": false,
       "description": ""
     },
     {
+      "cleanup_phase": null,
       "id": "verify-sudo",
       "label": "Verify effective access",
+      "page": "actions",
       "target": "verify-sudo",
       "permissions": [
         "root",
         "su"
       ],
       "supports_rollback": false,
+      "read_only": true,
       "description": "Authenticate and verify the selected account’s effective Debian sudo policy."
     }
   ],
+  "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
     "description": "Load only caller-selected sources and explicitly declared environment names.",

@@ -6,19 +6,19 @@ import asyncio
 import os
 import signal
 import sqlite3
-import stat
 import sys
 import tempfile
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from contextvars import ContextVar
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from platformdirs import user_data_path, user_state_path
-from pydantic import Field
+from pydantic import Field, TypeAdapter
 
 from setup_system.application.rollback import RecoveryPlan
-from setup_system.authorization import BecomePassword, _environment
+from setup_system.authorization import BecomePassword, _environment, session_environment, ssh_socket
 from setup_system.configuration import ApplicationOptions, Settings
 from setup_system.extension_lifecycle import generation, generation_lock
 from setup_system.extensions import Activation, active, builtins
@@ -27,7 +27,7 @@ from setup_system.infrastructure.operation_io import read_wire
 from setup_system.journal import Event, Journal
 from setup_system.layout import INSTALLED, verify_installation
 from setup_system.make_transport import Phase, authenticated_make
-from setup_system.resource_ledger import ResourceLedger
+from setup_system.resource_ledger import LocalSnapshot, ResourceLedger
 from setup_system_sdk import Action, Inputs, Mutation, Outcome, Plan, Result, Values
 from setup_system_sdk.protocol import LIMIT, Reply, Request
 
@@ -94,17 +94,9 @@ async def _pipe(
 
 
 def worker_environment(state: Activation, action_id: str | None) -> dict[str, str]:
-    env = _environment()
+    env = session_environment()
     if action_id and "account-keys" in descriptor(state, action_id).permissions:
-        sock = os.environ.get("SSH_AUTH_SOCK")
-        if sock and Path(sock).is_absolute():
-            try:
-                info = Path(sock).lstat()
-            except OSError:
-                pass
-            else:
-                if stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid():
-                    env["SSH_AUTH_SOCK"] = sock
+        env.update(ssh_socket())
     return env
 
 
@@ -146,7 +138,10 @@ def protected_resources(state: Activation) -> Path:
     )
     if item is None:
         raise ValueError("Administrative actions require the exact Debian-installed plugin release")
-    return INSTALLED / "plugins" / state.manifest.id / state.manifest.entry_point.split(":")[0]
+    root = INSTALLED / "plugins" / state.manifest.id / state.manifest.entry_point.split(":")[0]
+    if not all(p.is_file() for p in (INSTALLED / "sdk/environment.mk", root / "Makefile")):
+        raise ValueError("The protected Make resources are incomplete")
+    return root
 
 
 class AsyncMakeRunner:
@@ -172,7 +167,11 @@ class AsyncMakeRunner:
         )
         env["SETUP_SYSTEM_INTERPRETER"] = "/usr/bin/python3" if privileged else str(state.python)
         makefiles = [
-            str(Path(__file__).parents[1] / "setup_system_sdk/environment.mk"),
+            str(
+                INSTALLED / "sdk/environment.mk"
+                if privileged
+                else Path(__file__).parents[1] / "setup_system_sdk/environment.mk"
+            ),
             str(root / "Makefile"),
         ]
         args = [
@@ -190,7 +189,9 @@ class AsyncMakeRunner:
         wire = snapshot.mutation.model_dump_json().encode()
         if not privileged:
             await asyncio.to_thread(validate_home_access, Path.home())
-            raw = await _pipe(["/usr/bin/make", *args], wire, env, root, None)
+            raw = await _pipe(
+                ["/usr/bin/make", *args], wire, env, root, self.options.idle_timeout_seconds
+            )
             return Result.model_validate_json(raw)
         assert password
         with tempfile.TemporaryDirectory() as temporary:
@@ -318,7 +319,8 @@ class PluginManager:
         async def perform() -> Result:
             context = _cancellation.set(cancel)
             try:
-                return await self._apply(snapshot, password)
+                async with self.ledger.writer(snapshot.plugin_id):
+                    return await self._apply(snapshot, password)
             finally:
                 if password:
                     password.discard()
@@ -448,16 +450,27 @@ class PluginManager:
                 Outcome.NEEDS_REBOOT,
                 Outcome.NO_CHANGES,
             ):
-                await self.ledger.applied(snapshot.operation_id)
+                await self.ledger.applied(snapshot.operation_id, native.recovery_id)
                 await self.journal.emit(event("applied"))
-                reply = await query(
-                    state,
-                    request.model_copy(update={"method": "verify", "plan": item.plan}),
-                    self.options,
+                authenticated_readback = (
+                    password is not None
+                    and bool({"root", "sudo", "su"} & set(action.permissions))
+                    and native.resources
+                    and all(r.verified for r in native.resources)
+                    and {(r.kind, r.identity) for r in native.resources}
+                    == {(r.kind, r.identity) for r in item.plan.resources}
                 )
-                if reply.result is None or reply.result.outcome == Outcome.READY:
-                    raise ValueError("Missing verification")
-                final = reply.result.model_copy(update={"recovery_id": native.recovery_id})
+                if authenticated_readback:
+                    final = native
+                else:
+                    reply = await query(
+                        state,
+                        request.model_copy(update={"method": "verify", "plan": item.plan}),
+                        self.options,
+                    )
+                    if reply.result is None or reply.result.outcome == Outcome.READY:
+                        raise ValueError("Missing verification")
+                    final = reply.result.model_copy(update={"recovery_id": native.recovery_id})
             else:
                 final = native
             await self.ledger.finish(snapshot.operation_id, final)
@@ -471,10 +484,27 @@ class PluginManager:
         await self.journal.emit(event("unresolved" if unresolved else "verified", final.outcome))
         return final
 
-    async def reconcile(self, plugin: str) -> list[Result]:
+    async def reconcile(
+        self,
+        plugin: str,
+        authorize: Callable[[Action, Snapshot], Awaitable[BecomePassword | None]] | None = None,
+    ) -> list[Result]:
+        async with self.ledger.writer(plugin):
+            return await self._reconcile(plugin, authorize)
+
+    async def _reconcile(
+        self,
+        plugin: str,
+        authorize: Callable[[Action, Snapshot], Awaitable[BecomePassword | None]] | None,
+    ) -> list[Result]:
         results = []
         for wire in await self.ledger.pending(plugin):
-            snapshot = Snapshot.model_validate_json(wire)
+            snapshot = TypeAdapter(LocalSnapshot | Snapshot).validate_json(wire)
+            if isinstance(snapshot, LocalSnapshot):
+                from setup_system.cleanup import reconcile_local
+
+                results.append(await reconcile_local(self, plugin, snapshot))
+                continue
             if snapshot.operation_id in self._running:
                 continue
             state = await self.activation(plugin)
@@ -495,6 +525,32 @@ class PluginManager:
                 self.options,
             )
             result = reply.result
+            action = descriptor(state, item.action_id)
+            if (
+                result is not None
+                and result.outcome is Outcome.NEEDS_USER_ACTION
+                and action.read_only
+                and {"sudo", "su", "root"}.intersection(action.permissions)
+                and authorize
+            ):
+                await asyncio.to_thread(protected_resources, state)
+                password = await authorize(action, snapshot)
+                if password:
+                    try:
+                        with generation_lock(generation(state), exclusive=False):
+                            verified = await self.runner.execute(state, snapshot, password)
+                        if (
+                            verified.resources
+                            and all(r.verified for r in verified.resources)
+                            and {(r.kind, r.identity) for r in verified.resources}
+                            == {(r.kind, r.identity) for r in item.plan.resources}
+                        ):
+                            result = verified
+                    finally:
+                        password.discard()
+            if result is not None and result.outcome is Outcome.NEEDS_USER_ACTION:
+                results.append(result)
+                continue
             if result is None or result.outcome not in (
                 Outcome.COMPLETE,
                 Outcome.CHANGED,
@@ -509,7 +565,97 @@ class PluginManager:
             results.append(result)
         return results
 
+    async def remaining_cleanup(self, plugin: str) -> list[Snapshot]:
+        """Preview only the still-present, originally approved removal targets."""
+        state = await self.activation(plugin)
+        proposals = []
+        for wire in await self.ledger.pending(plugin):
+            original = TypeAdapter(Snapshot | LocalSnapshot).validate_json(wire)
+            if isinstance(original, LocalSnapshot) or original.digest != state.digest:
+                continue
+            item = original.mutation
+            if (
+                not descriptor(state, item.action_id).cleanup_phase
+                or not item.plan.resources
+                or any(
+                    r.effect != "remove" or r.ownership != "created" or not r.cleanup
+                    for r in item.plan.resources
+                )
+            ):
+                continue
+            current = await self.preview(plugin, item.action_id, item.settings, item.inputs)
+            if (
+                current.mutation.plan.outcome != Outcome.READY
+                or not current.mutation.plan.resources
+            ):
+                continue
+            left = current.mutation.plan.resources
+            if any(row not in item.plan.resources for row in left):
+                continue
+            removed = [r for r in item.plan.resources if r not in left]
+            if removed:
+                probe = await query(
+                    state,
+                    Request(
+                        method="verify",
+                        plugin_id=plugin,
+                        action_id=item.action_id,
+                        overrides=item.settings,
+                        inputs=item.inputs,
+                        holdings=item.holdings,
+                        plan=item.plan.model_copy(update={"resources": removed}),
+                    ),
+                    self.options,
+                )
+                if (
+                    not probe.result
+                    or probe.result.outcome not in (Outcome.COMPLETE, Outcome.NO_CHANGES)
+                    or {(r.kind, r.identity) for r in probe.result.resources}
+                    != {(r.kind, r.identity) for r in removed}
+                ):
+                    continue
+            proposals.append(current.model_copy(update={"operation_id": original.operation_id}))
+        return proposals
+
+    async def resume_cleanup(
+        self, snapshot: Snapshot, password: BecomePassword | None = None
+    ) -> Result:
+        """Resume a newly confirmed removal, retaining its original receipts and reservations."""
+        try:
+            async with self.ledger.writer(snapshot.plugin_id):
+                if snapshot not in await self.remaining_cleanup(snapshot.plugin_id):
+                    return Result(
+                        outcome=Outcome.BLOCKED, message="Cleanup changed after confirmation"
+                    )
+                state = await self.activation(snapshot.plugin_id)
+                with generation_lock(generation(state), exclusive=False):
+                    try:
+                        result = await self.runner.execute(state, snapshot, password)
+                    except (OSError, ValueError, TimeoutError, ExceptionGroup):
+                        return Result(
+                            outcome=Outcome.UNKNOWN_OUTCOME, message="Inspect interrupted cleanup"
+                        )
+                if result.outcome in (Outcome.COMPLETE, Outcome.CHANGED, Outcome.NO_CHANGES):
+                    verified = await self._reconcile(snapshot.plugin_id, None)
+                    if not await self.ledger.pending(snapshot.plugin_id) and all(
+                        r.outcome in (Outcome.COMPLETE, Outcome.CHANGED, Outcome.NO_CHANGES)
+                        for r in verified
+                    ):
+                        return Result(
+                            outcome=Outcome.COMPLETE, message="Verified the entire original removal"
+                        )
+                return Result(
+                    outcome=Outcome.PARTIAL, message="Inspect remaining cleanup resources"
+                )
+        finally:
+            if password:
+                password.discard()
+
     async def rollback(self, plugin: str, operation: str, confirmed: RecoveryPlan) -> Result:
+        async with self.ledger.writer(plugin):
+            return await self._rollback(plugin, operation, confirmed)
+
+    async def _rollback(self, plugin: str, operation: str, confirmed: RecoveryPlan) -> Result:
         if (operation, confirmed.receipt) not in await self.ledger.recoveries(plugin):
             raise ValueError("No managed-file recovery is available for this operation")
         current = await asyncio.to_thread(RecoveryPlan.inspect, confirmed.receipt)
@@ -560,10 +706,10 @@ class PluginManager:
                 confirmed.model_dump_json().encode(),
                 env,
                 sdk,
-                None,
+                self.options.idle_timeout_seconds,
             )
             return Result.model_validate_json(raw)
-        except (OSError, ValueError, ExceptionGroup):
+        except (OSError, ValueError, ExceptionGroup, TimeoutError):
             return Result(
                 outcome=Outcome.UNKNOWN_OUTCOME,
                 message="Inspect the recovery receipt before continuing",
