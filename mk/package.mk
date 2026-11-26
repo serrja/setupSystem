@@ -1,11 +1,17 @@
 PACKAGE_DIR ?= dist
-BUILD_PYTHON ?= $(if $(wildcard .venv/bin/python),$(CURDIR)/.venv/bin/python,python3)
-.PHONY: package
-package:
-	@"$(BUILD_PYTHON)" -I -B debian/build.py --output "$(PACKAGE_DIR)" $(if $(VERSION),--version "$(VERSION)")
+override export PACKAGE_DIR := $(value PACKAGE_DIR)
+override export VERSION := $(value VERSION)
+.PHONY: package install update
 
-.PHONY: install update
+package:
+	@set -eu; python=python3; if [ -x .venv/bin/python ]; then python=.venv/bin/python; fi; \
+	  set -- -I -B debian/build.py --output "$$PACKAGE_DIR"; \
+	  if [ -n "$$VERSION" ]; then set -- "$$@" --version "$$VERSION"; fi; \
+	  exec "$$python" "$$@"
+
 install:
-	@/bin/sh debian/install-local.sh "$(PACKAGE_DIR)"
+	@/bin/sh debian/install-local.sh "$$PACKAGE_DIR"
+
 update:
-	@/bin/sh ./install.sh update $(if $(VERSION),--release "v$(VERSION)")
+	@set -- update; if [ -n "$$VERSION" ]; then set -- "$$@" --release "v$$VERSION"; fi; \
+	  exec /bin/sh ./install.sh "$$@"

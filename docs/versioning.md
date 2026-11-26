@@ -1,14 +1,14 @@
 # Versioning
 
 `pyproject.toml` `[project].version` is the canonical PEP 440 version floor.
-The catalog's `schemaVersion`, template versions and generated application versions
-are separate contracts. Native source builds keep the declared version; installed
+The worker protocol, SDK compatibility and individual plugin release versions
+are independent contracts. Native source builds keep the declared version; installed
 wheel/sdist metadata must match it.
 
 Use a patch increment for compatible corrections and a minor increment for compatible
 CLI features. During 0.x, document migrations for incompatible public changes and
 increment the minor version. After 1.0, such changes require a major increment. Review CLI spelling/exits, imports,
-configuration, owner data, resources, Python minimum and Debian profile capabilities.
+configuration, owner data, resources, Python minimum and Debian package capabilities.
 
 ## 🏷️ Release mapping
 

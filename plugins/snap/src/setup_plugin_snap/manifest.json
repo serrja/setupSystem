@@ -1,0 +1,324 @@
+{
+  "id": "snap",
+  "name": "Snap",
+  "author": "serrja",
+  "category": "system",
+  "kind": "system",
+  "sdk": ">=2,<3",
+  "entry_point": "setup_plugin_snap.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root"
+  ],
+  "capabilities": [
+    "debian-package",
+    "snap-inventory",
+    "snap-catalog"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install snapd",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update snapd",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Remove snapd",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Snap runtime",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "list-installed",
+      "label": "List installed revisions",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": "Read all installed revisions from the local snapd daemon."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "start-system-service",
+      "label": "Start Snap service",
+      "page": "actions",
+      "target": "start-system-service",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Start the installed system snapd.service."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install-apps",
+      "label": "Install applications",
+      "page": "actions",
+      "target": "install-apps",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Install selected strict Store revisions."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update-apps",
+      "label": "Update applications",
+      "page": "actions",
+      "target": "update-apps",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Refresh selected installed applications to reviewed stable revisions."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "remove-apps",
+      "label": "Remove applications",
+      "page": "actions",
+      "target": "remove-apps",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Save and verify data snapshots before removing the selected snaps."
+    },
+    {
+      "cleanup_phase": null,
+      "id": "check-apps",
+      "label": "Check applications",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": "Inspect the signed installed revision of each selection."
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Resolve one current configuration from the sources accepted by the plugin.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "start-system-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "list-installed": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "install-apps": {
+      "additionalProperties": false,
+      "properties": {
+        "applications": {
+          "description": "Select one or more approved applications from the Snap Store catalog.",
+          "items": {
+            "enum": [
+              "telegram-desktop"
+            ],
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "title": "Catalog applications",
+          "type": "array",
+          "ui": {
+            "widget": "selection_list",
+            "choice_provider": "applications",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "applications"
+      ],
+      "title": "Selection",
+      "type": "object"
+    },
+    "update-apps": {
+      "additionalProperties": false,
+      "properties": {
+        "applications": {
+          "description": "Select one or more approved applications from the Snap Store catalog.",
+          "items": {
+            "enum": [
+              "telegram-desktop"
+            ],
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "title": "Catalog applications",
+          "type": "array",
+          "ui": {
+            "widget": "selection_list",
+            "choice_provider": "applications",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "applications"
+      ],
+      "title": "Selection",
+      "type": "object"
+    },
+    "remove-apps": {
+      "additionalProperties": false,
+      "properties": {
+        "applications": {
+          "description": "Select one or more approved applications from the Snap Store catalog.",
+          "items": {
+            "enum": [
+              "telegram-desktop"
+            ],
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "title": "Catalog applications",
+          "type": "array",
+          "ui": {
+            "widget": "selection_list",
+            "choice_provider": "applications",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "applications"
+      ],
+      "title": "Selection",
+      "type": "object"
+    },
+    "check-apps": {
+      "additionalProperties": false,
+      "properties": {
+        "applications": {
+          "description": "Select one or more approved applications from the Snap Store catalog.",
+          "items": {
+            "enum": [
+              "telegram-desktop"
+            ],
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "type": "string"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "title": "Catalog applications",
+          "type": "array",
+          "ui": {
+            "widget": "selection_list",
+            "choice_provider": "applications",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "applications"
+      ],
+      "title": "Selection",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

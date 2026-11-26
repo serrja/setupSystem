@@ -4,7 +4,9 @@
   "files": {
     ".github/PULL_REQUEST_TEMPLATE.md": {
       "source": "template/.github/PULL_REQUEST_TEMPLATE.md.jinja",
-      "sha256": "ace4038d79b02d6aacf779739ae7c9bd7179fbf9e57d5e2d1d14e08466858544"
+      "sha256": "15360b4eed930d050717776099b966788193c24dd843a144f421e7e35e1c4ec4",
+      "sourceSha256": "ace4038d79b02d6aacf779739ae7c9bd7179fbf9e57d5e2d1d14e08466858544",
+      "adaptation": "Describe isolated manual observations under the current product test policy."
     },
     ".github/ISSUE_TEMPLATE/bug.yml": {
       "source": "template/.github/ISSUE_TEMPLATE/bug.yml",
@@ -22,17 +24,17 @@
     },
     "docker/quality.mk": {
       "source": "template/docker/quality.mk",
-      "sha256": "31f2a873741ca440de1d021e7c767dc0069c56c62ce6b859b944cc437ce098c1",
-      "revision": "b95e247bc59123decdb02e4db6d98fa761b69786"
+      "sha256": "38de6620dffbd2ccf4b3f56017d8dd0a61ded95f871887d85149d7a679d5955a",
+      "revision": "b95e247bc59123decdb02e4db6d98fa761b69786",
+      "sourceSha256": "31f2a873741ca440de1d021e7c767dc0069c56c62ce6b859b944cc437ce098c1",
+      "adaptation": "The local product has no automated behavioural suite or coverage report."
     },
     "docker/quality-python.mk": {
       "source": "template/docker/quality-python.mk",
-      "sha256": "7a035479394a82b085e67f986a237c964e085022594678d2bba490529e18d655",
-      "revision": "1aaab606373980a6084ae1a69069280241fb27de"
-    },
-    "docker/coverage_report.py": {
-      "source": "template/docker/coverage_report.py",
-      "sha256": "75c5b398842ae3199da118ef5c15ce9616c3b6de921de98056bdcb1744e4c85e"
+      "sha256": "a37f68e11bff3a77bd46def161a497b6412dd9430cb4e86fc85965190f647bdd",
+      "revision": "1aaab606373980a6084ae1a69069280241fb27de",
+      "sourceSha256": "7a035479394a82b085e67f986a237c964e085022594678d2bba490529e18d655",
+      "adaptation": "The local product has no automated behavioural suite or coverage report."
     },
     "docker/source_identity.sh": {
       "source": "template/docker/source_identity.sh",
@@ -48,12 +50,6 @@
       "source": "template/docker/python_release.py",
       "revision": "8bb73ec1eada479003785d362aeb4b9d382e1194",
       "sha256": "26aee92df4657dbaab549ef3bbebf03c8a4a75b1885b5397e58cb5dc7672cd2a"
-    },
-    "tests/test_python_release.py": {
-      "source": "tests/test_python_release.py",
-      "revision": "8bb73ec1eada479003785d362aeb4b9d382e1194",
-      "adaptation": "Only fixture helper path changes from template/docker to docker.",
-      "sourceSha256": "74de8fbbe61e93997bd3de382df8b27770fc3f14a33f5cf56324fab6b693f2e8"
     }
   },
   "rules": {

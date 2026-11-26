@@ -1,10 +1,11 @@
 """Locate runtime resources and verify the installed Debian program before become."""
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
-from setup_system.infrastructure.processes import run_command
-from setup_system.infrastructure.system_paths import protected
+from setup_system.execution.processes import run_command
+from setup_system.execution.system_paths import protected
 
 PACKAGE = "setup-system"
 INSTALLED = Path("/usr/lib") / PACKAGE
@@ -12,21 +13,32 @@ PYTHON_PACKAGE = Path("/usr/lib/python3/dist-packages/setup_system")
 GUIDES = Path("/usr/share/doc") / PACKAGE / "docs"
 
 
+@dataclass(frozen=True)
+class PackageLayout:
+    """Paths belonging to the selected checkout, installed wheel or system package."""
+
+    root: Path
+    guides: Path
+
+    @classmethod
+    def locate(cls) -> "PackageLayout":
+        module = Path(__file__).absolute().parent
+        if module == PYTHON_PACKAGE:
+            root = INSTALLED
+        elif module.parent.name == "src":
+            root = module.parents[1]
+        else:
+            root = module / "bundle"
+        makefile = root / "Makefile"
+        if any(item.is_symlink() for item in (makefile, *makefile.parents)):
+            raise ValueError("Program resources cannot traverse symlinks")
+        if not makefile.is_file():
+            raise RuntimeError("The configurator resources are missing")
+        return cls(root, GUIDES if root == INSTALLED else root / "docs")
+
+
 def resource_root() -> Path:
-    """Select the resources belonging to this source tree, wheel or Debian package."""
-    module = Path(__file__).absolute().parent
-    if module == PYTHON_PACKAGE:
-        root = INSTALLED
-    elif module.parent.name == "src":
-        root = module.parents[1]
-    else:
-        root = module / "bundle"
-    makefile = root / "Makefile"
-    if any(parent.is_symlink() for parent in (makefile, *makefile.parents)):
-        raise ValueError("Program resources cannot traverse symlinks")
-    if not makefile.is_file():
-        raise RuntimeError("The configurator resources are missing")
-    return root
+    return PackageLayout.locate().root
 
 
 def _query(*args: str) -> str:

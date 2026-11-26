@@ -42,7 +42,7 @@ def runtime_wheels(
     from packaging.tags import sys_tags
     from packaging.utils import parse_wheel_filename
 
-    from setup_system.infrastructure.downloads import DownloadPolicy, download_https
+    from setup_system.execution.downloads import DownloadPolicy, download_https
 
     if not python.samefile(sys.executable):
         raise ValueError("Run the runtime-wheel builder with the target interpreter")
@@ -137,7 +137,7 @@ def build(
     source_root: Path, output: Path, python: Path, *, with_runtime: bool = False
 ) -> list[Path]:
     """Use each package's declared PEP 517 backend and publish its validated wheel last."""
-    projects = sorted((source_root / "plugins").glob("*/*/pyproject.toml"))
+    projects = sorted((source_root / "plugins").glob("*/pyproject.toml"))
     if not projects:
         raise ValueError("No plugin distributions found")
     output.mkdir(parents=True, exist_ok=True)
@@ -152,7 +152,7 @@ def build(
             if len(registry) != 1:
                 raise ValueError("Each plugin distribution needs one named backend")
             plugin_id, target = next(iter(registry.items()))
-            module = target.partition(":")[0]
+            module = target.partition(":")[0].partition(".")[0]
             if (
                 plugin_id != project.parent.name
                 or not module.isidentifier()

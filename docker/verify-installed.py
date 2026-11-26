@@ -13,9 +13,9 @@ from importlib.metadata import Distribution, distribution, version
 from pathlib import Path
 
 import setup_system
-from setup_system.extensions import builtins
-from setup_system.infrastructure.palette import palette
+from setup_system.execution.palette import palette
 from setup_system.layout import resource_root
+from setup_system.services.extensions import builtins
 
 
 def verify_origin(installed: Distribution, wheel: Path | None) -> None:
@@ -69,7 +69,7 @@ def main() -> None:
         raise ValueError("An installed plugin lacks a valid release identity")
     projects = next(e for e in entries if e.manifest and e.manifest.id == "projects")
     assert projects.source and projects.manifest
-    module = projects.manifest.entry_point.partition(":")[0]
+    module = projects.manifest.entry_point.partition(":")[0].partition(".")[0]
     with zipfile.ZipFile(projects.source) as plugin:
         catalog = tomllib.loads(plugin.read(module + "/config/workspace/projects.toml").decode())
     assert "pokerlost/projectRules" in {item["id"] for item in catalog["project"]}
@@ -78,16 +78,14 @@ def main() -> None:
         key: value for key, value in source_palette.items() if key != "name"
     }
     subprocess.run(["setup-system", "--help"], check=True)
-    with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
+    with tempfile.TemporaryDirectory(prefix="setup-system-schema-") as home:
         subprocess.run(
-            [sys.executable, "-I", "-B", str(Path(__file__).with_name("installed_smoke.py"))],
+            [sys.executable, "-I", "-B", "-m", "setup_system.storage.migrations", "upgrade"],
+            cwd=home,
             env={
-                **os.environ,
-                "HOME": ui_home,
-                **{
-                    f"XDG_{name.upper()}_HOME": str(Path(ui_home) / name)
-                    for name in ("config", "state", "data", "cache")
-                },
+                "HOME": home,
+                "PATH": os.environ["PATH"],
+                "XDG_STATE_HOME": str(Path(home) / "state"),
             },
             timeout=60,
             check=True,

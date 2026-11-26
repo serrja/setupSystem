@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import time
-from collections.abc import Callable, Coroutine
-from typing import Any
+from collections.abc import Awaitable, Callable
+from uuid import UUID
 from zipfile import ZipFile
 
 from textual import on, work
@@ -14,25 +15,33 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, ContentSwitcher, Select, Static, TabbedContent, TabPane
 
-from setup_system.application.rollback import RecoveryPlan
-from setup_system.authorization import BecomePassword
-from setup_system.cleanup import apply_cleanup, preview_cleanup, save_keyring_entry, save_profile
-from setup_system.configuration import Settings
-from setup_system.configuration.store import SavedValues, profiles
-from setup_system.extension_lifecycle import removable, retire, toggle
-from setup_system.extensions import CatalogEntry
-from setup_system.plugin_manager import (
-    PluginManager,
-    Snapshot,
-    descriptor,
-    protected_resources,
-    query,
+from setup_system.errors import OperationError
+from setup_system.execution.authorization import BecomePassword
+from setup_system.execution.native_runner import Snapshot, descriptor, protected_resources
+from setup_system.execution.worker import query
+from setup_system.services.cleanup import apply_cleanup, preview_cleanup, save_keyring_entry
+from setup_system.services.extension_lifecycle import removable, retire, toggle
+from setup_system.services.extensions import CatalogEntry, active
+from setup_system.services.operations import (
+    PRIVILEGED,
+    VERIFIED,
+    Operations,
+    can_review,
+    track_existing,
 )
-from setup_system.plugin_ui import panel_type
-from setup_system.ui.plugin_dialogs import Choose, Confirm, Prompt, SecretPrompt
+from setup_system.services.plugin_ui import panel_type
+from setup_system.services.rollback import RecoveryPlan
+from setup_system.services.settings import SavedValues, SettingsStore
+from setup_system.ui.operation_state import availability
+from setup_system.ui.plugin_dialogs import Choose, Confirm, SecretPrompt
 from setup_system.ui.schema_fields import SchemaForm
-from setup_system_sdk import Action, LifecycleAction, Outcome, Values
-from setup_system_sdk.protocol import Request
+from setup_system_sdk.enums.errors import ErrorCode
+from setup_system_sdk.enums.operation import ActionMode, OperationState, Outcome, WorkerMethod
+from setup_system_sdk.enums.permissions import Permission
+from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.errors import Error
+from setup_system_sdk.schemas.manifest import Action
+from setup_system_sdk.schemas.wire import Request
 from setup_system_sdk.ui import UIContext
 
 
@@ -41,7 +50,7 @@ def help_text(entry: CatalogEntry, article: str = "help.md") -> str:
     manifest = entry.manifest
     if not source or not manifest:
         return entry.reason
-    module = manifest.entry_point.partition(":")[0]
+    module = manifest.entry_point.partition(":")[0].partition(".")[0]
     if source.suffix == ".whl":
         with ZipFile(source) as archive:
             with archive.open(module + "/" + article) as stream:
@@ -58,27 +67,30 @@ class PluginPage(Vertical):
     def __init__(
         self,
         entry: CatalogEntry,
-        manager: PluginManager,
-        store: Settings,
-        activate: Callable[[CatalogEntry], Coroutine[Any, Any, None]],
+        manager: Operations,
+        store: SettingsStore,
+        activate: Callable[[CatalogEntry], Awaitable[None]],
         startup_digest: str | None = None,
+        candidate: CatalogEntry | None = None,
     ) -> None:
         assert entry.manifest
         super().__init__(id="plugin-" + entry.manifest.id)
         self.startup_digest = startup_digest
         self.entry = entry
+        self.candidate = candidate
         self.manifest = entry.manifest
         self.manager = manager
         self.store = store
         self.activate = activate
-        self.profile = "default"
+        self.state = OperationState.IDLE
+        self.revision = 0
+        self.activated = False
         self.saved: SavedValues | None = None
         self.settings_form: SchemaForm | None = None
         self.snapshot: Snapshot | None = None
         self.forms: dict[str, SchemaForm] = {}
-        self.choice_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
+        self.choice_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
         self.active_action: Action | None = None
-        self.drafts: dict[str, Values] = {}
         self.status_line = Static("", markup=False, classes="feedback")
         self.observations = Static("", markup=False)
         self.review = Static("", markup=False)
@@ -98,19 +110,19 @@ class PluginPage(Vertical):
                     )
                     yield Static(id="extension-state", markup=False)
                     yield Vertical(id="custom-panel")
-                    yield Button("Activate / update extension", id="activate")
+                    yield Button(
+                        "Activate / update extension",
+                        id="activate",
+                        disabled=self.candidate is None or self.candidate.release is None,
+                    )
                     yield Button("Inspect program", id="inspect")
                     yield self.observations
                     yield Button("Disable extension", id="disable")
                     yield Button("Enable extension", id="enable")
                     yield Button("Remove extension", id="remove-extension")
                     yield Button("Full cleanup", id="full-cleanup")
-            with TabPane("Settings / Profiles", id="settings"):
+            with TabPane("Settings", id="settings"):
                 with VerticalScroll():
-                    yield Select[str](
-                        [("default", "default")], value="default", allow_blank=False, id="profile"
-                    )
-                    yield Button("New profile", id="new-profile")
                     yield Vertical(id="settings-form")
                     yield Button("Save settings", id="save", variant="primary")
             if any(a.page == "accounts" for a in manifest.actions):
@@ -134,6 +146,7 @@ class PluginPage(Vertical):
                     yield Button("Preview action", id="preview", variant="primary")
                     yield Button("Stop at a safe boundary", id="cancel-action")
                     yield self.review
+                    yield Static("", id="availability", markup=False)
                     yield Button("Review and apply", id="apply", disabled=True, variant="warning")
             with TabPane("Run parameters", id="parameters"):
                 with VerticalScroll():
@@ -147,7 +160,6 @@ class PluginPage(Vertical):
                     yield Static(id="holdings", markup=False)
                     yield Button("Refresh resources", id="refresh-resources")
                     yield Button("Check interrupted operations", id="reconcile")
-                    yield Button("Review remaining cleanup", id="resume-cleanup")
                     yield Button("Roll back a file operation", id="rollback", disabled=True)
             with TabPane("History", id="history"):
                 with VerticalScroll():
@@ -162,31 +174,74 @@ class PluginPage(Vertical):
 
     async def on_mount(self) -> None:
         try:
-            await self.change_profile("default")
+            await self.load_settings()
             self.query_one("#article", Static).update(
                 await asyncio.to_thread(help_text, self.entry)
             )
             await self.refresh_state()
-        except Exception:
-            self.status_line.update("Plugin resources are unavailable. Check the installation.")
+        except (ValueError, OSError, OperationError):
+            self.status_line.update(
+                "Plugin resources are unavailable. Check the installed package."
+            )
+        self.render_controls()
 
     async def refresh_state(self) -> None:
         try:
             state = await self.manager.activation(self.manifest.id)
+            self.activated = state.manifest == self.manifest
+            if not self.activated:
+                raise ValueError("The extension metadata changed. Reopen the application.")
             container = self.query_one("#custom-panel", Vertical)
             if not container.children:
                 panel = await asyncio.to_thread(panel_type, state, self.startup_digest)
                 if panel:
                     await container.mount(panel(UIContext(self.manifest.id, self.show_action)))
             text = f"Active extension {state.manifest.version} · {state.digest[:12]}"
-        except ValueError as error:
+        except OperationError as failure:
+            self.activated = False
+            text = failure.detail.message
+        except ValueError:
             text = self.entry.reason or (
-                "Extension disabled" if self.entry.disabled else str(error)
+                "Extension disabled"
+                if self.entry.disabled
+                else "The release changed. Reopen the application to load the verified UI."
             )
         self.query_one("#extension-state", Static).update(text)
-        self.query_one("#rollback", Button).disabled = not await self.manager.ledger.recoveries(
+        self.query_one("#rollback", Button).disabled = not await self.manager.records.recoveries(
             self.manifest.id
         )
+
+        self.render_controls()
+
+    def render_controls(self) -> None:
+        controls = availability(
+            self.state, activated=self.activated, selected=self.active_action is not None
+        )
+        self.query_one("#preview", Button).disabled = not controls.preview
+        review = self.query_one("#apply", Button)
+        review.disabled = not controls.review
+        review.label = (
+            "Review and apply"
+            if self.active_action is None or self.active_action.mode is ActionMode.MUTATION
+            else "Review action"
+        )
+        self.query_one("#cancel-action", Button).disabled = not controls.stop
+        self.query_one("#availability", Static).update(controls.reason)
+
+    def invalidate(self) -> None:
+        self.revision += 1
+        self.snapshot = None
+        self.review.update("")
+        if self.state not in (OperationState.RUNNING, OperationState.AUTHENTICATING):
+            self.state = OperationState.IDLE
+        self.render_controls()
+
+    @on(SchemaForm.Edited)
+    def edited(self, event: SchemaForm.Edited) -> None:
+        event.stop()
+        for form in self.query(SchemaForm):
+            form.clear_errors()
+        self.invalidate()
 
     def show_action(self, action: str) -> None:
         if any(item.id == action for item in self.manifest.actions):
@@ -196,7 +251,7 @@ class PluginPage(Vertical):
     async def dynamic_choices(self, provider: str, query_text: str) -> list[str]:
         state = await self.manager.activation(self.manifest.id)
         request = Request(
-            method="choices",
+            method=WorkerMethod.CHOICES,
             plugin_id=self.manifest.id,
             provider=provider,
             query=query_text,
@@ -205,7 +260,6 @@ class PluginPage(Vertical):
         )
         key = (
             state.digest,
-            self.profile,
             hashlib.sha256(request.model_dump_json().encode()).hexdigest(),
         )
         cached = self.choice_cache.get(key)
@@ -218,42 +272,30 @@ class PluginPage(Vertical):
         self.choice_cache[key] = (time.monotonic(), values)
         return values
 
-    async def change_profile(self, name: str) -> None:
-        if self.settings_form:
-            self.drafts[self.profile] = self.settings_form.values(explicit=True)
-        saved = await self.store.read(self.manifest.id, name)
-        if saved.values and saved.version != self.manifest.settings_version:
-            raise ValueError("This profile needs migration")
-        self.profile, self.saved = name, saved
-        self.observations.update("")
+    async def load_settings(self) -> None:
+        self.saved = await self.store.read(self.manifest.id)
+        if self.saved.values and self.saved.version != self.manifest.settings_version:
+            raise ValueError("Saved settings require a schema migration.")
         container = self.query_one("#settings-form", Vertical)
         await container.remove_children()
-        form = SchemaForm(
-            self.manifest.settings_schema, self.drafts.get(name, saved.values), self.dynamic_choices
-        )
+        form = SchemaForm(self.manifest.settings_schema, self.saved.values, self.dynamic_choices)
         form.plugin_id = self.manifest.id
         form.save_secret = lambda secret: save_keyring_entry(self.manager, self.manifest.id, secret)
         self.settings_form = form
         await container.mount(form)
-        choices = await asyncio.to_thread(profiles, self.store, self.manifest.id)
-        select = self.query_one("#profile", Select)
-        select.set_options([(p, p) for p in sorted(set(choices) | self.drafts.keys() | {name})])
-        select.value = name
-
-    @on(Select.Changed, "#profile")
-    async def selected_profile(self, event: Select.Changed) -> None:
-        if isinstance(event.value, str) and event.value != self.profile:
-            await self.change_profile(event.value)
 
     @on(Select.Changed, "#action-choice")
     async def selected_action(self, event: Select.Changed) -> None:
+        self.active_action = None
+        self.invalidate()
         if not isinstance(event.value, str):
+            self.query_one("#action-description", Static).update("")
+            self.query_one("#action-forms", ContentSwitcher).current = None
+            self.query_one("#run-forms", ContentSwitcher).current = None
             return
         i, action = next((i, a) for i, a in enumerate(self.manifest.actions) if a.id == event.value)
         self.active_action = action
-        self.snapshot = None
-        self.review.update("")
-        self.query_one("#apply", Button).disabled = True
+        self.render_controls()
         self.query_one("#action-description", Static).update(action.description or action.label)
         schema = self.manifest.input_schemas[action.id]
         props = schema.get("properties")
@@ -313,26 +355,64 @@ class PluginPage(Vertical):
 
     @work(exit_on_error=False)
     async def execute_command(self, name: str) -> None:
+        revision = self.revision
         try:
             await self._command(name)
-        except (ValueError, OSError, RuntimeError, ExceptionGroup) as exc:
-            # Validation errors can contain raw input. Keep raw errors out of the UI.
-            message = (
-                str(exc)
-                if type(exc) is ValueError and "\n" not in str(exc) and len(str(exc)) < 160
-                else "The request could not be validated or completed."
+        except OperationError as exc:
+            if name not in ("preview", "apply") and self.state in (
+                OperationState.RUNNING,
+                OperationState.AUTHENTICATING,
+            ):
+                self.status_line.update(exc.detail.message)
+            elif revision == self.revision:
+                self.show_error(exc.detail)
+        except (ValueError, OSError, RuntimeError, ExceptionGroup):
+            if name not in ("preview", "apply") and self.state in (
+                OperationState.RUNNING,
+                OperationState.AUTHENTICATING,
+            ):
+                self.status_line.update(
+                    "Review the operation status before changing this extension."
+                )
+            elif revision == self.revision:
+                self.show_error(
+                    Error(
+                        code=ErrorCode.CONFLICT,
+                        message="Review the extension and saved settings, then preview again.",
+                        retryable=True,
+                    )
+                )
+
+    def show_error(self, error: Error) -> None:
+        self.snapshot = None
+        self.state = OperationState.FAILED
+        if error.field:
+            for form in self.query(SchemaForm):
+                form.show_error(error.field, error.message)
+        location = ".".join(str(key) for key in error.field)
+        self.status_line.update(
+            " · ".join(
+                part
+                for part in (
+                    error.code.value,
+                    location,
+                    error.message,
+                    str(error.operation_id) if error.operation_id else "",
+                )
+                if part
             )
-            self.status_line.update(message)
+        )
+        self.render_controls()
 
     async def authorize(self, action: Action) -> BecomePassword | None:
-        if not {"root", "su", "sudo"}.intersection(action.permissions):
+        if not PRIVILEGED.intersection(action.permissions):
             return None
         state = await self.manager.activation(self.manifest.id)
         await asyncio.to_thread(protected_resources, state)
         secret = await self.app.push_screen_wait(
             SecretPrompt(
                 "Root password for su"
-                if "su" in action.permissions
+                if Permission.SU in action.permissions
                 else "Sudo password for this action"
             )
         )
@@ -350,36 +430,70 @@ class PluginPage(Vertical):
                 "Cancellation requested at a safe boundary." if count else "No running operation."
             )
         elif name == "activate":
-            await self.activate(self.entry)
+            self.invalidate()
+            if self.candidate is None:
+                return
+            await self.activate(self.candidate)
             await self.refresh_state()
-        elif name == "new-profile":
-            profile = await self.app.push_screen_wait(
-                Prompt("New profile name (letters, digits, underscore or hyphen)")
-            )
-            if profile:
-                await self.change_profile(profile)
-        elif name in ("disable", "enable"):
-            async with self.manager.ledger.writer(plugin):
-                await asyncio.to_thread(
-                    toggle, self.manager.env_root, plugin, enable=name == "enable"
-                )
+        elif name in ("enable", "disable"):
+            self.invalidate()
+            async with self.manager.records.claim_extension(plugin):
+                if await self.manager.records.pending(plugin):
+                    raise OperationError(
+                        Error(
+                            code=ErrorCode.CONFLICT,
+                            message="Resolve the unfinished operation before changing activation.",
+                        )
+                    )
+                release = await asyncio.to_thread(active, self.manager.env_root, plugin)
+                enable = name == "enable"
+                if enable != (release is not None):
+                    await asyncio.to_thread(toggle, self.manager.env_root, plugin, enable=enable)
+                if enable:
+                    release = await asyncio.to_thread(active, self.manager.env_root, plugin)
+                    if release is None:
+                        raise OperationError(
+                            Error(
+                                code=ErrorCode.INCOMPATIBLE_PLUGIN,
+                                message="Activate the reviewed extension before enabling it.",
+                            )
+                        )
+                    await self.manager.extensions.activate(release.manifest, release.digest)
+                else:
+                    await self.manager.extensions.disable(plugin)
             await self.refresh_state()
         elif name == "remove-extension":
-            if await self.manager.ledger.pending(plugin):
-                raise ValueError("Resolve interrupted operations before removing the worker")
-            entries = await asyncio.to_thread(removable, self.manager.env_root, plugin)
+            try:
+                entries = await asyncio.to_thread(removable, self.manager.env_root, plugin)
+            except FileNotFoundError:
+                if await asyncio.to_thread(os.path.lexists, self.manager.env_root / plugin):
+                    raise
+                entries = ()
             if await self.app.push_screen_wait(
                 Confirm(
-                    "Remove the extension code and environments?\n" + "\n".join(entries),
+                    "Remove extension registration and reviewed code?\n" + "\n".join(entries),
                     "Remove extension",
                 )
             ):
-                async with self.manager.ledger.writer(plugin):
-                    if await self.manager.ledger.pending(plugin):
-                        raise ValueError(
-                            "Resolve interrupted operations before removing the worker"
+                self.invalidate()
+                async with self.manager.records.claim_extension(plugin):
+                    if await self.manager.records.pending(plugin):
+                        raise OperationError(
+                            Error(
+                                code=ErrorCode.CONFLICT,
+                                message="Resolve the unfinished operation before removal.",
+                            )
                         )
-                    await asyncio.to_thread(retire, self.manager.env_root, plugin, entries)
+                    if entries:
+                        await asyncio.to_thread(retire, self.manager.env_root, plugin, entries)
+                    elif await asyncio.to_thread(os.path.lexists, self.manager.env_root / plugin):
+                        raise OperationError(
+                            Error(
+                                code=ErrorCode.CONFLICT,
+                                message="The extension changed after review. Inspect it again.",
+                            )
+                        )
+                    await self.manager.extensions.remove(plugin)
                 await self.refresh_state()
         elif name == "full-cleanup":
             cleanup = await preview_cleanup(
@@ -394,72 +508,35 @@ class PluginPage(Vertical):
                 self.status_line.update(result.outcome.value + " · " + result.message)
                 await self.refresh_state()
         elif name == "rollback":
-            available = await self.manager.ledger.recoveries(plugin)
+            available = await self.manager.records.recoveries(plugin)
             chosen = await self.app.push_screen_wait(
-                Choose("Select a managed-file operation", [(r, o) for o, r in available])
+                Choose("Select a managed-file operation", [(r, str(o)) for o, r in available])
             )
             if chosen:
-                recovery = await asyncio.to_thread(RecoveryPlan.inspect, dict(available)[chosen])
+                recovery = await asyncio.to_thread(
+                    RecoveryPlan.inspect, dict(available)[UUID(chosen)]
+                )
                 if await self.app.push_screen_wait(
                     Confirm(
-                        "\n".join(f"{s} · {n}" for n, s in recovery.entries), "Roll back operation"
+                        "\n".join(entry.description() for entry in recovery.entries),
+                        "Roll back operation",
                     )
                 ):
-                    result = await self.manager.rollback(plugin, chosen, recovery)
+                    result = await self.manager.rollback(plugin, UUID(chosen), recovery)
                     self.status_line.update(result.outcome.value + " · " + result.message)
                     await self.refresh_state()
-        elif name == "resume-cleanup":
-            remaining = await self.manager.remaining_cleanup(plugin)
-            if not remaining:
-                self.status_line.update("No interrupted cleanup can safely resume.")
-                return
-            chosen = await self.app.push_screen_wait(
-                Choose(
-                    "Interrupted cleanup",
-                    [(s.mutation.action_id, str(s.operation_id)) for s in remaining],
-                )
-            )
-            snap = next((s for s in remaining if str(s.operation_id) == chosen), None)
-            if snap:
-                plan = snap.mutation.plan
-                detail = "\n".join(
-                    [plan.summary, *plan.warnings, *(r.description() for r in plan.resources)]
-                )
-                if await self.app.push_screen_wait(Confirm(detail, "Resume remaining removals")):
-                    state = await self.manager.activation(plugin)
-                    password = await self.authorize(descriptor(state, snap.mutation.action_id))
-                    result = await self.manager.resume_cleanup(snap, password)
-                    self.status_line.update(result.outcome.value + " · " + result.message)
         elif name == "reconcile":
-
-            async def approve_readback(action: Action, snapshot: Snapshot) -> BecomePassword | None:
-                plan = snapshot.mutation.plan
-                detail = "\n".join(
-                    [
-                        action.label,
-                        plan.summary,
-                        *plan.warnings,
-                        *(r.description() for r in plan.resources),
-                    ]
-                )
-                if await self.app.push_screen_wait(
-                    Confirm(detail, "Inspect with administrative access")
-                ):
-                    return await self.authorize(action)
-                return None
-
-            results = await self.manager.reconcile(plugin, approve_readback)
+            results = await self.manager.reconcile(plugin)
             self.status_line.update(
                 " · ".join(r.message for r in results) or "No interrupted operations."
             )
         elif name == "inspect":
             self.observations.update("")
-            profile = self.profile
             state = await self.manager.activation(plugin)
             reply = await query(
                 state,
                 Request(
-                    method="inspect",
+                    method=WorkerMethod.INSPECT,
                     plugin_id=plugin,
                     overrides=self.settings_form.values(explicit=True)
                     if self.settings_form
@@ -467,7 +544,7 @@ class PluginPage(Vertical):
                 ),
                 self.manager.options,
             )
-            if reply.result and profile == self.profile:
+            if reply.result:
                 self.observations.update("\n".join(r.description() for r in reply.result.resources))
                 self.status_line.update(reply.result.outcome.value + " · " + reply.result.message)
         elif name == "save" and self.settings_form and self.saved:
@@ -475,86 +552,160 @@ class PluginPage(Vertical):
             values = self.settings_form.values(explicit=True)
             await query(
                 state,
-                Request(method="validate", plugin_id=plugin, overrides=values),
+                Request(method=WorkerMethod.VALIDATE, plugin_id=plugin, overrides=values),
                 self.manager.options,
             )
-            await save_profile(
-                self.manager,
-                self.store,
-                plugin,
-                self.profile,
-                values,
-                self.manifest.settings_version,
-                self.saved.revision,
+            self.saved = await self.store.write(
+                plugin, values, self.manifest.settings_version, self.saved.revision
             )
-            self.saved = await self.store.read(plugin, self.profile)
-            self.status_line.update("Profile saved.")
-        elif name == "preview" and self.active_action and self.settings_form:
-            self.query_one("#apply", Button).disabled = True
-            snapshot = await self.manager.preview(
-                plugin,
-                self.active_action.id,
-                self.unsaved_values(),
-                self._inputs(),
-                saved=self.saved.values if self.saved else {},
-            )
-            self.snapshot = snapshot
-            plan = snapshot.mutation.plan
-            self.review.update(
-                plan.summary
-                + "\n"
-                + "\n".join(
-                    [
-                        *plan.warnings,
-                        *(r.description() for r in plan.resources),
-                    ]
-                )
-            )
-            self.status_line.update(plan.outcome.value)
-            self.query_one("#apply", Button).disabled = (
-                plan.outcome != Outcome.READY
-                and not (
-                    plan.outcome is Outcome.NO_CHANGES
-                    and self.active_action.id in (LifecycleAction.INSTALL, LifecycleAction.UPDATE)
-                )
-            ) or not self.active_action.target
-        elif name == "apply" and self.snapshot:
-            snapshot, self.snapshot = self.snapshot, None
-            self.query_one("#apply", Button).disabled = True
-            state = await self.manager.activation(plugin)
-            action = descriptor(state, snapshot.mutation.action_id)
-            plan = snapshot.mutation.plan
-            review = [
-                action.label,
-                plan.summary,
-                *plan.warnings,
-                *[r.description() for r in plan.resources],
-            ]
-            if not action.supports_rollback:
-                review.append("Operation rollback is unavailable.")
-            if not await self.app.push_screen_wait(Confirm("\n".join(review), "Confirm apply")):
-                return
-            password = None if plan.outcome is Outcome.NO_CHANGES else await self.authorize(action)
-            if (
-                plan.outcome is not Outcome.NO_CHANGES
-                and {"root", "su", "sudo"}.intersection(action.permissions)
-                and password is None
-            ):
-                self.status_line.update("Authorization cancelled.")
-                return
-            result = await self.manager.apply(snapshot, password)
-            self.status_line.update(result.outcome.value + " · " + result.message)
+            self.settings_form.stored = dict(self.saved.values)
+            self.invalidate()
+            self.status_line.update("Settings saved.")
+        elif name == "preview":
+            await self.preview()
+        elif name == "apply":
+            await self.apply()
         elif name == "refresh-resources":
-            resources = await self.manager.ledger.holdings(plugin)
+            resources = await self.manager.records.holdings(plugin)
             self.query_one("#holdings", Static).update(
                 "\n".join(f"{r.kind} · {r.identity} · {r.ownership}" for r in resources)
                 or "No verified resources."
             )
         elif name == "refresh-history":
-            events = await self.manager.journal.history(plugin)
+            events = await self.manager.records.events(plugin, limit=200)
             self.query_one("#events", Static).update(
                 "\n".join(
-                    f"{e.timestamp:%Y-%m-%d %H:%M} UTC · {e.action_id} · {e.phase}" for e in events
+                    f"{e.timestamp:%Y-%m-%d %H:%M} UTC · {e.action_id} · {e.message_code}"
+                    for e in events
                 )
                 or "No recorded operations."
             )
+
+    async def preview(self) -> None:
+        action = self.active_action
+        controls = availability(self.state, activated=self.activated, selected=action is not None)
+        if not controls.preview or action is None or self.saved is None:
+            return
+        self.revision += 1
+        revision = self.revision
+        self.snapshot = None
+        self.state = OperationState.VALIDATING
+        self.render_controls()
+        try:
+            inputs = self._inputs()
+            overrides = self.unsaved_values()
+            self.state = OperationState.PLANNING
+            self.render_controls()
+            snapshot = await self.manager.preview(
+                self.manifest.id,
+                action.id,
+                overrides,
+                inputs,
+                saved=self.saved.values,
+                revision=self.saved.revision,
+            )
+        except OperationError as exc:
+            if revision == self.revision:
+                self.show_error(exc.detail)
+            return
+        except Exception:
+            if revision == self.revision:
+                self.show_error(
+                    Error(
+                        code=ErrorCode.WORKER_FAILED,
+                        message="Could not prepare the plan. Check the release and local storage.",
+                        retryable=True,
+                    )
+                )
+            return
+        if revision != self.revision:
+            return
+        plan = snapshot.mutation.plan
+        self.review.update(
+            "\n".join(
+                [plan.summary, *plan.warnings, *(row.description() for row in plan.resources)]
+            )
+        )
+        if can_review(action, plan):
+            self.snapshot = snapshot
+            self.state = OperationState.READY
+        else:
+            self.state = (
+                OperationState.SUCCEEDED if plan.outcome in VERIFIED else OperationState.BLOCKED
+            )
+        self.status_line.update(plan.outcome.value)
+        self.render_controls()
+
+    async def apply(self) -> None:
+        snapshot = self.snapshot
+        if self.state is not OperationState.READY or snapshot is None:
+            return
+        revision = self.revision
+        self.snapshot = None
+        self.state = OperationState.AUTHENTICATING
+        self.render_controls()
+        password = None
+        try:
+            release = await self.manager.activation(self.manifest.id)
+            action = descriptor(release, snapshot.mutation.action_id)
+            plan = snapshot.mutation.plan
+            details = [
+                action.label,
+                plan.summary,
+                *plan.warnings,
+                *(r.description() for r in plan.resources),
+            ]
+            details.append("Permissions: " + (", ".join(action.permissions) or "none"))
+            if action.mode is ActionMode.MUTATION and not action.supports_rollback:
+                details.append("Operation rollback is unavailable.")
+            label = "Confirm apply" if action.mode is ActionMode.MUTATION else "Continue"
+            if not await self.app.push_screen_wait(Confirm("\n".join(details), label)):
+                self.state = OperationState.CANCELLED
+                return
+            if revision != self.revision:
+                self.state = OperationState.IDLE
+                return
+            if (
+                action.mode in (ActionMode.MUTATION, ActionMode.AUTHENTICATED_CHECK)
+                and not track_existing(action, plan)
+                and PRIVILEGED.intersection(action.permissions)
+            ):
+                password = await self.authorize(action)
+                if password is None:
+                    self.state = OperationState.CANCELLED
+                    self.status_line.update("Authorization cancelled.")
+                    return
+            if revision != self.revision:
+                self.state = OperationState.IDLE
+                return
+            self.state = OperationState.RUNNING
+            self.render_controls()
+            execution_password, password = password, None
+            result = await self.manager.apply(snapshot, execution_password)
+            self.status_line.update(result.outcome.value + " · " + result.message)
+            if revision != self.revision:
+                self.state = OperationState.IDLE
+            elif result.outcome is Outcome.BLOCKED:
+                self.state = OperationState.BLOCKED
+            elif result.outcome is Outcome.CANCELLED:
+                self.state = OperationState.CANCELLED
+            elif result.outcome in VERIFIED or result.outcome is Outcome.NEEDS_USER_ACTION:
+                self.state = OperationState.SUCCEEDED
+            else:
+                self.state = OperationState.FAILED
+        except OperationError as exc:
+            self.show_error(exc.detail)
+        except Exception:
+            self.show_error(
+                Error(
+                    code=ErrorCode.UNKNOWN_OUTCOME,
+                    message="Inspect operation history before retrying.",
+                    operation_id=snapshot.operation_id,
+                )
+            )
+        finally:
+            if password:
+                password.discard()
+            if self.state in (OperationState.AUTHENTICATING, OperationState.RUNNING):
+                self.state = OperationState.FAILED
+            self.render_controls()

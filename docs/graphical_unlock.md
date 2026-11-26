@@ -24,4 +24,4 @@ Root-owned directories under `/var/lib/setup-system/boot/unlock-*/` hold numbere
 
 The isolated native gate exercises staging, readback, rollback and conflict handling on synthetic files. A Debian boot result requires the target exercise above. Debian documents the native [Plymouth controls](https://manpages.debian.org/trixie/plymouth/plymouth-set-default-theme.8.en.html) and [initramfs keymap option](https://manpages.debian.org/trixie/initramfs-tools-core/initramfs.conf.5.en.html).
 
-Open the extension’s **Help** tab for offline instructions. [Plymouth Help](../plugins/system/plymouth/src/setup_plugin_plymouth/help.md)
+Open the extension’s **Help** tab for offline instructions. [Plymouth Help](../plugins/plymouth/src/setup_plugin_plymouth/help.md)

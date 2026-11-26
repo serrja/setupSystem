@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-neovim"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Neovim workstation plugin"
+license = "MIT"
+dependencies = ["setup-system>=0.7.0.dev0", "pydantic>=2.10,<3"]
+
+[project.entry-points."setup_system.plugins"]
+neovim = "setup_plugin_neovim.plugin:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_neovim"]

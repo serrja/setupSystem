@@ -20,7 +20,7 @@ RUNTIME_IMAGE ?= project:candidate
 IMAGE_COMMAND ?= $(DOCKER) buildx build $(DOCKER_BUILD_ARGS) $(LOCAL_BUILD_NETWORK) --target runtime --load --tag $(RUNTIME_IMAGE) .
 VERIFY_COMMAND ?= $(MAKE) verify-installed
 QUALITY_EXTRA_TARGETS ?=
-CI_LOCAL_TARGETS ?= check coverage build verify release-check
+CI_LOCAL_TARGETS ?= check build verify release-check
 # An explicit environment/command-line subset is evidence for that scope only.
 CI_LOCAL_SCOPE = $(if $(filter command line environment override,$(origin CI_LOCAL_TARGETS)),scoped,full)
 OFFLINE_PREFLIGHT_COMMAND ?= sh -ec 'echo "BLOCKED: declare the repository-specific cached artifact/acceptance inputs before offline CI." >&2; exit 2'
@@ -31,7 +31,6 @@ LOCAL_BUILD_NETWORK := --network=none
 QUALITY_NETWORK := none
 endif
 
-COVERAGE_COMMAND ?= sh -ec 'echo "Configure a language-native coverage reporter" >&2; exit 2'
 VERSION_COMMAND ?= sh -ec 'echo "Configure a native version command" >&2; exit 2'
 RELEASE_CHECK_COMMAND ?= sh -ec 'echo "Configure a native release checker" >&2; exit 2'
 BUILD_RECEIPT_COMMAND ?= true
@@ -51,7 +50,7 @@ help: ## Show commands; does not build, write files or use the network.
 	@printf '%s\n' 'lint typecheck test coverage check build image verify version release-check ci-local' \
 	  'Prerequisites: Docker Buildx, Make, bash, git and coreutils. First dependency fetch needs network.' \
 	  'OFFLINE=1 requires prepared images and build inputs; unavailable inputs are blocked.' \
-	  'Docker runs native tools. $(REPORT_DIR)/ holds reports; coverage below 100% is advisory.'
+	  'Docker runs native tools. $(REPORT_DIR)/ holds reports; product coverage is unavailable.'
 install: quality-image ## Prepare the cached tool/dependency image.
 source-identity:
 	@bash docker/source_identity.sh "$(REPORT_DIR)/source.json"
@@ -75,15 +74,12 @@ test: quality-image source-identity ## Fresh execution after cached image restor
 	@rm -f $(REPORT_DIR)/test-image-id.txt $(REPORT_DIR)/test-source.json
 	@touch $(REPORT_DIR)/.started
 	$(QUALITY_TEST_COMMAND)
-	$(QUALITY_RUN) $(COVERAGE_COMMAND)
 	@$(DOCKER) image inspect $(QUALITY_IMAGE) --format '{{.Id}}' > $(REPORT_DIR)/test-image-id.txt
 	@cp $(REPORT_DIR)/source.json $(REPORT_DIR)/test-source.json
-coverage: quality-image source-identity ## Report a fresh result; never rerun tests.
-	@test "$$(cat $(REPORT_DIR)/test-image-id.txt)" = "$$($(DOCKER) image inspect $(QUALITY_IMAGE) --format '{{.Id}}')" || { echo 'Missing/stale coverage image: run make test.' >&2; exit 1; }
-	@test "$$(sed -n 's/.*"contentSha256":"\([a-f0-9]*\)".*/\1/p' $(REPORT_DIR)/source.json)" = "$$(sed -n 's/.*"contentSha256":"\([a-f0-9]*\)".*/\1/p' $(REPORT_DIR)/test-source.json)" || { echo 'Missing/stale coverage source: run make test.' >&2; exit 1; }
-	$(QUALITY_RUN) $(COVERAGE_COMMAND)
+coverage:
+	@printf '%s\n' 'No automated product suite or coverage report.'
 check: QUALITY_TEST := check
-check: test ## Run the native mandatory checks and one fresh suite.
+check: test ## Run the native mandatory checks.
 build: quality-image source-identity ## Export distributions from the canonical cached build graph.
 	@mkdir -p "$(REPORT_DIR)" dist
 	@cp $(REPORT_DIR)/source.json $(REPORT_DIR)/build-source.json

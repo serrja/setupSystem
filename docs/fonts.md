@@ -13,4 +13,4 @@ fc-match -f '%{family} %{file}\n' 'emoji:charset=1f600'
 
 Check Latin and Cyrillic text, box drawing, status symbols and emoji at the output's normal scale. Fontconfig chooses the available fallback for each missing glyph. Restart a running application to pick up new font preferences. [Desktop theme](theme.md) · [Recovery](recovery.md)
 
-Open the extension’s **Help** tab for offline instructions. [Hyprland Help](../plugins/desktop/hyprland/src/setup_plugin_hyprland/help.md) · [Foot Help](../plugins/desktop/foot/src/setup_plugin_foot/help.md)
+Open the extension’s **Help** tab for offline instructions. [Hyprland Help](../plugins/hyprland/src/setup_plugin_hyprland/help.md) · [Foot Help](../plugins/foot/src/setup_plugin_foot/help.md)
