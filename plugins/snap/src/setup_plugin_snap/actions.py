@@ -153,7 +153,5 @@ def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan:
         run_native_play(
             "snap", "catalog.yml", {"approval": approval.model_dump(mode="json")}, "sudo"
         )
-    else:
-        if action_id == LifecycleAction.UNINSTALL:
-            require_empty()
+        return
     raise ValueError("Package operations require their confirmed provider step")

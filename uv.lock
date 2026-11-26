@@ -1854,6 +1854,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "types-pexpect" },
 ]
 
 [package.metadata]
@@ -1869,6 +1870,7 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=1" },
     { name = "ruff", specifier = ">=0.14" },
+    { name = "types-pexpect", specifier = ">=4.9" },
 ]
 
 [[package]]
@@ -2319,6 +2321,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/2a/9f/cdf871ea61e1ad03a0753ed5343a2a9f5992aadc30afa5f4ca3e76a879f5/types_aiofiles-25.1.0.20261107.tar.gz", hash = "sha256:c34fd0f3a73ea630e383f5b5a6d3cc309494cfedade22f7b0e83e02fc5f487f1", size = 15115, upload-time = "2026-11-07T07:55:25.412Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/e3/4d3b636b25b4e1f7fb2836e773abe8bc01890c519252eec082906cd5662b/types_aiofiles-25.1.0.20261107-py3-none-any.whl", hash = "sha256:1401114ecf3764eb1c0f6bb175e9ceb8d1741311394dee384d8642f5b3be9b46", size = 14403, upload-time = "2026-11-07T07:55:24.512Z" },
+]
+
+[[package]]
+name = "types-pexpect"
+version = "4.9.0.20261122"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/a1/26091e6d842abba7d631228fc9777d0343778f86c3a96626c1ae4d11f5b2/types_pexpect-4.9.0.20261122.tar.gz", hash = "sha256:cc341c96eb4c169db14ddeae3110d445dfef036a19a33ecee636e355a6256ac4", size = 13788, upload-time = "2026-11-22T08:58:58.522Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/00/d31adc05dec5f33fb2570967e05c598b2b0e690d3c6150a6f5c122ac647e/types_pexpect-4.9.0.20261122-py3-none-any.whl", hash = "sha256:5dc9ebf7fa34303edceac8d08b2a38e26e1e0a68c3291bf4fc503310f0383791", size = 17278, upload-time = "2026-11-22T08:58:57.717Z" },
 ]
 
 [[package]]

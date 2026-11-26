@@ -11,7 +11,7 @@ license = "MIT"
 dependencies = ["setup-system-sdk>=3,<4", "ansible-core>=2.18,<3", "pexpect>=4.9,<5"]
 
 [dependency-groups]
-dev = ["ansible-lint>=26.11.0", "pytest>=8", "pytest-asyncio>=1", "ruff>=0.14"]
+dev = ["ansible-lint>=26.11.0", "types-pexpect>=4.9", "pytest>=8", "pytest-asyncio>=1", "ruff>=0.14"]
 
 [project.entry-points."setup_system.plugins"]
 debian = "setup_plugin_debian:Plugin"

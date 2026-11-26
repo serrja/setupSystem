@@ -12,6 +12,7 @@ from setup_plugin_debian.adapters import apt, inspection, layout, native, platfo
 
 
 def main(args: list[str]) -> None:
+    result: object
     match args:
         case ["platform"]:
             result = platform.current_target()

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from setup_system_sdk.files.contracts import ContractModel
 from setup_system_sdk.files.manifest_types import FileMode
 from setup_system_sdk.schemas.common import Inputs
@@ -55,3 +55,11 @@ class Keyboard(Inputs):
 
 
 Settings = PluginSettings
+
+
+class Confirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    setting: RegionalKind
+    value: str
+    before: str | None
+    boot: str

@@ -443,13 +443,27 @@ async def install_release(
                     "--no-build",
                     "--no-python-downloads",
                     "--link-mode",
-                    "copy",
+                    "hardlink",
                     "--python",
                     str(python),
                     *[str(stage / w.name) for w in selected.wheels],
                 ],
                 stage,
                 EnvironmentStep.INSTALL,
+            )
+            await _run(
+                [
+                    uv,
+                    "--offline",
+                    "--no-config",
+                    "--no-cache",
+                    "pip",
+                    "check",
+                    "--python",
+                    str(python),
+                ],
+                stage,
+                EnvironmentStep.DEPENDENCIES,
             )
             (generation / "manifest.json").write_text(selected.manifest.model_dump_json())
             state = await run_sync(_read_generation, root, pointer, staging=True)

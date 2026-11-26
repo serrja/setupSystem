@@ -8,10 +8,10 @@ from typing import ClassVar
 from setup_system_sdk.enums.lifecycle import LifecycleAction
 from setup_system_sdk.schemas.common import Inputs
 
-from setup_plugin_regional.actions import Confirmation as Confirmation
 from setup_plugin_regional.actions import PluginActions
 from setup_plugin_regional.actions import apply_native as apply_native
 from setup_plugin_regional.enums import PluginAction
+from setup_plugin_regional.models import Confirmation as Confirmation
 from setup_plugin_regional.models import Keyboard, Locale, Settings, Timezone
 
 

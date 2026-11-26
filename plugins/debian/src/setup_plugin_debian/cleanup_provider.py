@@ -17,6 +17,7 @@ from setup_system_sdk.schemas.common import Inputs, Values
 
 from setup_plugin_debian.adapters import cleanup as native
 from setup_plugin_debian.adapters.native import run_native_play
+from setup_plugin_debian.adapters.platform import current_target
 
 
 class CleanupInput(Inputs):
@@ -72,7 +73,7 @@ def run_cleanup(params: CleanupRequest, expected: Plan) -> None:
 
 
 def readback(params: CleanupRequest, rows: tuple[Resource, ...]) -> Result:
-    arch, supported = native.current_target()
+    arch, supported = current_target()
     if not supported:
         return Result(outcome=Outcome.UNKNOWN_OUTCOME, message="Cannot inspect this platform")
     present = {
@@ -97,7 +98,7 @@ class CleanupProvider:
     async def inspect(self, request: CapabilityRequest, context: PluginContext) -> Values:
         params = cleanup_request(request.payload)
         if params.action == "inspect":
-            arch, supported = await run_sync(native.current_target)
+            arch, supported = await run_sync(current_target)
             if supported:
                 keys = list(await run_sync(native.catalog))
                 present = await run_sync(native.inventory, keys, native.Mode.REMOVE, arch)

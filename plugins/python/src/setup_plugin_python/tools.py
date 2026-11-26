@@ -15,6 +15,7 @@ from typing import ClassVar
 
 from platformdirs import user_data_path
 from setup_system_sdk.blocking import run_sync
+from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.lifecycle import LifecycleAction
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceOwnership
@@ -201,7 +202,9 @@ class Toolchain(NativeBackend):
             outcome=Outcome.NEEDS_USER_ACTION,
         )
 
-    async def inspect(self, settings: PluginSettings) -> Result:
+    async def inspect(
+        self, settings: PluginSettings, context: PluginContext | None = None
+    ) -> Result:
         plan = await run_sync(self.status, settings)
         return Result(outcome=plan.outcome, message=plan.summary, resources=plan.resources)
 
@@ -397,7 +400,13 @@ class Toolchain(NativeBackend):
                 recovery_id=receipt.name,
             )
 
-    async def verify(self, plan: Plan, settings: PluginSettings, inputs: Inputs) -> Result:
+    async def verify(
+        self,
+        plan: Plan,
+        settings: PluginSettings,
+        inputs: Inputs,
+        context: PluginContext | None = None,
+    ) -> Result:
         if plan.resources and all(
             r.effect == "remove" and r.kind in {"file", "toolchain_generation"}
             for r in plan.resources
@@ -417,7 +426,7 @@ class Toolchain(NativeBackend):
                 resources=plan.resources,
             )
         if not plan.resources or plan.resources[0].kind != "toolchain_generation":
-            return await super().verify(plan, settings, inputs)
+            return await super().verify(plan, settings, inputs, context)
 
         def matches() -> bool:
             first, *links = plan.resources

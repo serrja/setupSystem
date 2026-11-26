@@ -52,7 +52,7 @@ jobs:
           version: '0.12.15'
       - run: uv build --all-packages
       - run: uv run --locked --all-packages python docker/plugin_reference.py
-      - run: make plugins-check
+      - run: make plugin-types plugins-check
   compatibility:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

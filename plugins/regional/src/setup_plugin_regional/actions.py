@@ -23,10 +23,9 @@ from setup_plugin_regional.adapters.native import (
     run_native_play,
 )
 from setup_plugin_regional.enums import PluginAction
-from setup_plugin_regional.models import Keyboard, Locale, Timezone
+from setup_plugin_regional.models import Confirmation, Keyboard, Locale, Timezone
 
 from . import regional
-from .change import Confirmation
 from .models import RegionalKind
 
 FOLDER = Path(str(package_files("setup_plugin_regional").joinpath("resources")))
