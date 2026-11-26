@@ -1,54 +1,54 @@
-# Snap settings reference
+# ⚙️ Snap settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 This operation has no editable parameters.
 
-## Install snapd
+## 🧩 Install snapd
 
 This operation has no editable parameters.
 
-## Update snapd
+## 🧩 Update snapd
 
 This operation has no editable parameters.
 
-## Remove snapd
+## 🧩 Remove snapd
 
 This operation has no editable parameters.
 
-## Check Snap runtime
+## 🧩 Check Snap runtime
 
 This operation has no editable parameters.
 
-## List installed revisions
+## 🧩 List installed revisions
 
 This operation has no editable parameters.
 
-## Start Snap service
+## 🧩 Start Snap service
 
 This operation has no editable parameters.
 
-## Install applications
+## 🧩 Install applications
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `applications` | Select one or more approved applications from the Snap Store catalog. | `required` | `{"maxItems": 24, "minItems": 1}` |
 
-## Update applications
+## 🧩 Update applications
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `applications` | Select one or more approved applications from the Snap Store catalog. | `required` | `{"maxItems": 24, "minItems": 1}` |
 
-## Remove applications
+## 🧩 Remove applications
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `applications` | Select one or more approved applications from the Snap Store catalog. | `required` | `{"maxItems": 24, "minItems": 1}` |
 
-## Check applications
+## 🧩 Check applications
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |

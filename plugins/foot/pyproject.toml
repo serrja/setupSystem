@@ -8,7 +8,7 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Foot desktop configuration"
 license = "MIT"
-dependencies = ["setup-system-sdk>=3,<4"]
+dependencies = ["setup-system-desktop-theme>=1,<2", "setup-system-sdk>=3,<4"]
 
 [project.entry-points."setup_system.plugins"]
 foot = "setup_plugin_foot.plugin:Plugin"

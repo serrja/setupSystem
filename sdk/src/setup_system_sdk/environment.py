@@ -3,10 +3,17 @@
 import os
 import pwd
 import stat
+from contextvars import ContextVar
 from pathlib import Path
 
+_session_fields: ContextVar[tuple[str, ...]] = ContextVar("session_fields", default=())
 
-def _environment() -> dict[str, str]:
+
+def declare_session_fields(fields: tuple[str, ...]) -> None:
+    _session_fields.set(fields)
+
+
+def _environment(fields: tuple[str, ...]) -> dict[str, str]:
     home = Path(pwd.getpwuid(os.getuid()).pw_dir)
     environment = {"PATH": "/usr/bin:/bin", "HOME": str(home), "LANG": "C.UTF-8"}
     for key in (
@@ -16,19 +23,18 @@ def _environment() -> dict[str, str]:
         "XDG_CACHE_HOME",
         "XDG_STATE_HOME",
         "XDG_RUNTIME_DIR",
-        "CODEX_HOME",
         "WAYLAND_DISPLAY",
-        "HYPRLAND_INSTANCE_SIGNATURE",
         "DISPLAY",
+        *fields,
     ):
         if key in os.environ:
             environment[key] = os.environ[key]
     return environment
 
 
-def session_environment() -> dict[str, str]:
+def session_environment(fields: tuple[str, ...] | None = None) -> dict[str, str]:
     """Forward only local session sockets owned by the caller to user processes."""
-    env = _environment()
+    env = _environment(_session_fields.get() if fields is None else fields)
     uid = os.getuid()
     runtime = Path(env.get("XDG_RUNTIME_DIR", f"/run/user/{uid}"))
     bus = runtime / "bus"

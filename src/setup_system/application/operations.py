@@ -9,15 +9,19 @@ import anyio
 from anyio.abc import TaskGroup
 from setup_system_sdk.enums.operation import ActionMode, Outcome, WorkerMethod
 from setup_system_sdk.enums.permissions import Permission
-from setup_system_sdk.operations import Plan, Receipt, Result, Snapshot, StepPlan
+from setup_system_sdk.operations import Plan, Receipt, Result, StepPlan
 from setup_system_sdk.schemas.common import Values
 from setup_system_sdk.schemas.wire import Request
 
-from setup_system.application.authorization import AuthorizationRequest, Authorize
+from setup_system.application.authorization import AuthorizationRequest, Authorize, before_execution
 from setup_system.application.ledger import LedgerService, ResumePlan
 from setup_system.application.providers import ProviderBroker
+from setup_system.application.rollback import RollbackPlanner
 from setup_system.configuration.profiles import SavedValues
-from setup_system.domain.operations import SUCCESS, StepEvidence
+from setup_system.domain.confirmation import ConfirmedSnapshot as Snapshot
+from setup_system.domain.confirmation import ProviderBinding
+from setup_system.domain.operations import SUCCESS
+from setup_system.errors import OperationError
 from setup_system.infrastructure.locks import acquire
 from setup_system.infrastructure.plugins.registry import PluginRegistry
 from setup_system.infrastructure.plugins.workers import WorkerClient
@@ -43,9 +47,12 @@ class OperationService:
         self.workers = workers
         self.profile = profile
         self.ledger = ledger
+        self.rollback = RollbackPlanner(ledger, registry, workers)
         self.locks = locks
         self.launcher = launcher
         self.tasks = tasks
+        self.active: dict[str, UUID] = {}
+        self.finished: dict[UUID, anyio.Event] = {}
         self.pending: dict[UUID, anyio.Event] = {}
 
     async def preview(
@@ -57,20 +64,53 @@ class OperationService:
         *,
         operation_id: UUID | None = None,
     ) -> Snapshot:
-        release = await anyio.to_thread.run_sync(self.registry.resolve, plugin_id)
+        return await self._preview(plugin_id, action_id, overrides, inputs, operation_id, None)
+
+    async def _preview(
+        self,
+        plugin_id: str,
+        action_id: str,
+        overrides: Values,
+        inputs: Values,
+        operation_id: UUID | None,
+        historical: Snapshot | None,
+    ) -> Snapshot:
+        release = (
+            await anyio.to_thread.run_sync(self.registry.resolve_executor, historical.executor)
+            if historical
+            else await anyio.to_thread.run_sync(self.registry.resolve, plugin_id)
+        )
         action = next((a for a in release.manifest.actions if a.id == action_id), None)
         if not action:
             raise ValueError("Unknown plugin action")
         key = operation_id or uuid4()
-        document = await self.profile(plugin_id)
+        document = (
+            SavedValues(
+                historical.settings, historical.settings_revision, release.manifest.settings_version
+            )
+            if historical
+            else await self.profile(plugin_id)
+        )
         async with self.ledger.uow.read() as repos:
             holdings = tuple(await repos.resources.list_holdings(plugin_id))
         approved: list[StepPlan] = []
         dependencies = set(release.manifest.dependencies)
+        bindings: dict[str, ProviderBinding] = {}
         try:
-            for plugin in dependencies:
+            for plugin in dependencies if not historical else ():
                 await anyio.to_thread.run_sync(self.registry.resolve, plugin)
-            providers = await anyio.to_thread.run_sync(self.broker.resolve, action)
+            providers = (
+                self.broker.retained(action, historical)
+                if historical
+                else await anyio.to_thread.run_sync(self.broker.resolve, action)
+            )
+            bindings = {
+                cap: ProviderBinding(
+                    executor=p.executor,
+                    contract_version=next(c.version for c in p.manifest.provides if c.id == cap),
+                )
+                for cap, p in providers.items()
+            }
         except ValueError as error:
             plan = Plan(outcome=Outcome.BLOCKED, summary=str(error))
             values = document.values
@@ -87,7 +127,7 @@ class OperationService:
                     method=WorkerMethod.PLAN,
                     action_id=action_id,
                     saved=document.values,
-                    overrides=overrides,
+                    overrides=historical.settings if historical else overrides,
                     inputs=inputs,
                     holdings=holdings,
                 ),
@@ -109,11 +149,13 @@ class OperationService:
                     raise ValueError("Unexpected local step executor or handler")
                 if PRIVILEGED.intersection(step.permissions):
                     try:
-                        await anyio.to_thread.run_sync(self.launcher.trust.resolve, step)
+                        await anyio.to_thread.run_sync(
+                            self.launcher.trust.resolve, step, bindings, plan.steps
+                        )
                     except (OSError, ValueError):
                         plan = Plan(
                             outcome=Outcome.BLOCKED,
-                            summary="The approved native executor is unavailable",
+                            summary="Check the native executor and its approved provider releases.",
                         )
                         break
         return Snapshot(
@@ -126,87 +168,25 @@ class OperationService:
             inputs=inputs,
             plan=plan,
             dependencies=tuple(sorted(dependencies)),
+            providers=bindings,
             holdings=holdings,
         )
 
     async def rollback_plan(self, original: UUID, *, operation_id: UUID | None = None) -> Snapshot:
-        async with self.ledger.uow.read() as repos:
-            source = Snapshot.model_validate_json(await repos.operations.snapshot(str(original)))
-            operation = await repos.operations.get(str(original))
-            if (
-                source.rollback_of
-                or operation.phase != "verified"
-                or operation.outcome == Outcome.CANCELLED
-            ):
-                raise ValueError("Select a completed original operation")
-            evidence = {
-                row.step_key: row.receipt for row in await repos.operations.steps(str(original))
-            }
-            holdings = tuple(await repos.resources.list_holdings(source.executor.plugin_id))
-        release = await anyio.to_thread.run_sync(self.registry.resolve, source.executor.plugin_id)
-        steps = []
-        with self.registry.leases({source.executor}):
-            for step in reversed(source.plan.steps):
-                raw = evidence.get(step.step_key)
-                if not raw or step.executor != source.executor or step.capability:
-                    raise ValueError("This operation requires its owner's recovery procedure")
-                receipt = StepEvidence.decode(raw).applied
-                if not receipt:
-                    raise ValueError("The original file publication has no receipt")
-                receipt.validate_for(original, step)
-                reply = await self.workers.call(
-                    release,
-                    Request(
-                        plugin_id=source.executor.plugin_id,
-                        operation_id=original,
-                        method=WorkerMethod.RESTORE_PLAN,
-                        snapshot=source,
-                        step_key=step.step_key,
-                        receipt=receipt,
-                    ),
-                )
-                restore = reply.step
-                if (
-                    restore is None
-                    or restore.executor != source.executor
-                    or restore.capability
-                    or restore.handler != "restore-files"
-                    or restore.step_key != step.step_key
-                    or restore.permissions != {Permission.USER_FILES}
-                    or {(r.kind, r.identity, r.after, r.before) for r in restore.resources}
-                    != {(r.kind, r.identity, r.before, r.after) for r in step.resources}
-                ):
-                    raise ValueError("Rollback differs from the approved publication")
-                steps.append(restore)
-        if not steps:
-            raise ValueError("The operation has no file rollback steps")
-        return Snapshot(
-            operation_id=operation_id or uuid4(),
-            rollback_of=original,
-            executor=source.executor,
-            action_id="restore-files",
-            settings_revision=source.settings_revision,
-            settings={},
-            inputs={},
-            holdings=holdings,
-            plan=Plan(
-                summary="Restore original managed files",
-                steps=tuple(steps),
-                resources=[r for step in steps for r in step.resources],
-            ),
-        )
+        return await self.rollback.plan(original, operation_id=operation_id)
 
-    async def _replan(self, snapshot: Snapshot) -> Snapshot:
+    async def _replan(self, snapshot: Snapshot, *, historical: bool = False) -> Snapshot:
         if snapshot.rollback_of:
             return await self.rollback_plan(
                 snapshot.rollback_of, operation_id=snapshot.operation_id
             )
-        return await self.preview(
+        return await self._preview(
             snapshot.executor.plugin_id,
             snapshot.action_id,
             snapshot.overrides,
             snapshot.inputs,
-            operation_id=snapshot.operation_id,
+            snapshot.operation_id,
+            snapshot if historical else None,
         )
 
     def cancel(self, operation: UUID) -> None:
@@ -221,12 +201,21 @@ class OperationService:
         *,
         resume: ResumePlan | None = None,
     ) -> Result:
-        if snapshot.operation_id in self.pending:
+        plugin = snapshot.executor.plugin_id
+        if snapshot.operation_id in self.pending or plugin in self.active:
             raise ValueError("This operation is already running")
         done = anyio.Event()
         token = anyio.Event()
         self.pending[snapshot.operation_id] = token
+        self.active[plugin] = snapshot.operation_id
+        self.finished[snapshot.operation_id] = done
         results: list[Result | Exception] = []
+
+        def finished() -> None:
+            self.active.pop(plugin, None)
+            self.finished.pop(snapshot.operation_id, None)
+            self.pending.pop(snapshot.operation_id, None)
+            done.set()
 
         async def run() -> None:
             try:
@@ -234,11 +223,19 @@ class OperationService:
             except Exception as error:
                 results.append(error)
             finally:
-                self.pending.pop(snapshot.operation_id, None)
-                done.set()
+                finished()
 
-        self.tasks.start_soon(run)
+        try:
+            self.tasks.start_soon(run)
+        except RuntimeError:
+            finished()
+            raise
         await done.wait()
+        if not results:
+            return Result(
+                outcome=Outcome.UNKNOWN_OUTCOME,
+                message="Inspect the ledger after the interrupted execution.",
+            )
         result = results[0]
         if isinstance(result, Exception):
             raise result
@@ -254,14 +251,17 @@ class OperationService:
         key = snapshot.operation_id
         if snapshot.plan.outcome not in {Outcome.READY, Outcome.NO_CHANGES}:
             raise ValueError("This plan cannot be applied")
-        plugin = snapshot.executor.plugin_id
-        async with acquire(self.locks, ["operation/" + str(key), "plugin/" + plugin], wait=False):
-            with self.registry.leases(
-                {snapshot.executor, *(s.executor for s in snapshot.plan.steps)}
-            ):
+        identities = snapshot.executors()
+        lock_keys = ["operation/" + str(key), *("plugin/" + p.plugin_id for p in identities)]
+        async with acquire(self.locks, lock_keys, wait=False):
+            with self.registry.leases(identities):
                 completed: tuple[str, ...] = ()
                 if resume is None:
-                    fresh = await self._replan(snapshot)
+                    fresh = await before_execution(self._replan(snapshot), token)
+                    if fresh is None or token.is_set():
+                        return Result(
+                            outcome=Outcome.CANCELLED, message="Stopped before reserving the plan."
+                        )
                     if fresh.plan.digest() != snapshot.plan.digest() or fresh != snapshot:
                         raise ValueError("The confirmed plan changed. Preview again.")
                     if snapshot.rollback_of:
@@ -271,19 +271,32 @@ class OperationService:
                 else:
                     if resume.snapshot != snapshot or await self.ledger.resume_plan(key) != resume:
                         raise ValueError("The recovery confirmation changed")
+                    await self.ledger.reserve_resume(resume)
                     completed = resume.completed
+                preparation_error = None
                 for step in snapshot.plan.steps:
                     if step.step_key in completed:
                         continue
                     async with acquire(
-                        self.locks, ["step/" + k for k in step.lock_keys], wait=True
-                    ):
-                        if token.is_set():
+                        self.locks,
+                        ["step/" + k for k in step.lock_keys],
+                        wait=True,
+                        cancelled=token,
+                    ) as acquired:
+                        if not acquired or token.is_set():
                             break
                         try:
-                            fresh = await self._replan(snapshot)
+                            fresh = await before_execution(
+                                self._replan(snapshot, historical=resume is not None), token
+                            )
+                            if fresh is None or token.is_set():
+                                break
                             if (
                                 step not in fresh.plan.steps
+                                or (
+                                    bool(snapshot.providers)
+                                    and fresh.providers != snapshot.providers
+                                )
                                 or fresh.settings_revision != snapshot.settings_revision
                             ):
                                 break
@@ -291,25 +304,32 @@ class OperationService:
                             record = None
                             if PRIVILEGED.intersection(step.permissions):
                                 record = await anyio.to_thread.run_sync(
-                                    self.launcher.trust.resolve, step
+                                    self.launcher.trust.resolve,
+                                    step,
+                                    snapshot.providers,
+                                    snapshot.plan.steps,
                                 )
                                 if authorize:
-                                    secret = await authorize(
-                                        AuthorizationRequest(key, step.step_key, record)
+                                    secret = await before_execution(
+                                        authorize(AuthorizationRequest(key, step.step_key, record)),
+                                        token,
                                     )
                                 if secret is None:
                                     break
+                        except OperationError as error:
+                            preparation_error = error
+                            break
                         except (RuntimeError, OSError, ValueError):
                             break
                         if token.is_set():
                             break
                         await self.ledger.mark_running(key, step)
-                        release = self.registry.resolve(step.executor.plugin_id)
+                        release = self.registry.resolve_executor(step.executor)
                         req = Request(
                             plugin_id=release.manifest.id,
                             operation_id=key,
                             action_id=snapshot.action_id,
-                            snapshot=snapshot,
+                            snapshot=snapshot.worker_snapshot(),
                             step_key=step.step_key,
                             method=WorkerMethod.EXECUTE,
                         )
@@ -317,7 +337,13 @@ class OperationService:
                         try:
                             native = (
                                 partial(
-                                    self.launcher.execute, record, snapshot, step, secret, token
+                                    self.launcher.execute,
+                                    record,
+                                    snapshot.worker_snapshot(),
+                                    step,
+                                    secret,
+                                    token,
+                                    snapshot.providers,
                                 )
                                 if record and secret
                                 else None
@@ -352,6 +378,10 @@ class OperationService:
                 else:
                     try:
                         result = await self._verify(snapshot)
+                    except OperationError as error:
+                        result = Result(
+                            outcome=Outcome.UNKNOWN_OUTCOME, message=error.detail.message
+                        )
                     except (RuntimeError, ValueError, OSError):
                         result = Result(
                             outcome=Outcome.UNKNOWN_OUTCOME,
@@ -365,6 +395,8 @@ class OperationService:
                     return result
                 outcome = await self.ledger.interruption(key)
                 await self.ledger.finish(snapshot, outcome)
+                if preparation_error is not None:
+                    raise preparation_error
                 return Result(
                     outcome=outcome, message="Execution stopped. Preview the remaining changes."
                 )
@@ -372,7 +404,7 @@ class OperationService:
     async def _verify(self, snapshot: Snapshot) -> Result:
         plugin = snapshot.executor.plugin_id
         key = snapshot.operation_id
-        release = self.registry.resolve(plugin)
+        release = self.registry.resolve_executor(snapshot.executor)
         if snapshot.rollback_of:
             for step in snapshot.plan.steps:
                 result = await self.readback(snapshot, step, None)
@@ -380,7 +412,7 @@ class OperationService:
                     return result
             return Result(outcome=Outcome.COMPLETE, message="Original file contents verified")
         action = next(a for a in release.manifest.actions if a.id == snapshot.action_id)
-        providers = self.broker.resolve(action)
+        providers = self.broker.retained(action, snapshot)
         reply = await self.workers.call(
             release,
             Request(
@@ -393,7 +425,7 @@ class OperationService:
                 plan=snapshot.plan,
                 holdings=snapshot.holdings,
             ),
-            route=self.broker.route(key, providers, [], snapshot.holdings),
+            route=self.broker.route(key, providers, [], snapshot.holdings, inspect_only=True),
         )
         return reply.result or Result(
             outcome=Outcome.UNKNOWN_OUTCOME, message="Missing final verification"
@@ -401,23 +433,33 @@ class OperationService:
 
     async def readback(self, snapshot: Snapshot, step: StepPlan, receipt: Receipt | None) -> Result:
         try:
-            release = self.registry.resolve(step.executor.plugin_id)
-            if release.executor != step.executor:
-                raise ValueError("Executor identity changed")
+            release = self.registry.resolve_executor(step.executor)
+            route = None
+            if not step.capability and not snapshot.rollback_of:
+                action = next(a for a in release.manifest.actions if a.id == snapshot.action_id)
+                providers = self.broker.retained(action, snapshot)
+                route = self.broker.route(
+                    snapshot.operation_id, providers, [], snapshot.holdings, inspect_only=True
+                )
             reply = await self.workers.call(
                 release,
                 Request(
                     plugin_id=release.manifest.id,
                     operation_id=snapshot.operation_id,
                     method=WorkerMethod.READBACK,
-                    snapshot=snapshot,
+                    snapshot=snapshot.worker_snapshot(),
                     step_key=step.step_key,
                     receipt=receipt,
                 ),
+                route=route,
             )
             if reply.result:
                 return reply.result
-        except Exception:
+        except OperationError as error:
+            return Result(outcome=Outcome.UNKNOWN_OUTCOME, message=error.detail.message)
+        except ValueError as error:
+            return Result(outcome=Outcome.UNKNOWN_OUTCOME, message=str(error))
+        except (RuntimeError, OSError):
             pass
         return Result(
             outcome=Outcome.UNKNOWN_OUTCOME,

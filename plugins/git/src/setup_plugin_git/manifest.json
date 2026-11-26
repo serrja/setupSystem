@@ -250,6 +250,7 @@
       "description": "Migrate a package installed by a previous Git plugin. Review the selected package and its exact removal before installing from the new plugin."
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

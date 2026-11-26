@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from setup_system_sdk.manifests import Manifest
+from setup_system_sdk.native_execution import NativeFactProvider, TrustedExecution
 
 PACKAGE = Path(__file__).resolve().parent
 RESOURCES = PACKAGE.parent / "src/setup_plugin_debian/resources"
@@ -59,14 +60,16 @@ def stage(
     python = base / PYTHON
     runtime.mkdir(parents=True)
     for wheel, expected in ((host, "setup-system"), (sdk, "setup-system-sdk")):
-        name, _, _, _ = parse_wheel_filename(wheel.name)
-        if name != expected:
+        wheel_name, _, _, _ = parse_wheel_filename(wheel.name)
+        if wheel_name != expected:
             raise ValueError(f"Expected wheel for {expected}")
         unpack(wheel, python)
     shutil.copytree(RESOURCES, runtime, dirs_exist_ok=True)
     catalog = runtime / "plugin_catalog"
     catalog.mkdir()
     installed = set()
+    records: list[tuple[Manifest, TrustedExecution]] = []
+    facts: dict[str, NativeFactProvider] = {}
     executor_records = base / "etc/setup-system/executors"
     executor_records.mkdir(parents=True)
     grants = tomllib.loads((PACKAGE / "executors.toml").read_text())["handlers"]
@@ -112,6 +115,23 @@ def stage(
             if dist != canonicalize_name("setup-system-plugin-debian"):
                 raise ValueError("Unexpected Debian provider distribution")
             unpack(primary, python)
+            facts = {
+                cap.id: NativeFactProvider(
+                    plugin_id=manifest.id,
+                    version=manifest.version,
+                    release_digest=hashlib.sha256(raw).hexdigest(),
+                    contract_version=cap.version,
+                )
+                for cap in manifest.provides
+                if cap.id in {"system.platform", "system.packages"}
+            }
+            (theme,) = {
+                catalog / d["name"]
+                for v in variants
+                for d in v["wheels"]
+                if parse_wheel_filename(d["name"])[0] == "setup-system-desktop-theme"
+            }
+            unpack(theme, python)
         (catalog / (manifest.id + ".json")).write_bytes(raw)
         handlers = grants.get(manifest.id, ())
         if handlers:
@@ -130,24 +150,32 @@ def stage(
             launcher = runtime / "libexec/launcher"
             digest = hashlib.sha256(raw).hexdigest()
             protected_files = {
-                str(Path("/") / p.relative_to(base)): sha(p)
+                (Path("/") / p.relative_to(base)): sha(p)
                 for p in sorted((plugin_root / package).rglob("*"))
                 if p.is_file()
             }
-            trust = dict(
+            trust = TrustedExecution(
                 plugin_id=manifest.id,
                 version=manifest.version,
                 release_digest=digest,
-                allowed_handlers=sorted(handlers),
-                launcher=str(Path("/") / launcher.relative_to(base)),
+                allowed_handlers=frozenset(handlers),
+                launcher=Path("/") / launcher.relative_to(base),
                 launcher_sha256=sha(launcher),
                 resources=protected_files,
             )
-            (executor_records / (manifest.id + ".json")).write_text(
-                json.dumps(trust, sort_keys=True)
-            )
+            records.append((manifest, trust))
     if "debian" not in installed:
         raise ValueError("Select the reviewed Debian provider release")
+    for manifest, trust in records:
+        required = {
+            action.id: {r.id: facts[r.id] for r in action.requires}
+            for action in manifest.actions
+            if action.id in trust.allowed_handlers
+        }
+        record = trust.model_copy(update={"fact_providers": required})
+        fields = record.model_dump(mode="json")
+        fields["allowed_handlers"] = sorted(record.allowed_handlers)
+        (executor_records / (manifest.id + ".json")).write_text(json.dumps(fields, sort_keys=True))
     for name, target in [
         ("setup-system.sh", "usr/bin/setup-system"),
         ("setup-system.conf", "usr/lib/tmpfiles.d/setup-system.conf"),

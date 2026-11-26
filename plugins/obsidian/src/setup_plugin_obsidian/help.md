@@ -1,4 +1,6 @@
-# Obsidian
+# 🧩 Obsidian
+
+Obsidian workstation plugin.
 
 ## ⚙️ Select a vault and enable the CLI
 

@@ -461,11 +461,177 @@
       }
     },
     {
+      "id": "system.platform",
+      "version": "1",
+      "request_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "default": "target",
+            "enum": [
+              "target",
+              "session",
+              "observations"
+            ],
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "title": "PlatformRequest",
+        "type": "object"
+      }
+    },
+    {
       "id": "operation.recovery",
       "version": "1",
       "request_schema": {
         "$defs": {
-          "JsonValue": {}
+          "JsonValue": {},
+          "Resource": {
+            "additionalProperties": false,
+            "properties": {
+              "source_sha256": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Sha256"
+              },
+              "kind": {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "title": "Kind",
+                "type": "string"
+              },
+              "identity": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Identity",
+                "type": "string"
+              },
+              "verified": {
+                "default": false,
+                "title": "Verified",
+                "type": "boolean"
+              },
+              "remote_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Remote Id"
+              },
+              "ownership": {
+                "$ref": "#/$defs/ResourceOwnership"
+              },
+              "before": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before"
+              },
+              "after": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "After"
+              },
+              "cleanup": {
+                "default": false,
+                "title": "Cleanup",
+                "type": "boolean"
+              },
+              "effect": {
+                "$ref": "#/$defs/ResourceEffect",
+                "default": "ensure"
+              },
+              "before_permissions": {
+                "anyOf": [
+                  {
+                    "maximum": 4095,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before Permissions"
+              },
+              "permissions": {
+                "anyOf": [
+                  {
+                    "maximum": 4095,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permissions"
+              },
+              "consumers": {
+                "default": [],
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "title": "Consumers",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "identity",
+              "ownership"
+            ],
+            "title": "Resource",
+            "type": "object"
+          },
+          "ResourceEffect": {
+            "enum": [
+              "ensure",
+              "remove"
+            ],
+            "title": "ResourceEffect",
+            "type": "string"
+          },
+          "ResourceOwnership": {
+            "enum": [
+              "created",
+              "modified",
+              "preexisting",
+              "shared"
+            ],
+            "title": "ResourceOwnership",
+            "type": "string"
+          }
         },
         "additionalProperties": false,
         "properties": {
@@ -487,6 +653,7 @@
             "title": "Receipt"
           },
           "release_digest": {
+            "pattern": "^[0-9a-f]{64}$",
             "title": "Release Digest",
             "type": "string"
           },
@@ -500,6 +667,22 @@
             },
             "title": "Snapshot",
             "type": "object"
+          },
+          "approved": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Resource"
+            },
+            "title": "Approved",
+            "type": "array"
+          },
+          "native": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/Resource"
+            },
+            "title": "Native",
+            "type": "array"
           }
         },
         "required": [
@@ -518,6 +701,7 @@
   ],
   "dependencies": [],
   "actions": [],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

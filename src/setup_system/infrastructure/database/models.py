@@ -1,9 +1,22 @@
 """Operational evidence stored in the user database."""
 
-from datetime import datetime
+from enum import StrEnum
 
+from setup_system_sdk.enums.operation import Outcome
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, UniqueConstraint, func, text
+from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from setup_system.domain.operations import ChangePhase, OperationPhase, RollbackPhase, StepPhase
+
+
+def stored_enum[E: StrEnum](enum: type[E]) -> SqlEnum:
+    return SqlEnum(
+        enum,
+        native_enum=False,
+        validate_strings=True,
+        values_callable=lambda cls: [member.value for member in cls],
+    )
 
 
 class Base(DeclarativeBase):
@@ -16,16 +29,17 @@ class Operation(Base):
     plugin: Mapped[str] = mapped_column(Text)
     action: Mapped[str] = mapped_column(Text)
     release: Mapped[str] = mapped_column(Text)
-    phase: Mapped[str] = mapped_column(Text)
-    outcome: Mapped[str | None] = mapped_column(Text)
-    started: Mapped[datetime | None] = mapped_column(Text, server_default=func.current_timestamp())
+    phase: Mapped[OperationPhase] = mapped_column(stored_enum(OperationPhase))
+    outcome: Mapped[Outcome | None] = mapped_column(stored_enum(Outcome))
+    started: Mapped[str | None] = mapped_column(Text, server_default=func.current_timestamp())
+    historical: Mapped[bool] = mapped_column(server_default=text("0"))
     __table_args__ = (
         Index(
             "unfinished_action",
             "plugin",
             "action",
             unique=True,
-            sqlite_where=text("phase IN ('prepared','applied','unresolved')"),
+            sqlite_where=text("historical = 0 AND phase IN ('prepared','applied','unresolved')"),
         ),
     )
 
@@ -37,6 +51,8 @@ class Confirmation(Base):
     )
     snapshot: Mapped[str] = mapped_column(Text)
     recovery: Mapped[str | None] = mapped_column(Text)
+    historical_resources: Mapped[str | None] = mapped_column(Text)
+    reconciliation: Mapped[str | None] = mapped_column(Text)
 
 
 class Change(Base):
@@ -44,7 +60,7 @@ class Change(Base):
     operation: Mapped[str] = mapped_column(Text, ForeignKey("operations.id"), primary_key=True)
     kind: Mapped[str] = mapped_column(Text, primary_key=True)
     identity: Mapped[str] = mapped_column(Text, primary_key=True)
-    phase: Mapped[str] = mapped_column(Text)
+    phase: Mapped[ChangePhase] = mapped_column(stored_enum(ChangePhase))
     resource: Mapped[str] = mapped_column(Text)
 
 
@@ -91,7 +107,7 @@ class Rollback(Base):
     operation: Mapped[str] = mapped_column(
         Text, ForeignKey("operations.id"), primary_key=True, nullable=True
     )
-    phase: Mapped[str] = mapped_column(Text)
+    phase: Mapped[RollbackPhase] = mapped_column(stored_enum(RollbackPhase))
 
 
 class Reservation(Base):
@@ -106,7 +122,7 @@ class OperationStep(Base):
     operation: Mapped[str] = mapped_column(Text, ForeignKey("operations.id"), primary_key=True)
     step_key: Mapped[str] = mapped_column(Text, primary_key=True)
     position: Mapped[int]
-    phase: Mapped[str] = mapped_column(Text)
+    phase: Mapped[StepPhase] = mapped_column(stored_enum(StepPhase))
     receipt: Mapped[str | None] = mapped_column(Text)
     __table_args__ = (
         UniqueConstraint("operation", "position"),

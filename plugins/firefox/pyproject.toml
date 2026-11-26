@@ -70,6 +70,9 @@ label = "Configure privacy policy"
 target = "configure"
 permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 cleanup_phase = "local"
@@ -78,3 +81,6 @@ label = "Remove generated policy"
 target = "remove-policy"
 permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"

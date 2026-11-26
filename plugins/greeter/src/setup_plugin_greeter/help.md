@@ -1,4 +1,6 @@
-# Greeter
+# 🧩 Greeter
+
+Graphical login and recovery.
 
 ## 🔐 Enable graphical login
 

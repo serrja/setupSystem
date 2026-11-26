@@ -9,7 +9,7 @@
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
-    "sudo",
+    "root",
     "user-files"
   ],
   "provides": [],
@@ -32,28 +32,38 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install Debian prerequisites",
       "page": "actions",
       "target": "install",
       "permissions": [
-        "sudo"
+        "root"
       ],
       "supports_rollback": false,
       "mode": "mutation",
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update Debian prerequisites",
       "page": "actions",
       "target": "update",
       "permissions": [
-        "sudo"
+        "root"
       ],
       "supports_rollback": false,
       "mode": "mutation",
@@ -74,14 +84,19 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Remove owned Debian packages",
       "page": "actions",
       "target": "uninstall",
       "permissions": [
-        "sudo"
+        "root"
       ],
       "supports_rollback": false,
       "mode": "mutation",
@@ -102,6 +117,7 @@
       "description": ""
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

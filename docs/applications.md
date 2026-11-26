@@ -1,4 +1,6 @@
-# Workstation applications
+# 🧩 Workstation applications
+
+Choose an extension to inspect its settings, supported actions and recovery options.
 
 ## 🧩 Installed extensions
 
@@ -14,6 +16,11 @@ Select a program in the catalog. Its Overview identifies the extension, and Chec
 | Happ | Manage named subscription references and export routing rules for native import. |
 | Neovim | Select editor settings, plugin revisions, parsers and language tools. |
 | Firefox ESR | Merge selected privacy settings into the system enterprise policy. |
+| C++ (`cpp`) | Install clangd and clang-format and update the managed block in the user's clangd configuration. |
+| Dart and Flutter (`dart_flutter`) | Review the stable Flutter commit and publish a private tool generation with optional Dart commands. |
+| TypeScript and Vue (`typescript_vue`) | Publish language tools and optional Prettier from the reviewed npm lock. |
+| LibreOffice (`libreoffice`) | Manage the Debian package and named launch profiles for Writer, Calc, Impress and the Start Center. |
+| Telegram Desktop (`telegram`) | Manage the verified Telegram Snap and named launch profiles. The plugin keeps its own settings, dependency on Snap and ownership history. |
 | Snap | Prepare snapd and check, install, update or remove selected catalog items including Telegram Desktop. Sign in using the official client. |
 | ChatGPT | Review the official signed package and open native account or settings instructions. |
 

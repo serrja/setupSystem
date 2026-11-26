@@ -18,7 +18,7 @@ from setup_system_sdk.schemas.manifest import Manifest
 
 def reference(manifest: Manifest) -> str:
     lines = [
-        "# " + manifest.name + " settings reference",
+        "# ⚙️ " + manifest.name + " settings reference",
         "",
         "Generated from the plugin's Pydantic settings and action inputs.",
         "",
@@ -27,7 +27,7 @@ def reference(manifest: Manifest) -> str:
         ("Settings", manifest.settings_schema),
         *((action.label, manifest.input_schemas[action.id]) for action in manifest.actions),
     ]:
-        lines.extend(["## " + name, ""])
+        lines.extend([("## ⚙️ " if name == "Settings" else "## 🧩 ") + name, ""])
         properties = schema.get("properties", {})
         if not isinstance(properties, dict):
             raise ValueError("Expected object properties")

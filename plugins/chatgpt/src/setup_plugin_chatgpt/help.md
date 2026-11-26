@@ -1,4 +1,6 @@
-# ChatGPT
+# 🧩 ChatGPT
+
+ChatGPT workstation plugin.
 
 ## 📦 Installation
 

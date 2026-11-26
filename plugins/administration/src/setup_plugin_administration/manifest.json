@@ -19,7 +19,12 @@
   "dependencies": [],
   "actions": [
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "grant-sudo",
       "label": "Grant sudo access",
@@ -34,7 +39,12 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "verify-sudo",
       "label": "Verify effective access",
@@ -49,6 +59,7 @@
       "description": "Authenticate and verify the selected account’s effective Debian sudo policy."
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

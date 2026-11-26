@@ -14,7 +14,7 @@ from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
 from setup_system_sdk.files.native_tool import query
 from setup_system_sdk.providers import CapabilityRequest
-from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.schemas.common import Inputs, Values
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
 from setup_plugin_snap import daemon
@@ -43,6 +43,16 @@ class Approval(Inputs):
 
 class ApprovedChange(Inputs):
     approval: Approval
+
+
+async def platform_facts(context: PluginContext | None, detail: str = "target") -> Values:
+    if context is None:
+        raise ValueError("The action requires a selected platform provider")
+    return await context.inspect_provider(
+        CapabilityRequest(
+            capability="system.platform", step_key="platform", payload={"detail": detail}
+        )
+    )
 
 
 def expected_identity(name: str) -> tuple[str, str] | None:
@@ -75,7 +85,17 @@ async def plan_selection(
     store: httpx.AsyncClient,
     context: PluginContext | None = None,
 ) -> Plan:
-    arch, supported = await run_sync(current_target)
+    if context is not None:
+        facts = await platform_facts(context)
+        raw_arch = facts.get("arch")
+        supported = facts.get("supported") is True
+        if not isinstance(raw_arch, str):
+            raise ValueError("Expected platform architecture")
+        arch = raw_arch
+    elif os.geteuid() == 0:
+        arch, supported = await run_sync(current_target)
+    else:
+        raise ValueError("The Snap action requires a selected platform provider")
     entries = catalog()
     selected = selection.applications
     if not supported or any(arch not in entries[name].platforms for name in selected):
@@ -264,7 +284,7 @@ async def apply(approval: Approval) -> None:
                     or await observation(present[current.name]) != current
                 ):
                     raise ValueError("The snap changed while saving its data")
-                await daemon.checked_tool("remove", current.name, timeout=600)
+                await daemon.checked_tool("remove", current.name, transaction=True)
             else:
                 if row.after is None:
                     raise ValueError("The confirmed Store revision is missing")
@@ -276,11 +296,12 @@ async def apply(approval: Approval) -> None:
                         "--channel=latest/stable",
                         f"--revision={desired.revision}",
                         desired.name,
+                        transaction=True,
                     )
                 ).strip()
                 if not re.fullmatch(r"[1-9][0-9]*", change):
                     raise ValueError("Snapd returned an unknown change identity")
-                await daemon.checked_tool("watch", change, timeout=600)
+                await daemon.checked_tool("watch", change, transaction=True)
             completed.append(row)
         if (await readback(local, plan)).outcome is not Outcome.COMPLETE:
             raise ValueError("Snapd readback differs from the confirmed plan")

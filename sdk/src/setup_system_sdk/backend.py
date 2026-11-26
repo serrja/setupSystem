@@ -7,7 +7,7 @@ from functools import partial
 from typing import ClassVar
 
 from setup_system_sdk.context import PluginContext
-from setup_system_sdk.enums.operation import ActionMode, Outcome
+from setup_system_sdk.enums.operation import ActionMode, CancellationPolicy, Outcome
 from setup_system_sdk.enums.permissions import Permission
 from setup_system_sdk.enums.resources import ResourceEffect
 from setup_system_sdk.operations import Receipt, StepPlan
@@ -143,11 +143,11 @@ class Backend:
             handler=command.id.value,
             contract_version="1",
             permissions=frozenset(context.action.permissions),
-            cancellation="safe_boundary"
+            cancellation=CancellationPolicy.SAFE_BOUNDARY
             if {Permission.ROOT, Permission.SU, Permission.SUDO}.intersection(
                 context.action.permissions
             )
-            else "terminate",
+            else CancellationPolicy.TERMINATE,
             payload={
                 "settings": settings.model_dump(mode="json"),
                 "inputs": inputs.model_dump(mode="json"),

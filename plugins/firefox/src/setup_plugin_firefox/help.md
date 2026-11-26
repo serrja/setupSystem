@@ -1,4 +1,6 @@
-# Firefox ESR
+# 🧩 Firefox ESR
+
+Firefox ESR workstation plugin.
 
 ## 🔐 Enterprise policies
 

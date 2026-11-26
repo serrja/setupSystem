@@ -8,7 +8,7 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Hyprlock desktop configuration"
 license = "MIT"
-dependencies = ["setup-system-sdk>=3,<4"]
+dependencies = ["setup-system-desktop-theme>=1,<2", "setup-system-sdk>=3,<4"]
 
 [project.entry-points."setup_system.plugins"]
 hyprlock = "setup_plugin_hyprlock.plugin:Plugin"

@@ -187,8 +187,8 @@ def snapshot(path: Path) -> tuple[bytes | None, int | None]:
         return data, stat.S_IMODE(first.st_mode)
 
 
-def preview(settings: Settings) -> Plan:
-    if not current_target()[1]:
+def preview(settings: Settings, supported: bool | None = None) -> Plan:
+    if not (current_target()[1] if supported is None else supported):
         return Plan(
             outcome=Outcome.BLOCKED, summary="System Firefox policy requires supported Debian"
         )

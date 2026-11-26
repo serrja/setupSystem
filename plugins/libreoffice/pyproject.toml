@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-libreoffice"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "LibreOffice workstation plugin"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4", "setup-system-desktop-theme>=1,<2"]
+
+[project.entry-points."setup_system.plugins"]
+libreoffice = "setup_plugin_libreoffice:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_libreoffice"]
+
+[tool.setup-system.manifest]
+name = "LibreOffice"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "user-files"]
+capabilities = ["debian-package"]
+dependencies = []
+pages = ["Overview", "Settings", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+page = "actions"
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+page = "actions"
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+cleanup_phase = "program"
+permissions = ["root"]
+page = "actions"
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check LibreOffice"
+page = "actions"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "preferences"
+label = "Preferences"
+page = "actions"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "recovery"
+label = "Recovery"
+page = "actions"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure-launcher"
+label = "Save application launcher"
+target = "configure-launcher"
+permissions = ["user-files"]
+supports_rollback = true
+page = "actions"
+mode = "mutation"

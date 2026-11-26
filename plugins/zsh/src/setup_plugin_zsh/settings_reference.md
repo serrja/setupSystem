@@ -1,32 +1,32 @@
-# Zsh settings reference
+# ⚙️ Zsh settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 This operation has no editable parameters.
 
-## Check Zsh
+## 🧩 Check Zsh
 
 This operation has no editable parameters.
 
-## Install Zsh
+## 🧩 Install Zsh
 
 This operation has no editable parameters.
 
-## Update Zsh
+## 🧩 Update Zsh
 
 This operation has no editable parameters.
 
-## Uninstall Zsh
+## 🧩 Uninstall Zsh
 
 This operation has no editable parameters.
 
-## Configure Zsh
+## 🧩 Configure Zsh
 
 This operation has no editable parameters.
 
-## Verify Zsh startup modes
+## 🧩 Verify Zsh startup modes
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |

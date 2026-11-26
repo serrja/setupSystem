@@ -1,9 +1,11 @@
 """Deliver a single response to the installed executor's hidden terminal prompt."""
 
 import hashlib
+import os
 import re
 import signal
 import tempfile
+import time
 from pathlib import Path
 
 import pexpect
@@ -12,6 +14,9 @@ import pexpect
 def authorize(raw: bytes, response: bytes) -> None:
     if not response or len(response) > 1024 or any(b < 32 or b == 127 for b in response):
         raise ValueError("Invalid terminal response")
+    prompt_timeout = float(os.environ.get("SETUP_SYSTEM_NATIVE_PROMPT_TIMEOUT", "30"))
+    if not 0.01 <= prompt_timeout <= 300:
+        raise ValueError("Invalid authorization prompt timeout")
     stopped = False
 
     def boundary(*_: object) -> None:
@@ -23,6 +28,8 @@ def authorize(raw: bytes, response: bytes) -> None:
         request = Path(folder) / "request"
         with request.open("xb") as output:
             output.write(raw)
+        if stopped:
+            raise ValueError("Authorization cancelled before the executor started")
         child = pexpect.spawn(
             "/usr/bin/python3",
             [
@@ -37,7 +44,9 @@ def authorize(raw: bytes, response: bytes) -> None:
             timeout=30,
             env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": str(Path.home())},
         )
+        deadline = time.monotonic() + prompt_timeout
         sent = False
+        refused = False
         try:
             while True:
                 hit = child.expect(
@@ -51,14 +60,16 @@ def authorize(raw: bytes, response: bytes) -> None:
                 )
                 if hit == 1:
                     break
-                if stopped and not sent:
-                    raise ValueError("Authorization cancelled")
                 if hit == 0:
-                    if sent or child.getecho():
-                        raise ValueError("Untrusted or repeated native password prompt")
-                    child.sendline(response)
-                    sent = True
+                    # A passwordless transaction can already be running. Only an
+                    # outstanding authentication prompt is a safe point to stop.
+                    if stopped or time.monotonic() >= deadline or sent or child.getecho():
+                        refused = True
+                        child.sendeof()
+                    else:
+                        child.sendline(response)
+                        sent = True
         finally:
             child.close()
-        if child.exitstatus != 0:
+        if refused or child.exitstatus != 0:
             raise ValueError("Native transition requires readback")

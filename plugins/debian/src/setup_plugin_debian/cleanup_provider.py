@@ -7,7 +7,7 @@ from platformdirs import user_config_path
 from pydantic import Field
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.context import PluginContext
-from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.operation import CancellationPolicy, Outcome
 from setup_system_sdk.enums.permissions import Permission
 from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
 from setup_system_sdk.operations import Plan, Receipt, Result, StepPlan
@@ -140,7 +140,7 @@ class CleanupProvider:
             payload=request.payload,
             resources=tuple(plan.resources),
             permissions=frozenset({Permission.ROOT, Permission.REMOVE_PREEXISTING}),
-            cancellation="safe_boundary",
+            cancellation=CancellationPolicy.SAFE_BOUNDARY,
             lock_keys=("system.packages",),
         )
 

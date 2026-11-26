@@ -15,7 +15,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         stage = Path(temporary)
         dist = stage / "wheels"
-        for name in ("setup-system", "setup-system-sdk", "setup-system-plugin-debian"):
+        for name in (
+            "setup-system",
+            "setup-system-sdk",
+            "setup-system-desktop-theme",
+            "setup-system-plugin-debian",
+        ):
             subprocess.run(
                 ["uv", "build", "--package", name, "--wheel", "--out-dir", str(dist)],
                 cwd=root,

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-toolchain"
+version = "1.0.0"
+description = "Managed user tool installations for setupSystem language plugins"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["setup-system-sdk>=3,<4", "platformdirs>=4,<5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_system_toolchain"]

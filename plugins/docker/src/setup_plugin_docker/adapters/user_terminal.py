@@ -5,10 +5,12 @@ import stat
 import subprocess
 from pathlib import Path
 
+from setup_system_sdk.enums.permissions import Permission
 from setup_system_sdk.environment import session_environment
 from setup_system_sdk.files.system_paths import protected
+from setup_system_sdk.processes import native_terminal_timeout, run_command
 
-PERMISSION = "native-terminal"
+PERMISSION = Permission.NATIVE_TERMINAL.value
 _FOOT = Path("/usr/bin/foot")
 
 
@@ -40,7 +42,8 @@ def available() -> bool:
 
 def run_native(argv: list[str], *, cwd: Path | None = None) -> int:
     """Wait for the client. Its terminal owns all prompts, codes and secret input."""
-    if os.environ.get("SETUP_SYSTEM_NATIVE_TERMINAL") != "1" or not available():
+    timeout = native_terminal_timeout()
+    if not available():
         raise ValueError(
             "A confirmed native terminal action and local Wayland session are required"
         )
@@ -51,13 +54,12 @@ def run_native(argv: list[str], *, cwd: Path | None = None) -> int:
         raise ValueError("Invalid native argument")
     if cwd is not None and (not cwd.is_absolute() or cwd.resolve() != cwd or not cwd.is_dir()):
         raise ValueError("The native working directory is unavailable")
-    # Inherit the Make process group so the host owns the terminal's lifetime and deadline.
-    return subprocess.run(
+    return run_command(
         [str(_FOOT), "--config=/dev/null", "--", *argv],
         cwd=cwd or Path.home(),
         env=session_environment(),
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        discard_output=True,
+        timeout=timeout,
         check=False,
     ).returncode

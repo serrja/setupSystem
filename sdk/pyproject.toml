@@ -9,6 +9,7 @@ description = "Contracts, worker runtime and shared tools for setupSystem plugin
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
+    "setup-system-desktop-theme>=1,<2",
     "anyio>=4.8,<5",
     "httpx>=0.27,<1",
     "jinja2>=3.1,<4",

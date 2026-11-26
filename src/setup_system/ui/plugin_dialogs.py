@@ -4,7 +4,7 @@ from typing import ClassVar
 
 from pydantic import SecretStr
 from textual import on
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -72,6 +72,21 @@ class SecretPrompt(ModalScreen[SecretStr | None]):
     def __init__(self, label: str) -> None:
         super().__init__()
         self.label = label
+
+    expired = False
+
+    async def ask(self, app: App[None]) -> SecretStr | None:
+        self.expired = False
+        try:
+            return await app.push_screen_wait(self)
+        finally:
+            self.expired = True
+            if self.is_active:
+                self.dismiss(None)
+
+    def on_screen_resume(self) -> None:
+        if self.expired:
+            self.dismiss(None)
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):

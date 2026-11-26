@@ -57,7 +57,12 @@
       "description": "Use the signed Debian locale and console keyboard packages."
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "timezone",
       "label": "Set timezone",
@@ -71,7 +76,12 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "locale",
       "label": "Set locale",
@@ -85,7 +95,12 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "keyboard",
       "label": "Set keyboard",
@@ -99,6 +114,7 @@
       "description": ""
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
