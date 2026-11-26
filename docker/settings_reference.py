@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from setup_system.settings import ENV_PREFIX, Settings, default_database_url
+from setup_system.configuration.settings import ENV_PREFIX, Settings, default_database_url
 
 
 def type_text(field: dict[str, Any], definitions: dict[str, Any]) -> str:
@@ -55,9 +55,10 @@ def table(model: type[BaseModel], defaults: dict[str, Any], prefix: str = "") ->
 
 
 def reference(root: Path) -> str:
-    config = root / "config"
+    config = root / "src/setup_system/configuration"
     defaults = tomllib.loads((config / "application.toml").read_text())
     defaults.update(
+        providers={},
         database_url=default_database_url(Path("/<XDG_STATE_HOME>")).get_secret_value(),
         database_busy_timeout_ms=Settings.model_fields["database_busy_timeout_ms"].default,
     )

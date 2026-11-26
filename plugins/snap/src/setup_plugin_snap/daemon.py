@@ -1,6 +1,5 @@
 """Read snapd's structured state and verify Store-issued revision assertions."""
 
-import asyncio
 import base64
 import re
 import stat
@@ -12,9 +11,10 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
+from setup_system_sdk.blocking import run_sync
+from setup_system_sdk.processes import run_command
 
 from setup_plugin_snap.store import Publisher, Revision, SocketAttributes, response_bytes
-from setup_system.execution.processes import run_command
 
 SOCKET = Path("/run/snapd.socket")
 
@@ -101,7 +101,7 @@ async def installed(client: httpx.AsyncClient, *, all_revisions: bool = False) -
 
 
 async def checked_tool(*args: str, timeout: int = 20) -> str:
-    result = await asyncio.to_thread(
+    result = await run_sync(
         run_command,
         ["/usr/bin/snap", *args],
         stdin=subprocess.DEVNULL,

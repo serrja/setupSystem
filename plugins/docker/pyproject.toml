@@ -8,10 +8,147 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Docker workstation plugin"
 license = "MIT"
-dependencies = ["setup-system>=0.7.0.dev0", "pydantic>=2.10,<3"]
+dependencies = ["setup-system-sdk>=3,<4", "pydantic>=2.10,<3"]
 
 [project.entry-points."setup_system.plugins"]
 docker = "setup_plugin_docker.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_docker"]
+
+[tool.setup-system.manifest]
+name = "Docker"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "user-service", "client-context", "remove-selected", "user-files", "native-terminal", "account-status"]
+capabilities = ["rootless", "rootful", "contexts"]
+dependencies = []
+pages = ["Overview", "Settings", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Docker"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "setup-mode"
+label = "Select local daemon context"
+target = "setup-mode"
+permissions = ["client-context", "user-files"]
+supports_rollback = true
+mode = "mutation"
+description = "Select the reviewed local Docker daemon context for the current user."
+
+[[tool.setup-system.manifest.actions]]
+id = "create-context"
+label = "Create context"
+target = "create-context"
+permissions = ["client-context"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "start-service"
+label = "Start service"
+target = "start-service"
+permissions = ["user-service"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "stop-service"
+label = "Stop service"
+target = "stop-service"
+permissions = ["user-service"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "login"
+label = "Registry login"
+page = "accounts"
+target = "login"
+permissions = ["account-status", "native-terminal"]
+mode = "mutation"
+description = "Open the official client in a separate terminal and verify the selected sign-in."
+
+[[tool.setup-system.manifest.actions]]
+id = "logout"
+label = "Registry logout"
+page = "accounts"
+target = "logout"
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "prune"
+label = "Remove one unused image"
+target = "prune"
+permissions = ["remove-selected"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "start-system-service"
+label = "Start system daemon"
+target = "start-system-service"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "stop-system-service"
+label = "Stop system daemon"
+target = "stop-system-service"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure"
+label = "Configure rootless daemon logs"
+target = "configure"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "local"
+id = "remove-owned-contexts"
+label = "Remove owned client contexts"
+target = "remove-owned-contexts"
+permissions = ["user-files"]
+mode = "mutation"

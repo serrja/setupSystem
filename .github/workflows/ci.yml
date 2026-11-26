@@ -30,22 +30,29 @@ jobs:
           version: '0.12.15'
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Prepare the locked native toolchain
+      - name: Prepare the host toolchain
         run: |
           uv python install 3.14.7
-          uv sync --locked --all-groups --python 3.14.7
+          uv sync --locked --package setup-system --python 3.14.7
       - name: Static gates, schema migration and installed package integrity
-        run: make native-ci
+        run: make check build
+      - name: Check installed host and SDK distributions
+        run: make check-installed
       - name: Read release identity from canonical native metadata
         id: release-target
         run: uv run --locked python -I docker/release_target.py >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
+  plugins:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          name: setupSystem-${{ github.event.pull_request.head.sha || github.sha }}
-          path: coverage/native-artifacts/
-          retention-days: 14
-          if-no-files-found: warn
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@5a7eac68fb9809dea845d802897dc5c723910fa3
+        with:
+          version: '0.12.15'
+      - run: uv build --all-packages
+      - run: uv run --locked --all-packages python docker/plugin_reference.py
+      - run: make plugin-types plugins-check
   compatibility:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -64,24 +71,26 @@ jobs:
       - name: Verify the declared minimum Python runtime
         run: |
           uv python install 3.12
-          uv sync --locked --all-groups --python 3.12
-          make native-check
+          uv sync --locked --package setup-system --python 3.12
+          make check
   required:
     outputs:
       package-name: ${{ needs.verify.outputs.package-name }}
       version-target: ${{ needs.verify.outputs.version-target }}
     if: always()
-    needs: [verify, compatibility]
+    needs: [verify, compatibility, plugins]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - env:
           VERIFY: ${{ needs.verify.result }}
+          PLUGINS: ${{ needs.plugins.result }}
           COMPATIBILITY: ${{ needs.compatibility.result }}
         run: |
           set -euo pipefail
           test "$VERIFY" = success
           test "$COMPATIBILITY" = success
+          test "$PLUGINS" = success
   release-allocation:
     if: github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'main')
     needs: required
@@ -142,7 +151,7 @@ jobs:
           set -euo pipefail
           unset GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_RUNTIME_TOKEN
           uv python install 3.14.7
-          uv sync --locked --all-groups --no-install-project --python 3.14.7
+          uv sync --locked --package setup-system --no-install-project --python 3.14.7
       - name: Build the allocated version from an isolated exact-source export
         env:
           ALLOCATION_JSON: ${{ needs.release-allocation.outputs.allocation }}
@@ -171,9 +180,11 @@ jobs:
         run: |
           set -euo pipefail
           unset GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_RUNTIME_TOKEN
-          uv export --locked --no-dev --no-emit-project --output-file "$RUNNER_TEMP/installed-requirements.txt"
+          uv export --locked --no-dev --no-emit-workspace --output-file "$RUNNER_TEMP/installed-requirements.txt"
           uv venv --python 3.14.7 "$RUNNER_TEMP/h02-installed"
           uv pip sync --require-hashes --python "$RUNNER_TEMP/h02-installed/bin/python" "$RUNNER_TEMP/installed-requirements.txt"
+          uv build --package setup-system-sdk --wheel --out-dir "$RUNNER_TEMP/sdk-dist"
+          uv pip install --no-deps --no-index --python "$RUNNER_TEMP/h02-installed/bin/python" "$RUNNER_TEMP/sdk-dist/"*.whl
           uv pip install --no-deps --no-index --python "$RUNNER_TEMP/h02-installed/bin/python" "$RUNNER_TEMP/h02-dist/"*.whl
           mkdir "$RUNNER_TEMP/h02-smoke"
           cp "$RUNNER_TEMP/h02-source/pyproject.toml" "$RUNNER_TEMP/h02-smoke/pyproject.toml"
@@ -228,7 +239,7 @@ jobs:
       wheel-tags: '["py3-none-any"]'
       allocation: ${{ needs.release-allocation.outputs.allocation }}
       artifact-id: ${{ needs.release-allocation.outputs.artifact-id || needs.release-builder.outputs.artifact-id }}
-  release-debian:
+  release-plugins:
     needs: [release-allocation, release-publication]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
@@ -238,6 +249,6 @@ jobs:
       actions: read
       attestations: write
       id-token: write
-    uses: ./.github/workflows/debian.yml
+    uses: ./.github/workflows/plugin-release.yml
     with:
       version: ${{ fromJSON(needs.release-allocation.outputs.allocation).version }}

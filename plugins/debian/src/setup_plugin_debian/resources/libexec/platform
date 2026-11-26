@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/python3 -I -B -m setup_plugin_debian.adapters.platform_tool "$@"

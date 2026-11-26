@@ -1,11 +1,11 @@
 """Validate the package-owned Snap Store catalog and the user's selection."""
 
 from functools import cache
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter, field_validator
-
 from setup_system_sdk.schemas.common import Inputs
 
 SnapName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
@@ -29,7 +29,9 @@ class Entry(Inputs):
 @cache
 def catalog() -> dict[str, Entry]:
     rows = TypeAdapter(list[Entry]).validate_json(
-        Path(__file__).with_name("catalog.json").read_bytes()
+        (
+            Path(str(package_files("setup_plugin_snap").joinpath("resources"))) / "catalog.json"
+        ).read_bytes()
     )
     result = {row.id: row for row in rows}
     if not rows or len(result) != len(rows) or len({r.snap_id for r in rows}) != len(rows):

@@ -8,18 +8,19 @@ import pwd
 import shlex
 import shutil
 import tempfile
+from importlib.resources import files
 from pathlib import Path
 
+from setup_system_sdk.files.file_publication import observe
+from setup_system_sdk.files.managed_files import apply_files, changed_files
+from setup_system_sdk.files.managed_text import managed_block
+from setup_system_sdk.files.palette import palette
+from setup_system_sdk.files.receipts import FileState, digest
+from setup_system_sdk.files.templates import render_asset
+from setup_system_sdk.files.user_storage import target_path
+from setup_system_sdk.processes import run_command
+
 from setup_plugin_zsh.facts import ShellStatus
-from setup_system.execution.file_publication import observe
-from setup_system.execution.managed_files import apply_files, changed_files
-from setup_system.execution.managed_text import managed_block
-from setup_system.execution.native_templates import render_asset
-from setup_system.execution.palette import palette
-from setup_system.execution.processes import run_command
-from setup_system.execution.receipts import FileState, digest
-from setup_system.execution.user_storage import target_path
-from setup_system.layout import resource_root
 
 
 def inspect_shell() -> ShellStatus:
@@ -68,7 +69,7 @@ def _targets(
         raise ValueError("XDG_CONFIG_HOME outside home requires a scoped install")
     targets = {
         config_home / "zsh" / source.name: (
-            render_asset(source, palette(resource_root()))
+            render_asset(source, palette(Path(str(files("setup_plugin_zsh") / "resources"))))
             if source.name == "prompt.zsh"
             else source.read_bytes()
         )

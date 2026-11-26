@@ -1,11 +1,10 @@
 """Git author and SSH key shortcuts for the trusted Textual host."""
 
+from setup_system_sdk.ui import PluginPanel
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Label
-
-from setup_system_sdk.ui import PluginPanel
 
 
 class GitPanel(PluginPanel):

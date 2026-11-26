@@ -13,9 +13,9 @@ from pydantic import (
     TypeAdapter,
     model_validator,
 )
+from setup_system_sdk.files.contracts import ContractModel
 
 from setup_plugin_projects.models import TemplateMetadata, TemplateVersion
-from setup_system.execution.contracts import ContractModel
 
 _JSON_ANSWERS = TypeAdapter(dict[str, JsonValue])
 

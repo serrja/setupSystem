@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "development",
   "kind": "system",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_projects.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -12,6 +12,7 @@
     "user-files",
     "user-session"
   ],
+  "provides": [],
   "capabilities": [
     "copier-templates"
   ],
@@ -20,6 +21,7 @@
   ],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "inspect-projects",
       "label": "inspect projects",
@@ -31,6 +33,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "prepare-directories",
       "label": "prepare directories",
@@ -44,6 +47,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "template-cache",
       "label": "template cache",
@@ -57,6 +61,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "template-create",
       "label": "template create",
@@ -70,6 +75,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "template-update",
       "label": "template update",
@@ -83,6 +89,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "open-editor",
       "label": "Open in Neovim",
@@ -96,6 +103,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "open-codex",
       "label": "Open in Codex",
@@ -109,6 +117,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "template-versions",
       "label": "List template releases",

@@ -1,42 +1,30 @@
-"""Attach the current SQLAlchemy connection to the versioned v10 metadata."""
-
-import asyncio
+"""Run migrations on the connection protected by the host schema lease."""
 
 from alembic import context
+from sqlalchemy import MetaData
 from sqlalchemy.engine import Connection
 
-from setup_system.settings import Settings
-from setup_system.storage import models  # noqa: F401
-from setup_system.storage.base import Base
-from setup_system.storage.engine import create_engine
-from setup_system.storage.migrations import VERSION_TABLE, migrate_connection, verify_identity
+from setup_system.infrastructure.database.models import Base
 
-
-def run_migrations(connection: Connection) -> None:
-    verify_identity(connection)
-    context.configure(
-        connection=connection,
-        target_metadata=Base.metadata,
-        version_table=VERSION_TABLE,
-        render_as_batch=True,
-        transactional_ddl=True,
+connection = context.config.attributes.get("connection")
+if not isinstance(connection, Connection):
+    raise RuntimeError("Run setup-system migrate as the database owner")
+metadata = Base.metadata
+if context.config.attributes.get("version_table") == "setup_system_v10_revision":
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(table_name)s_%(column_0_name)s",
+            "uq": "uq_%(table_name)s_%(column_0_N_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s",
+        }
     )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def standalone() -> None:
-    engine = create_engine(Settings())
-    try:
-        await migrate_connection(engine, run_migrations)
-    finally:
-        await engine.dispose()
-
-
-if context.is_offline_mode():
-    raise RuntimeError("Select an isolated online SQLite database to verify schema identity")
-shared = context.config.attributes.get("connection")
-if isinstance(shared, Connection):
-    run_migrations(shared)
-else:
-    asyncio.run(standalone())
+context.configure(
+    connection=connection,
+    target_metadata=metadata,
+    transactional_ddl=True,
+    version_table=context.config.attributes.get("version_table", "alembic_version"),
+)
+with context.begin_transaction():
+    context.run_migrations()

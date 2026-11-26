@@ -10,9 +10,8 @@ import time
 from types import FrameType
 
 from pydantic import ConfigDict, Field, JsonValue, StrictBool, StrictFloat, StrictInt, TypeAdapter
-
-from setup_system.execution.contracts import ContractModel
-from setup_system.execution.processes import run_command
+from setup_system_sdk.files.contracts import ContractModel
+from setup_system_sdk.processes import run_command
 
 from .models import DisplayOutput, MonitorLayout
 

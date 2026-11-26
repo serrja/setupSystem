@@ -8,7 +8,7 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Canonical project catalog and Copier workflows"
 license = "MIT"
-dependencies = ["setup-system>=0.7.0.dev0"]
+dependencies = ["setup-system-sdk>=3,<4"]
 
 [project.optional-dependencies]
 templates = ["copier>=9.10,<10"]
@@ -18,3 +18,67 @@ projects = "setup_plugin_projects.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_projects"]
+
+[tool.setup-system.manifest]
+name = "Projects and templates"
+author = "serrja"
+category = "development"
+kind = "system"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["user-files", "user-session"]
+capabilities = ["copier-templates"]
+dependencies = ["git"]
+pages = []
+
+[[tool.setup-system.manifest.actions]]
+id = "inspect-projects"
+label = "inspect projects"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "prepare-directories"
+label = "prepare directories"
+target = "prepare-directories"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "template-cache"
+label = "template cache"
+target = "template-cache"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "template-create"
+label = "template create"
+target = "template-create"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "template-update"
+label = "template update"
+target = "template-update"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "open-editor"
+label = "Open in Neovim"
+target = "open-editor"
+permissions = ["user-session"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "open-codex"
+label = "Open in Codex"
+target = "open-codex"
+permissions = ["user-session"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "template-versions"
+label = "List template releases"
+mode = "read_only"

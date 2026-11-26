@@ -3,7 +3,7 @@
 from setup_system_sdk.schemas.errors import Error
 
 
-class OperationError(Exception):
+class OperationError(RuntimeError):
     def __init__(self, detail: Error) -> None:
         super().__init__(detail.message)
         self.detail = detail

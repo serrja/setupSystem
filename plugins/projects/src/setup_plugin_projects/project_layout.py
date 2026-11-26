@@ -7,10 +7,10 @@ import tomllib
 from pathlib import Path
 
 from pydantic import ValidationError
+from setup_system_sdk.files.managed_files import apply_files
+from setup_system_sdk.processes import run_command
 
 from setup_plugin_projects.models import Project, ProjectCatalog, ProjectLayout
-from setup_system.execution.managed_files import apply_files
-from setup_system.execution.processes import run_command
 
 
 def load_projects(root: Path) -> ProjectCatalog:

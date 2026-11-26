@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_obsidian.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -13,6 +13,7 @@
     "user-files",
     "vault-settings"
   ],
+  "provides": [],
   "capabilities": [
     "vaults",
     "core-features",
@@ -22,6 +23,12 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install",
@@ -35,6 +42,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update",
@@ -48,6 +61,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
@@ -61,6 +80,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Obsidian",
@@ -72,6 +92,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "create-vault",
       "label": "Create vault",
@@ -85,6 +106,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "open",
       "label": "Open vault",
@@ -96,6 +118,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "set-theme",
       "label": "Select installed theme",
@@ -109,6 +132,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "editor-snippet",
       "label": "Configure an installed CSS snippet",
@@ -122,6 +146,7 @@
       "description": "Enable or disable a reviewed editor style in the selected open vault."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "core-feature",
       "label": "Change core feature",
@@ -135,6 +160,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "hotkeys",
       "label": "Keyboard shortcuts",
@@ -146,6 +172,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "editor",
       "label": "Editor settings",
@@ -157,6 +184,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "account-sync",
       "label": "Account and Sync",
@@ -168,6 +196,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "community-plugins",
       "label": "Community plugins",
@@ -179,6 +208,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "read-hotkey",
       "label": "Inspect command shortcut",

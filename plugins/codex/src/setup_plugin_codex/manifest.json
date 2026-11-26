@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_codex.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -13,6 +13,7 @@
     "account-status",
     "native-terminal"
   ],
+  "provides": [],
   "capabilities": [
     "project-settings",
     "model-list",
@@ -21,6 +22,7 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Codex",
@@ -32,6 +34,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install official CLI",
@@ -45,6 +48,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update official CLI",
@@ -58,6 +62,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure",
       "label": "Configure client",
@@ -71,6 +76,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "login",
       "label": "Sign in",
@@ -85,6 +91,7 @@
       "description": "Open the official client in a separate terminal and verify the selected sign-in."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "status",
       "label": "Account status",
@@ -98,6 +105,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "logout",
       "label": "Sign out",
@@ -111,6 +119,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "mcp",
       "label": "Manage MCP servers",
@@ -122,6 +131,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "skills",
       "label": "Manage skills",
@@ -133,6 +143,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall managed CLI",
@@ -146,6 +157,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure-mcp",
       "label": "Register a reviewed HTTPS MCP server",

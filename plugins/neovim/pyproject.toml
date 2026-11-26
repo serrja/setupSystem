@@ -8,10 +8,94 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Neovim workstation plugin"
 license = "MIT"
-dependencies = ["setup-system>=0.7.0.dev0", "pydantic>=2.10,<3"]
+dependencies = ["setup-system-sdk>=3,<4", "pydantic>=2.10,<3"]
 
 [project.entry-points."setup_system.plugins"]
 neovim = "setup_plugin_neovim.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_neovim"]
+
+[tool.setup-system.manifest]
+name = "Neovim"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "user-files"]
+capabilities = ["language-support", "wayland-clipboard"]
+dependencies = ["git"]
+pages = ["Overview", "Settings", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Neovim"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure"
+label = "Apply editor settings"
+target = "configure"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "install-plugins"
+label = "Install editor plugins"
+target = "install-plugins"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "install-parsers"
+label = "Install selected parsers"
+target = "install-parsers"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "verify-editor"
+label = "Verify language services"
+target = "verify-editor"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "local"
+id = "remove-parsers"
+label = "Remove managed parsers"
+target = "remove-parsers"
+permissions = ["user-files"]
+mode = "mutation"
