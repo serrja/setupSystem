@@ -45,26 +45,27 @@ def main() -> None:
         output = stage / "archive"
         subprocess.run(
             [
-                sys.executable,
-                str(plugin / "packaging/build.py"),
-                "--source",
-                oid,
-                "--version",
-                "0~check",
-                "--host-wheel",
-                str(host),
-                "--sdk-wheel",
-                str(sdk),
-                "--release",
-                str(catalog / "debian.json"),
-                "--output",
-                str(output),
+                "make",
+                "-f",
+                "ci/package.mk",
+                "package",
+                f"HOST_WHEEL={host}",
+                f"SDK_WHEEL={sdk}",
+                f"RELEASES={catalog / 'debian.json'}",
+                f"PACKAGE_DIR={output}",
+                "VERSION=0~check",
             ],
             check=True,
+            cwd=plugin,
             env={**os.environ, "SOURCE_DATE_EPOCH": "1"},
         )
         (archive,) = output.glob("*.deb")
         verify(archive)
+        source = subprocess.check_output(
+            ["dpkg-deb", "-f", str(archive), "X-Setup-System-Source"], text=True
+        ).strip()
+        if source != oid:
+            raise ValueError("The archive source differs from the checked revision")
 
 
 if __name__ == "__main__":
