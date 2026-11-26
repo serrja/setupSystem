@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import tomllib
 import zipfile
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
@@ -68,6 +69,7 @@ def stage(
     installed = set()
     executor_records = base / "etc/setup-system/executors"
     executor_records.mkdir(parents=True)
+    grants = tomllib.loads((PACKAGE / "executors.toml").read_text())["handlers"]
     for release in releases:
         raw = release.read_bytes()
         variants = json.loads(raw)["releases"]
@@ -111,14 +113,20 @@ def stage(
                 raise ValueError("Unexpected Debian provider distribution")
             unpack(primary, python)
         (catalog / (manifest.id + ".json")).write_bytes(raw)
-        handlers = {
-            a.id
-            for a in manifest.actions
-            if {"root", "sudo", "su"}.intersection(a.permissions) and not a.requires
-        }
-        if manifest.id == "debian":
-            handlers.update({"packages", "package-cleanup", "operation.recovery"})
+        handlers = grants.get(manifest.id, ())
         if handlers:
+            expected = "setup_plugin_" + manifest.id.replace("-", "_")
+            if (
+                dist != canonicalize_name("setup-system-plugin-" + manifest.id)
+                or package != expected
+            ):
+                raise ValueError(
+                    "Native grant requires its reviewed distribution and import package"
+                )
+            if manifest.id != "debian" and not set(handlers) <= {
+                a.id for a in manifest.actions if {"root", "sudo", "su"}.intersection(a.permissions)
+            }:
+                raise ValueError("The release does not declare its reviewed native handlers")
             launcher = runtime / "libexec/launcher"
             digest = hashlib.sha256(raw).hexdigest()
             protected_files = {

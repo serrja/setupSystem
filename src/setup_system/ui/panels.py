@@ -12,9 +12,8 @@ from types import CodeType
 
 from setup_system_sdk import UI_GROUP
 from setup_system_sdk.enums.permissions import Permission
+from setup_system_sdk.manifests import Manifest
 from setup_system_sdk.ui import PluginPanel
-
-from setup_system.infrastructure.plugins.environments import Activation
 
 
 class _VerifiedUI(SourceFileLoader):
@@ -49,17 +48,19 @@ def _check_ui_imports(source: bytes) -> None:
                 raise ValueError("The UI requires a private module")
 
 
-def panel_type(state: Activation, startup_digest: str | None) -> type[PluginPanel] | None:
-    for distribution in distributions(path=[str(state.resources.parent)]):
-        points = distribution.entry_points.select(group=UI_GROUP, name=state.manifest.id)
+def panel_type(
+    resources: Path, manifest: Manifest, digest: str, startup_digest: str | None
+) -> type[PluginPanel] | None:
+    for distribution in distributions(path=[str(resources.parent)]):
+        points = distribution.entry_points.select(group=UI_GROUP, name=manifest.id)
         if not points:
             continue
-        if startup_digest != state.digest:
+        if startup_digest != digest:
             raise ValueError("Restart setup-system to load the activated UI version")
-        if len(points) != 1 or Permission.UI_CODE not in state.manifest.permissions:
+        if len(points) != 1 or Permission.UI_CODE not in manifest.permissions:
             raise ValueError("The extension has no approved host UI declaration")
         point = next(iter(points))
-        package = state.manifest.entry_point.partition(":")[0].partition(".")[0]
+        package = manifest.entry_point.partition(":")[0].partition(".")[0]
         parts = point.module.split(".")
         if len(parts) != 2 or parts[0] != package or not all(p.isidentifier() for p in parts):
             raise ValueError("UI must be a separate thin module in the plugin package")
@@ -75,7 +76,7 @@ def panel_type(state: Activation, startup_digest: str | None) -> type[PluginPane
         if digest != file.hash.value:
             raise ValueError("UI differs from its installed wheel")
         _check_ui_imports(source)
-        name = "_setup_system_ui_" + state.manifest.id.replace("-", "_") + "_" + state.digest
+        name = "_setup_system_ui_" + manifest.id.replace("-", "_") + "_" + digest
         module = sys.modules.get(name)
         if module is None:
             spec = importlib.util.spec_from_file_location(

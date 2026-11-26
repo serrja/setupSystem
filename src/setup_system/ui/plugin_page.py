@@ -79,7 +79,12 @@ class PluginPage(VerticalScroll):
             return
         try:
             release = await self.services.plugins.active_release(self.manifest.id)
-            kind = panel_type(release, self.services.plugins.startup_ui.get(self.manifest.id))
+            kind = panel_type(
+                release.resources,
+                release.manifest,
+                release.digest,
+                self.services.plugins.startup_ui.get(self.manifest.id),
+            )
             if kind:
 
                 def select(key: str) -> None:

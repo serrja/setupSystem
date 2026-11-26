@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -15,6 +16,13 @@ def verify(archive: Path) -> None:
         records = root / "etc/setup-system/executors"
         if not (records / "debian.json").is_file():
             raise ValueError("Missing package provider execution record")
+        runtime = root / "usr/lib/setup-system"
+        for recipe in (runtime / "plugins").glob("*/*/resources/*.yml"):
+            for relative in re.findall(
+                r"/usr/lib/setup-system/(plugins/[A-Za-z0-9_./-]+\.py)\b", recipe.read_text()
+            ):
+                if ".." in Path(relative).parts or not (runtime / relative).is_file():
+                    raise ValueError(f"Missing protected recipe executable in {recipe.name}")
         for record in records.glob("*.json"):
             entry = json.loads(record.read_bytes())
             for name, expected in {
