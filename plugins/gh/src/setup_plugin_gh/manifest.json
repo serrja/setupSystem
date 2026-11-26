@@ -1,0 +1,306 @@
+{
+  "id": "gh",
+  "name": "GitHub CLI",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_gh.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "account-status",
+    "native-terminal",
+    "root"
+  ],
+  "provides": [],
+  "capabilities": [
+    "github-auth"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Git",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "status",
+      "label": "Account status",
+      "page": "accounts",
+      "target": null,
+      "permissions": [
+        "account-status"
+      ],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "login",
+      "label": "Sign in",
+      "page": "accounts",
+      "target": "login",
+      "permissions": [
+        "account-status",
+        "native-terminal"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Open the official client in a separate terminal and verify the selected sign-in."
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "logout",
+      "label": "Sign out",
+      "page": "accounts",
+      "target": "logout",
+      "permissions": [
+        "account-status"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "enterprise_host": {
+        "default": "",
+        "description": "Enter the exact GitHub Enterprise DNS hostname you intend to use.",
+        "maxLength": 253,
+        "pattern": "^$|^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]([a-z0-9-]*[a-z0-9])?$",
+        "title": "Approved enterprise host",
+        "type": "string",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "status": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "description": "Choose the hosting service for this account operation.",
+          "maxLength": 253,
+          "title": "Hosting service",
+          "type": "string",
+          "ui": {
+            "choice_provider": "hosts",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "account": {
+          "description": "Select the account whose session or resources this action will inspect.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Local hosting account",
+          "type": "string",
+          "ui": {
+            "choice_provider": "accounts",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "title": "Account",
+      "type": "object"
+    },
+    "login": {
+      "additionalProperties": false,
+      "description": "Read back the account selected for the native browser flow.",
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "description": "Choose the hosting service for this account operation.",
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Host",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "account": {
+          "description": "Select the account whose session or resources this action will inspect.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Account",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "title": "SignIn",
+      "type": "object"
+    },
+    "logout": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "description": "Choose the hosting service for this account operation.",
+          "maxLength": 253,
+          "title": "Hosting service",
+          "type": "string",
+          "ui": {
+            "choice_provider": "hosts",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "account": {
+          "description": "Select the account whose session or resources this action will inspect.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Local hosting account",
+          "type": "string",
+          "ui": {
+            "choice_provider": "accounts",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "title": "Account",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Accounts",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

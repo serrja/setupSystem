@@ -1,0 +1,126 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-obsidian"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Obsidian workstation plugin"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4", "pydantic>=2.10,<3"]
+
+[project.entry-points."setup_system.plugins"]
+obsidian = "setup_plugin_obsidian.plugin:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_obsidian"]
+
+[tool.setup-system.manifest]
+name = "Obsidian"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "user-files", "vault-settings"]
+capabilities = ["vaults", "core-features", "themes", "editor-snippets"]
+dependencies = []
+pages = ["Overview", "Settings", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Obsidian"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "create-vault"
+label = "Create vault"
+target = "create-vault"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "open"
+label = "Open vault"
+target = "open"
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "set-theme"
+label = "Select installed theme"
+target = "set-theme"
+permissions = ["vault-settings"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "editor-snippet"
+label = "Configure an installed CSS snippet"
+target = "editor-snippet"
+permissions = ["vault-settings"]
+mode = "mutation"
+description = "Enable or disable a reviewed editor style in the selected open vault."
+
+[[tool.setup-system.manifest.actions]]
+id = "core-feature"
+label = "Change core feature"
+target = "core-feature"
+permissions = ["vault-settings"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "hotkeys"
+label = "Keyboard shortcuts"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "editor"
+label = "Editor settings"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "account-sync"
+label = "Account and Sync"
+page = "accounts"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "community-plugins"
+label = "Community plugins"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "read-hotkey"
+label = "Inspect command shortcut"
+mode = "read_only"

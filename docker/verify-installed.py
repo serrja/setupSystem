@@ -7,15 +7,12 @@ import os
 import subprocess
 import sys
 import tempfile
-import tomllib
 import zipfile
 from importlib.metadata import Distribution, distribution, version
+from importlib.resources import files
 from pathlib import Path
 
 import setup_system
-from setup_system.extensions import builtins
-from setup_system.infrastructure.palette import palette
-from setup_system.layout import resource_root
 
 
 def verify_origin(installed: Distribution, wheel: Path | None) -> None:
@@ -58,36 +55,24 @@ def main() -> None:
     parser.add_argument("--wheel", type=Path)
     args = parser.parse_args()
     verify_origin(distribution("setup-system"), args.wheel)
-    expected = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
     root = Path(setup_system.__file__).parent
     assert "site-packages" in root.parts
-    assert version("setup-system") == expected
-    resources = resource_root()
-    assert resources == root / "bundle"
-    entries = builtins(resources)
-    if not entries or any(item.reason or not item.manifest or not item.release for item in entries):
-        raise ValueError("An installed plugin lacks a valid release identity")
-    projects = next(e for e in entries if e.manifest and e.manifest.id == "projects")
-    assert projects.source and projects.manifest
-    module = projects.manifest.entry_point.partition(":")[0]
-    with zipfile.ZipFile(projects.source) as plugin:
-        catalog = tomllib.loads(plugin.read(module + "/config/workspace/projects.toml").decode())
-    assert "pokerlost/projectRules" in {item["id"] for item in catalog["project"]}
-    source_palette = tomllib.loads((resources / "config/shared/palette.toml").read_text())
-    assert palette(resources) == {
-        key: value for key, value in source_palette.items() if key != "name"
-    }
+    assert files("setup_system").joinpath("_migrations", "env.py").is_file()
+    expected = version("setup-system")
+    output = subprocess.check_output(
+        [sys.executable, "-I", "-B", "-m", "setup_system", "--version"], text=True
+    )
+    if output.strip() != expected:
+        raise ValueError("CLI version differs from the installed metadata")
     subprocess.run(["setup-system", "--help"], check=True)
-    with tempfile.TemporaryDirectory(prefix="setup-system-ui-") as ui_home:
+    with tempfile.TemporaryDirectory(prefix="setup-system-schema-") as home:
         subprocess.run(
-            [sys.executable, "-I", "-B", str(Path(__file__).with_name("installed_smoke.py"))],
+            [sys.executable, "-I", "-B", "-m", "setup_system", "migrate"],
+            cwd=home,
             env={
-                **os.environ,
-                "HOME": ui_home,
-                **{
-                    f"XDG_{name.upper()}_HOME": str(Path(ui_home) / name)
-                    for name in ("config", "state", "data", "cache")
-                },
+                "HOME": home,
+                "PATH": os.environ["PATH"],
+                "XDG_STATE_HOME": str(Path(home) / "state"),
             },
             timeout=60,
             check=True,

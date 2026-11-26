@@ -1,21 +1,19 @@
 # Contributing to setupSystem
 
-setupSystem configures Debian workstations and manages selected user files. Keep published package and entrypoint names, user data, projectRules and recovery contracts compatible. Submit template and policy changes to their owning repositories, then update the reviewed pins here. Read the project rules and pinned baseRules contract before editing. [AGENTS.md](AGENTS.md)
+Keep the published distribution and entry-point names, settings and recovery data compatible. Read the repository guidance and its pinned engineering contract. [AGENTS.md](AGENTS.md)
 
-## 🧪 Prepare and check
+## Development checks
 
-Use Git, Make and uv 0.12.15 from the repository root. The development toolchain uses Python 3.14.7. CI also checks the supported minimum of Python 3.12.
+The host and SDK use the locked Python workspace. Run the checks in a private development environment.
 
 ```sh
-uv python install 3.14.7
-uv sync --locked --all-groups --python 3.14.7
-make native-check
-make native-ci
+make prepare
+make check
+make check-installed
+make plugins-check
 ```
 
-`native-check` runs the locked formatter, linter, type checker, lock and entrypoint checks, and fixture tests. `native-ci` also builds the wheel and source archive, compares their runtime resources and installs the wheel in a temporary environment outside the checkout. Run `make package` from the repository root to build the Debian archive from the tracked Git content. Record failed, skipped and unavailable checks in the PR. [Development](docs/development.md) · [Disposable Debian tests](docs/testing.md)
-
-Add a configuration field and regenerate its offline reference using the [configuration development workflow](docs/development.md#change-a-setting). Exercise the field through its consuming interface.
+Plugin authors maintain their manifests and packaged reference pages from their action and settings models. Record the checks and outstanding target-specific acceptance in the pull request. [Development](docs/development.md)
 
 ## 🤝 Review and delivery
 

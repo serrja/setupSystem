@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-regional"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Independent Debian regional settings"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4"]
+
+[project.entry-points."setup_system.plugins"]
+regional = "setup_plugin_regional.plugin:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_regional"]
+
+[tool.setup-system.manifest]
+name = "Regional settings"
+author = "serrja"
+category = "system"
+kind = "system"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root"]
+capabilities = ["locale-generation", "console-keyboard"]
+dependencies = []
+pages = []
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update regional tools"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+description = "Use the signed Debian locale and console keyboard packages."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install regional tools"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+description = "Use the signed Debian locale and console keyboard packages."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "timezone"
+label = "Set timezone"
+target = "timezone"
+permissions = ["root"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "locale"
+label = "Set locale"
+target = "locale"
+permissions = ["root"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "keyboard"
+label = "Set keyboard"
+target = "keyboard"
+permissions = ["root"]
+mode = "mutation"

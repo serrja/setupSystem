@@ -1,0 +1,433 @@
+{
+  "id": "codex",
+  "name": "Codex CLI",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_codex.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "user-files",
+    "account-status",
+    "native-terminal"
+  ],
+  "provides": [],
+  "capabilities": [
+    "project-settings",
+    "model-list",
+    "authorizations"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Codex",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install official CLI",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update official CLI",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Configure client",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "login",
+      "label": "Sign in",
+      "page": "accounts",
+      "target": "login",
+      "permissions": [
+        "account-status",
+        "native-terminal"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Open the official client in a separate terminal and verify the selected sign-in."
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "status",
+      "label": "Account status",
+      "page": "accounts",
+      "target": null,
+      "permissions": [
+        "account-status"
+      ],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "logout",
+      "label": "Sign out",
+      "page": "accounts",
+      "target": "logout",
+      "permissions": [
+        "account-status"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "mcp",
+      "label": "Manage MCP servers",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "skills",
+      "label": "Manage skills",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall managed CLI",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "configure-mcp",
+      "label": "Register a reviewed HTTPS MCP server",
+      "page": "actions",
+      "target": "configure-mcp",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "permission": {
+        "default": "inherit",
+        "description": "Set Codex permissions or inherit the existing choice.",
+        "enum": [
+          "inherit",
+          "read-only",
+          "workspace-write",
+          ":read-only",
+          ":workspace"
+        ],
+        "title": "Sandbox or named permission profile",
+        "type": "string",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "approval": {
+        "default": "inherit",
+        "description": "Choose when the Codex client requests approval for commands.",
+        "enum": [
+          "inherit",
+          "on-request"
+        ],
+        "title": "Approval policy",
+        "type": "string",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "model": {
+        "anyOf": [
+          {
+            "maxLength": 160,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Select a model reported by the installed Codex client.",
+        "title": "Model",
+        "ui": {
+          "choice_provider": "models",
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {}
+        }
+      },
+      "effort": {
+        "anyOf": [
+          {
+            "maxLength": 64,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Select a reasoning effort supported by the active model.",
+        "title": "Reasoning effort",
+        "ui": {
+          "choice_provider": "efforts",
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {}
+        }
+      },
+      "instructions": {
+        "default": false,
+        "description": "Include the selected, digest-verified engineering instructions.",
+        "title": "Include the pinned engineering instructions",
+        "type": "boolean",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leave empty for the current user's config.",
+          "title": "Project checkout",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "title": "Project",
+      "type": "object"
+    },
+    "login": {
+      "additionalProperties": false,
+      "description": "Verify the package-installed client before starting the interactive sign-in.",
+      "properties": {},
+      "title": "SignIn",
+      "type": "object"
+    },
+    "status": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "logout": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "mcp": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure-mcp": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leave empty for the current user's config.",
+          "title": "Project checkout",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "name": {
+          "description": "Name the MCP server entry in the selected Codex configuration.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "MCP server name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "url": {
+          "description": "Enter the approved HTTPS endpoint for this MCP server.",
+          "format": "uri",
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Reviewed HTTPS MCP endpoint",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "enable": {
+          "default": false,
+          "description": "Enable this server in the selected Codex configuration.",
+          "title": "Enable this server for the selected scope",
+          "type": "boolean",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ],
+      "title": "McpServer",
+      "type": "object"
+    },
+    "skills": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

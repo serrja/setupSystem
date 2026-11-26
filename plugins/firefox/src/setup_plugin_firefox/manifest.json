@@ -1,0 +1,214 @@
+{
+  "id": "firefox",
+  "name": "Firefox ESR",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_firefox.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root"
+  ],
+  "provides": [],
+  "capabilities": [
+    "enterprise-policy",
+    "tracking-protection"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Firefox",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Configure privacy policy",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": "local",
+      "id": "remove-policy",
+      "label": "Remove generated policy",
+      "page": "actions",
+      "target": "remove-policy",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "protection": {
+        "default": "strict",
+        "description": "Choose the enhanced tracking protection setting enforced by Firefox.",
+        "enum": [
+          "strict",
+          "standard"
+        ],
+        "title": "Tracking protection",
+        "type": "string",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "https_only": {
+        "default": true,
+        "description": "Require secure connections when Firefox can upgrade a request to HTTPS.",
+        "title": "HTTPS-only browsing",
+        "type": "boolean",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "install_ublock": {
+        "default": false,
+        "description": "Allow the Firefox enterprise policy to install uBlock Origin.",
+        "title": "Install uBlock Origin from Mozilla Add-ons",
+        "type": "boolean",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-policy": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

@@ -1,0 +1,460 @@
+{
+  "id": "obsidian",
+  "name": "Obsidian",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_obsidian.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-files",
+    "vault-settings"
+  ],
+  "provides": [],
+  "capabilities": [
+    "vaults",
+    "core-features",
+    "themes",
+    "editor-snippets"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Obsidian",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "create-vault",
+      "label": "Create vault",
+      "page": "actions",
+      "target": "create-vault",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "open",
+      "label": "Open vault",
+      "page": "actions",
+      "target": "open",
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "set-theme",
+      "label": "Select installed theme",
+      "page": "actions",
+      "target": "set-theme",
+      "permissions": [
+        "vault-settings"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "editor-snippet",
+      "label": "Configure an installed CSS snippet",
+      "page": "actions",
+      "target": "editor-snippet",
+      "permissions": [
+        "vault-settings"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Enable or disable a reviewed editor style in the selected open vault."
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "core-feature",
+      "label": "Change core feature",
+      "page": "actions",
+      "target": "core-feature",
+      "permissions": [
+        "vault-settings"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "hotkeys",
+      "label": "Keyboard shortcuts",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "editor",
+      "label": "Editor settings",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "account-sync",
+      "label": "Account and Sync",
+      "page": "accounts",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "community-plugins",
+      "label": "Community plugins",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "read-hotkey",
+      "label": "Inspect command shortcut",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "vault": {
+        "anyOf": [
+          {
+            "format": "path",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Select an existing vault to use for vault-specific actions.",
+        "title": "Selected vault",
+        "ui": {
+          "widget": "path",
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "create-vault": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Choose the directory for the new vault inside your home.",
+          "format": "path",
+          "title": "New vault directory",
+          "type": "string",
+          "ui": {
+            "widget": "path",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "NewVault",
+      "type": "object"
+    },
+    "open": {
+      "additionalProperties": false,
+      "description": "Ask the official native application to open the selected vault.",
+      "properties": {},
+      "title": "OpenVault",
+      "type": "object"
+    },
+    "set-theme": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Choose an installed item from the selected vault.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[\\w .()-]+$",
+          "title": "Installed theme",
+          "type": "string",
+          "ui": {
+            "choice_provider": "themes",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Theme",
+      "type": "object"
+    },
+    "core-feature": {
+      "additionalProperties": false,
+      "properties": {
+        "feature": {
+          "default": "bookmarks",
+          "description": "Choose the built-in vault feature whose setting will change.",
+          "enum": [
+            "bookmarks",
+            "outline",
+            "daily-notes",
+            "templates"
+          ],
+          "title": "Feature",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "enabled": {
+          "default": true,
+          "description": "Set the selected feature or snippet to enabled or disabled.",
+          "title": "Enabled",
+          "type": "boolean",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "title": "CoreFeature",
+      "type": "object"
+    },
+    "editor-snippet": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Choose a trusted snippet already present in the selected vault.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[\\w][\\w .()-]*$",
+          "title": "Installed CSS snippet",
+          "type": "string",
+          "ui": {
+            "choice_provider": "snippets",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "enabled": {
+          "default": true,
+          "description": "Set the selected feature or snippet to enabled or disabled.",
+          "title": "Enable snippet",
+          "type": "boolean",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "EditorSnippet",
+      "type": "object"
+    },
+    "hotkeys": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "read-hotkey": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "description": "Choose a command reported by the currently open vault.",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$",
+          "title": "Command",
+          "type": "string",
+          "ui": {
+            "choice_provider": "commands",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "Hotkey",
+      "type": "object"
+    },
+    "editor": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "account-sync": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "community-plugins": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

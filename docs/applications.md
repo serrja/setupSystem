@@ -6,7 +6,7 @@ Select a program in the catalog. Its Overview identifies the extension, and Chec
 
 | Plugin | Actions |
 | --- | --- |
-| Git | Configure conditional identities, apply a repository profile and manage hosting keys. |
+| Git | Configure conditional identities, apply an author identity and manage hosting keys. |
 | GitHub CLI | Install gh, sign in to a selected host, check accounts or sign out. |
 | Docker | Choose daemon mode, manage services and contexts or review one unused image for removal. |
 | Codex | Install the official CLI, choose client-supported models and apply configuration per user or project. |
@@ -14,13 +14,11 @@ Select a program in the catalog. Its Overview identifies the extension, and Chec
 | Happ | Manage named subscription references and export routing rules for native import. |
 | Neovim | Select editor settings, plugin revisions, parsers and language tools. |
 | Firefox ESR | Merge selected privacy settings into the system enterprise policy. |
-| Snap | Install snapd and inspect installed applications, channels and revisions. |
-| Telegram Desktop | Install the official Telegram Desktop snap, configure shortcuts and sign in through Telegram. |
-| LibreOffice | Create named menu shortcuts for Writer, Calc, Impress or the Start Center. |
+| Snap | Prepare snapd and check, install, update or remove selected catalog items including Telegram Desktop. Sign in using the official client. |
 | ChatGPT | Review the official signed package and open native account or settings instructions. |
 
 ## 🧹 User data and removal
 
 Uninstall previews the application resources recorded as created. The ledger records the complete APT transaction. Uninstall removes directly requested packages created by this plugin. Additional libraries remain available to other consumers. Review candidates in the separate APT autoremove action. Repositories, Docker volumes, vault notes and other personal documents stay under user control. Open the plugin’s Help for its specific cleanup behavior.
 
-The program guides describe independent actions and the native steps required by external services. [Git profiles](git_profiles.md) · [Happ routing](happ_guide.md) · [ChatGPT Desktop](chatgpt_guide.md) · [Neovim](neovim_guide.md).
+The program guides describe independent actions and the native steps required by external services. [Git identities](../plugins/git/docs/git_identities.md) · [Happ routing](../plugins/happ/docs/happ_guide.md) · [ChatGPT Desktop](../plugins/chatgpt/docs/chatgpt_guide.md) · [Neovim](../plugins/neovim/docs/neovim_guide.md).

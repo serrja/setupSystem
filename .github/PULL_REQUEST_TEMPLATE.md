@@ -14,10 +14,9 @@ Describe API, wire, configuration, package, template and database impact; use N/
 
 Record exact commands, full tested source SHA and passed / failed / blocked / notRun results.
 
-## Coverage (advisory)
+## Behavioural evidence
 
-Report statement/line and branch covered/total and missing counts separately, plus uninstrumented
-sources and notMeasured/notApplicable metrics. Below 100% warns; test, build and report errors fail.
+State that the project has no automated product cases or coverage measurements. Record isolated diagnostics, observed results and any outstanding target checks.
 
 ## Artifacts and deployment
 

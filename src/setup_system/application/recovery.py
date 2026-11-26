@@ -1,78 +1,125 @@
-"""Inspect a managed operation or restore its verified files under one writer lock."""
+"""Inspect retained evidence before offering a separately confirmed recovery action."""
 
-from contextlib import nullcontext
-from pathlib import Path
+from uuid import UUID
 
-from setup_system.domain.recovery import RecoveryFiles, RecoveryJournal, RecoveryTarget
-from setup_system.infrastructure import receipt_repository
-from setup_system.infrastructure.receipt_migrations import restore_manifest
-from setup_system.infrastructure.restore_files import LocalRecoveryFiles
+import anyio
+from pydantic import TypeAdapter, ValidationError
+from setup_system_sdk.enums.operation import Outcome, WorkerMethod
+from setup_system_sdk.manifests import Requirement
+from setup_system_sdk.operations import Result, Snapshot, StepPlan
+from setup_system_sdk.providers import CapabilityRequest
+from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.wire import Request
+
+from setup_system.application.authorization import Authorize
+from setup_system.application.ledger import ResumePlan
+from setup_system.application.operations import OperationService
+from setup_system.domain.operations import SUCCESS, StepEvidence, StepPhase
+from setup_system.infrastructure.database.uow import UnitOfWork
+from setup_system.infrastructure.locks import acquire
 
 
-def recover(
-    folder: Path, *, apply: bool, journal: RecoveryJournal, files: RecoveryFiles
-) -> list[tuple[str, str]]:
-    with journal.writer() if apply else nullcontext():
-        operation = journal.load_operation(folder)
-        if operation.status == "restored":
-            entries = [files.restored_entry(row) for row in operation.files]
-            if apply:
-                for name, status in entries:
-                    if status == "conflict":
-                        raise ValueError(f"Rollback conflicts with a later edit: {name}")
-            return entries
-        targets = []
-        for row in operation.files:
-            path, status = files.inspect(row)
-            targets.append(RecoveryTarget(row, path, status, journal.backup_bytes(folder, row)))
-        directories = files.directories(operation, [target.path for target in targets])
-        requested = set(operation.requested_directories)
-        removable = files.removable_directories(
-            directories, {target.path for target in targets if target.status == "would-remove"}
+class RecoveryService:
+    def __init__(self, uow: UnitOfWork, operations: OperationService) -> None:
+        self.uow = uow
+        self.operations = operations
+
+    async def history(
+        self, plugin: str | None = None, *, unfinished: bool = False
+    ) -> list[tuple[str, str, str, str]]:
+        async with self.uow.read() as repos:
+            rows = await repos.operations.history(plugin, unfinished=unfinished)
+            return [(r.id, r.plugin, r.action, r.phase) for r in rows]
+
+    async def inspect(self, operation: UUID) -> Result:
+        key = str(operation)
+        async with self.uow.read() as repos:
+            owner, digest, raw, old_receipt = await repos.operations.legacy(key)
+            rows = [(s.step_key, s.phase, s.receipt) for s in await repos.operations.steps(key)]
+        if raw is None:
+            return Result(
+                outcome=Outcome.UNKNOWN_OUTCOME, message="Missing historical confirmation"
+            )
+        try:
+            snapshot = Snapshot.model_validate_json(raw)
+        except ValidationError:
+            try:
+                body = TypeAdapter(Values).validate_json(raw)
+                cap = "operation.recovery"
+                provider = self.operations.registry.provider(Requirement(id=cap, version=">=1,<2"))
+                identity = StepPlan(
+                    step_key="recovery",
+                    executor=provider.executor,
+                    handler=cap,
+                    capability=cap,
+                    contract_version="1",
+                )
+                await anyio.to_thread.run_sync(self.operations.launcher.trust.resolve, identity)
+                query = CapabilityRequest(
+                    capability=cap,
+                    step_key="recovery",
+                    payload={
+                        "owner": owner,
+                        "release_digest": digest,
+                        "operation": key,
+                        "snapshot": body,
+                        "receipt": old_receipt,
+                    },
+                )
+                reply = await self.operations.workers.call(
+                    provider,
+                    Request(
+                        plugin_id=provider.manifest.id,
+                        operation_id=operation,
+                        method=WorkerMethod.PROVIDER_INSPECT,
+                        capability_request=query,
+                    ),
+                )
+                if reply.facts:
+                    return Result.model_validate(reply.facts.get("result"))
+            except (RuntimeError, OSError, ValueError):
+                pass
+            return Result(
+                outcome=Outcome.UNKNOWN_OUTCOME,
+                message="Historical evidence requires its original recovery provider.",
+            )
+        by_key = {s.step_key: s for s in snapshot.plan.steps}
+        if not rows or set(by_key) != {s[0] for s in rows}:
+            return Result(
+                outcome=Outcome.UNKNOWN_OUTCOME,
+                message="No confirmed execution steps are available",
+            )
+        async with acquire(
+            self.operations.locks,
+            ["operation/" + key, "plugin/" + snapshot.executor.plugin_id],
+            wait=False,
+        ):
+            for step_key, phase, raw_receipt in rows:
+                if phase in (StepPhase.PREPARED, StepPhase.VERIFIED):
+                    continue
+                step = by_key[step_key]
+                receipt = StepEvidence.decode(raw_receipt).applied
+                async with acquire(
+                    self.operations.locks, ["step/" + k for k in step.lock_keys], wait=True
+                ):
+                    observed = await self.operations.readback(snapshot, step, receipt)
+                    await self.operations.ledger.record_verified(operation, step, observed)
+                    if observed.outcome not in SUCCESS:
+                        return observed
+        return Result(
+            outcome=Outcome.NEEDS_USER_ACTION,
+            message="Readback recorded. Review the recovery plan before changing any resources.",
         )
-        if not apply:
-            return [
-                *((str(target.path), target.status) for target in targets),
-                *(
-                    (str(path), "would-remove-directory")
-                    for path, row in removable
-                    if row.relative in requested
-                ),
-            ]
-        for target in targets:
-            if target.status == "conflict":
-                raise ValueError(files.conflict(target))
-        if journal.load_operation(folder, migrate=True) != operation:
-            raise ValueError("The operation receipt changed during recovery inspection")
-        index = journal.ownership(migrate=True)
-        results = []
-        for target in targets:
-            row = target.change
-            status, original_matches = files.restore_target(target, operation, folder)
-            name = str(target.path)
-            if row.previously_owned and row.before and original_matches:
-                index.files[name] = row.before.sha256
-            else:
-                index.files.pop(name, None)
-            if index.publishing.get(name) == operation.run_id:
-                del index.publishing[name]
-            results.append((name, status))
-        eligible = {path for path, _ in removable}
-        files.remove_directories(
-            [
-                (path, entry)
-                for path, entry in directories
-                if entry.relative not in requested or path in eligible
-            ]
-        )
-        journal.save_ownership(index)
-        operation.status = "restored"
-        journal.save_operation(folder, operation)
-        return results
 
+    async def rollback(self, operation: UUID) -> Snapshot:
+        return await self.operations.rollback_plan(operation)
 
-def restore(backup_id: str, *, apply: bool = False) -> list[tuple[str, str]]:
-    folder = receipt_repository.operation_folder(backup_id)
-    if receipt_repository.receipt_source(folder) is None:
-        return restore_manifest(folder, apply=apply)
-    return recover(folder, apply=apply, journal=receipt_repository, files=LocalRecoveryFiles())
+    async def plan(self, operation: UUID) -> ResumePlan:
+        proposal = await self.operations.ledger.resume_plan(operation)
+        with self.operations.registry.leases(
+            {proposal.snapshot.executor, *(s.executor for s in proposal.snapshot.plan.steps)}
+        ):
+            return proposal
+
+    async def apply(self, plan: ResumePlan, authorize: Authorize | None = None) -> Result:
+        return await self.operations.apply(plan.snapshot, authorize, resume=plan)

@@ -1,0 +1,26 @@
+---
+- name: Append the confirmed existing login to the sudo group
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Recheck account identity immediately before the public user module
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -I
+          - -B
+          - /usr/lib/setup-system/plugins/administration/setup_plugin_administration/adapters/entrypoint.py
+          - check-existing
+          - "{{ selected_user }}"
+          - "{{ before_digest }}"
+      changed_when: false
+
+    - name: Append membership and retain other account attributes
+      ansible.builtin.user:
+        name: "{{ selected_user }}"
+        groups: [sudo]
+        append: true
+        create_home: false
+        move_home: false
+        generate_ssh_key: false

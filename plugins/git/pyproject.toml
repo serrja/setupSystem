@@ -1,0 +1,154 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-git"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Git workstation plugin"
+license = "MIT"
+dependencies = ["setup-system-sdk[ui]>=3,<4", "pydantic>=2.10,<3", "cryptography>=43", "httpx>=0.27,<1"]
+
+[project.entry-points."setup_system.plugins"]
+git = "setup_plugin_git.plugin:Plugin"
+
+[project.entry-points."setup_system.plugin_ui"]
+git = "setup_plugin_git.ui:GitPanel"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_git"]
+
+[tool.setup-system.manifest]
+name = "Git"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["user-files", "root", "account-keys", "ui-code"]
+capabilities = ["author-identities", "ssh-keys"]
+dependencies = []
+pages = ["Overview", "Settings", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Git"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure"
+label = "Configure author identity"
+target = "configure"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "generate-key"
+label = "Create an SSH key"
+target = "generate-key"
+permissions = ["account-keys"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "upload-key"
+label = "Upload public SSH key"
+target = "upload-key"
+permissions = ["account-keys"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "revoke-key"
+label = "Revoke owned SSH key"
+target = "revoke-key"
+permissions = ["account-keys"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "import-identity"
+label = "Import repository identity"
+target = "import-identity"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "use-identity"
+label = "Apply identity to checkout"
+target = "use-identity"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "remote"
+id = "remove-owned-keys"
+label = "Revoke managed SSH keys"
+target = "remove-owned-keys"
+permissions = ["account-keys"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure-style"
+label = "Configure colors and aliases"
+target = "configure-style"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "verify-ssh"
+label = "Verify SSH account access"
+permissions = ["account-keys"]
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "local"
+id = "remove-local-keys"
+label = "Remove managed local SSH keys"
+target = "remove-local-keys"
+permissions = ["account-keys"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "remove-retired-package"
+label = "Remove one formerly managed package"
+target = "remove-retired-package"
+permissions = ["root"]
+mode = "mutation"
+description = "Migrate a package installed by a previous Git plugin. Review the selected package and its exact removal before installing from the new plugin."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"

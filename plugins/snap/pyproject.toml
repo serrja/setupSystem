@@ -1,0 +1,120 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-snap"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Manage the Debian Snap runtime and inspect installed revisions"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4", "httpx>=0.27,<1", "pydantic>=2.10,<3"]
+
+[project.entry-points."setup_system.plugins"]
+snap = "setup_plugin_snap.plugin:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_snap"]
+
+[tool.setup-system.manifest]
+name = "Snap"
+author = "serrja"
+category = "system"
+kind = "system"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root"]
+capabilities = ["debian-package", "snap-inventory", "snap-catalog"]
+dependencies = []
+pages = ["Overview", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install snapd"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update snapd"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Remove snapd"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Snap runtime"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "list-installed"
+label = "List installed revisions"
+mode = "read_only"
+description = "Read all installed revisions from the local snapd daemon."
+
+[[tool.setup-system.manifest.actions]]
+id = "start-system-service"
+label = "Start Snap service"
+target = "start-system-service"
+permissions = ["root"]
+mode = "mutation"
+description = "Start the installed system snapd.service."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "install-apps"
+label = "Install applications"
+target = "install-apps"
+permissions = ["root"]
+mode = "mutation"
+description = "Install selected strict Store revisions."
+
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update-apps"
+label = "Update applications"
+target = "update-apps"
+permissions = ["root"]
+mode = "mutation"
+description = "Refresh selected installed applications to reviewed stable revisions."
+
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "remove-apps"
+label = "Remove applications"
+target = "remove-apps"
+permissions = ["root"]
+mode = "mutation"
+description = "Save and verify data snapshots before removing the selected snaps."
+
+[[tool.setup-system.manifest.actions]]
+id = "check-apps"
+label = "Check applications"
+mode = "read_only"
+description = "Inspect the signed installed revision of each selection."

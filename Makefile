@@ -1,24 +1,27 @@
-# Runtime recipes use only packaged includes. The caller selects one fixed target.
 .DEFAULT_GOAL := help
-.NOTPARALLEL:
-override SHELL := /bin/sh
-# Generate the assignment from fixed names. $(value ...) copies the raw data at parse time.
-override runtime_environment := HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME \
-    XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS SSH_AUTH_SOCK WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE CODEX_HOME DISPLAY \
-    SETUP_SYSTEM_REQUEST SETUP_SYSTEM_RESULT SETUP_SYSTEM_CANCEL SETUP_SYSTEM_INTERPRETER
-override define export_literal
-ifneq ($$(origin $(1)),undefined)
-override export $(1) := $$(value $(1))
-endif
-endef
-$(foreach name,$(runtime_environment),$(eval $(call export_literal,$(name))))
-.PHONY: help run prepare
+UV ?= uv
+.PHONY: help prepare run migrate build plugins-check check ci
 help:
-	@printf '%s\n' 'make prepare  | prepare a development environment' \
-	  'make package  | build the Debian package' 'make install  | install the prepared package' \
-	  'make update   | update the installed package' 'make run      | open the configurator'
-run:
-	@/bin/sh ./libexec/run.sh
+	@printf '%s\n' 'make prepare  Prepare the host development environment' \
+	  'make check    Run host and SDK checks' 'make build    Build the host and SDK distributions' \
+	  'make plugin-types    Type-check plugin sources' 'make plugins-check    Run package-owned checks'
 prepare:
-	uv sync --locked --all-groups
-include mk/package.mk mk/quality.mk
+	$(UV) sync --locked --package setup-system
+run:
+	$(UV) run --locked setup-system
+migrate:
+	$(UV) run --locked setup-system migrate
+build:
+	$(UV) build --package setup-system-sdk
+	$(UV) build --package setup-system
+.PHONY: plugin-types
+plugin-types:
+	MYPYPATH=$$(printf '%s\n' plugins/*/src | paste -sd:) $(UV) run --locked --all-packages --all-groups mypy plugins/*/src
+plugins-check:
+	@set -e; for file in $(sort $(wildcard plugins/*/ci/Makefile)); do \
+	  $(MAKE) -C "$${file%/ci/Makefile}" -f ci/Makefile check; done
+include mk/quality.mk
+.PHONY: check-installed
+check-installed: build
+	$(UV) run --locked python docker/installed_environment.py dist
+ci: check check-installed plugin-types plugins-check

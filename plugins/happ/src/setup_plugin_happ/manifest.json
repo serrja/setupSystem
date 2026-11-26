@@ -1,0 +1,651 @@
+{
+  "id": "happ",
+  "name": "Happ",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_happ.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "user-files",
+    "root"
+  ],
+  "provides": [],
+  "capabilities": [
+    "subscriptions",
+    "routing-export"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Happ",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "save-subscription",
+      "label": "Save subscription details",
+      "page": "accounts",
+      "target": "save-subscription",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "import",
+      "label": "Import in Happ",
+      "page": "accounts",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "update-subscription",
+      "label": "Refresh in Happ",
+      "page": "accounts",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "remove-subscription",
+      "label": "Remove in Happ",
+      "page": "accounts",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "export-route",
+      "label": "Add or move a route rule",
+      "page": "actions",
+      "target": "export-route",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "reconnect",
+      "label": "Reconnect in Happ",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "start-system-service",
+      "label": "Start Happ service",
+      "page": "actions",
+      "target": "start-system-service",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "stop-system-service",
+      "label": "Stop Happ service",
+      "page": "actions",
+      "target": "stop-system-service",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "forget-local",
+      "label": "Forget local subscription records",
+      "page": "actions",
+      "target": "forget-local",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": "local",
+      "id": "forget-owned-files",
+      "label": "Forget managed subscriptions",
+      "page": "actions",
+      "target": "forget-owned-files",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Resolve one current configuration from the sources accepted by the plugin.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "start-system-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "stop-system-service": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "save-subscription": {
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Local subscription ID",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "title": {
+          "description": "Enter a recognizable display label for the selected record.",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Display name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "source_type": {
+          "default": "standard",
+          "description": "Select the subscription format provided by the VPN service.",
+          "enum": [
+            "standard",
+            "provider-json"
+          ],
+          "title": "Source format",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "url_handling": {
+          "default": "system-keyring",
+          "description": "Choose the system keyring or enter the URL directly in Happ at each import.",
+          "enum": [
+            "system-keyring",
+            "enter-in-happ"
+          ],
+          "title": "Subscription URL handling",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "url_reference": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Store the HTTPS URL in the system keyring.",
+          "title": "Subscription URL",
+          "ui": {
+            "widget": "secret_reference",
+            "secret": true,
+            "visible_when": {
+              "url_handling": "system-keyring"
+            },
+            "storage": "keyring",
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "subscription",
+        "title"
+      ],
+      "title": "Subscription",
+      "type": "object"
+    },
+    "import": {
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Subscription ID",
+          "type": "string",
+          "ui": {
+            "choice_provider": "subscriptions",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "title": "SubscriptionID",
+      "type": "object"
+    },
+    "update-subscription": {
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Subscription ID",
+          "type": "string",
+          "ui": {
+            "choice_provider": "subscriptions",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "title": "SubscriptionID",
+      "type": "object"
+    },
+    "remove-subscription": {
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Subscription ID",
+          "type": "string",
+          "ui": {
+            "choice_provider": "subscriptions",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "title": "SubscriptionID",
+      "type": "object"
+    },
+    "forget-local": {
+      "additionalProperties": false,
+      "description": "Forget the local files for one reviewed subscription.",
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Subscription ID",
+          "type": "string",
+          "ui": {
+            "choice_provider": "subscriptions",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "title": "ForgetSubscription",
+      "type": "object"
+    },
+    "forget-owned-files": {
+      "additionalProperties": false,
+      "description": "Forget only verified local subscription and route records.",
+      "properties": {},
+      "title": "ForgetAll",
+      "type": "object"
+    },
+    "export-route": {
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Subscription ID",
+          "type": "string",
+          "ui": {
+            "choice_provider": "subscriptions",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "route_name": {
+          "default": "user-route",
+          "description": "Name the routing configuration to export for the selected subscription.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "User Route name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "disposition": {
+          "default": "direct",
+          "description": "Route matching traffic directly, through the proxy or to the block list.",
+          "enum": [
+            "direct",
+            "proxy",
+            "block"
+          ],
+          "title": "Rule action",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "maxLength": 253,
+              "pattern": "^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Match this exact DNS name when applying the routing rule.",
+          "title": "Exact DNS name",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "network": {
+          "anyOf": [
+            {
+              "format": "ipvanynetwork",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Match addresses within this IP network when applying the routing rule.",
+          "title": "IPv4 or IPv6 network",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "position": {
+          "default": "last",
+          "description": "Place this rule at the beginning or end of its routing list.",
+          "enum": [
+            "last",
+            "first"
+          ],
+          "title": "Position in this rule list",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "domestic_dns": {
+          "anyOf": [
+            {
+              "format": "ipvanyaddress",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leave blank to retain the route's current DNS settings.",
+          "title": "Domestic UDP DNS address",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "strategy": {
+          "default": "IPIfNonMatch",
+          "description": "Choose how Happ resolves domain names while matching this route.",
+          "enum": [
+            "AsIs",
+            "IPIfNonMatch"
+          ],
+          "title": "Domain strategy",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "title": "Route",
+      "type": "object"
+    },
+    "reconnect": {
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "description": "Identify the local subscription whose settings or routes this action uses.",
+          "maxLength": 48,
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Subscription ID",
+          "type": "string",
+          "ui": {
+            "choice_provider": "subscriptions",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "title": "SubscriptionID",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

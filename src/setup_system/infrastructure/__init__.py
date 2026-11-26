@@ -1,1 +1,1 @@
-"""Infrastructure boundaries for the workstation application."""
+"""Infrastructure components for setupSystem."""

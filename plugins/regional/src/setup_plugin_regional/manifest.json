@@ -1,0 +1,202 @@
+{
+  "id": "regional",
+  "name": "Regional settings",
+  "author": "serrja",
+  "category": "system",
+  "kind": "system",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_regional.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root"
+  ],
+  "provides": [],
+  "capabilities": [
+    "locale-generation",
+    "console-keyboard"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update regional tools",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Use the signed Debian locale and console keyboard packages."
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install regional tools",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Use the signed Debian locale and console keyboard packages."
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "timezone",
+      "label": "Set timezone",
+      "page": "actions",
+      "target": "timezone",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "locale",
+      "label": "Set locale",
+      "page": "actions",
+      "target": "locale",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "keyboard",
+      "label": "Set keyboard",
+      "page": "actions",
+      "target": "keyboard",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Resolve one current configuration from the sources accepted by the plugin.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "locale": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "description": "Use the selected native value for this operation.",
+          "maxLength": 32,
+          "pattern": "^(C|[a-z]{2,3}_[A-Z]{2})\\.UTF-8$",
+          "title": "UTF-8 locale",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "locale",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "Locale",
+      "type": "object"
+    },
+    "keyboard": {
+      "additionalProperties": false,
+      "properties": {
+        "layouts": {
+          "description": "The first selected layout is the default.",
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,15}$",
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Keyboard layouts in order",
+          "type": "array",
+          "ui": {
+            "widget": "selection_list",
+            "choice_provider": "keyboard",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "layouts"
+      ],
+      "title": "Keyboard",
+      "type": "object"
+    },
+    "timezone": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "description": "Use the selected native value for this operation.",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9/_.+-]+$",
+          "title": "Timezone",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "timezone",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "Timezone",
+      "type": "object"
+    }
+  },
+  "pages": [],
+  "settings_version": 1
+}

@@ -1,1 +1,1 @@
-"""Setup use cases."""
+"""Application components for setupSystem."""

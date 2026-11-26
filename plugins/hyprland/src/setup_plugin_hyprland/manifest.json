@@ -1,0 +1,384 @@
+{
+  "id": "hyprland",
+  "name": "Hyprland",
+  "author": "serrja",
+  "category": "desktop",
+  "kind": "system",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_hyprland.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-files",
+    "session-output"
+  ],
+  "provides": [],
+  "capabilities": [],
+  "dependencies": [
+    "foot",
+    "waybar",
+    "hyprlock",
+    "regional"
+  ],
+  "actions": [
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check program",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Save configuration",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "save-monitor",
+      "label": "Save monitor layout",
+      "page": "actions",
+      "target": "save-monitor",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "test-monitor",
+      "label": "Test monitor temporarily",
+      "page": "actions",
+      "target": "test-monitor",
+      "permissions": [
+        "session-output"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Restore the original output after twelve seconds."
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "effects": {
+        "default": false,
+        "description": "Enable the compositor effects when writing the Hyprland configuration.",
+        "title": "Compositor effects",
+        "type": "boolean",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "rounding": {
+        "default": 12,
+        "description": "Set the corner radius in pixels.",
+        "maximum": 24,
+        "minimum": 0,
+        "title": "Window corner radius",
+        "type": "integer",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "keyboard": {
+        "default": [
+          "us"
+        ],
+        "description": "Select up to four XKB layouts. The first is the session default.",
+        "items": {
+          "pattern": "^[a-z][a-z0-9_-]{0,15}$",
+          "type": "string"
+        },
+        "maxItems": 4,
+        "minItems": 1,
+        "title": "Session keyboard layouts",
+        "type": "array",
+        "ui": {
+          "widget": "selection_list",
+          "choice_provider": "keyboard",
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {}
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "save-monitor": {
+      "additionalProperties": false,
+      "properties": {
+        "output": {
+          "description": "Select a display connector reported by the current compositor session.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "title": "Output",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "outputs",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "mode": {
+          "description": "Choose an advertised display mode for the selected connector.",
+          "pattern": "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}@[0-9]{1,4}(\\.[0-9]{1,5})?$",
+          "title": "Mode",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "modes",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "x": {
+          "default": 0,
+          "description": "Set the horizontal position of this output in the desktop layout.",
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "X",
+          "type": "integer",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "y": {
+          "default": 0,
+          "description": "Set the vertical position of this output in the desktop layout.",
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "Y",
+          "type": "integer",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "scale": {
+          "default": 1.0,
+          "description": "Set the logical display scale for this output.",
+          "maximum": 8.0,
+          "minimum": 0.25,
+          "title": "Scale",
+          "type": "number",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "output",
+        "mode"
+      ],
+      "title": "Display",
+      "type": "object"
+    },
+    "test-monitor": {
+      "additionalProperties": false,
+      "properties": {
+        "output": {
+          "description": "Select a display connector reported by the current compositor session.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$",
+          "title": "Output",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "outputs",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "mode": {
+          "description": "Choose an advertised display mode for the selected connector.",
+          "pattern": "^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}@[0-9]{1,4}(\\.[0-9]{1,5})?$",
+          "title": "Mode",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "modes",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        },
+        "x": {
+          "default": 0,
+          "description": "Set the horizontal position of this output in the desktop layout.",
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "X",
+          "type": "integer",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "y": {
+          "default": 0,
+          "description": "Set the vertical position of this output in the desktop layout.",
+          "maximum": 65535,
+          "minimum": -65535,
+          "title": "Y",
+          "type": "integer",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "scale": {
+          "default": 1.0,
+          "description": "Set the logical display scale for this output.",
+          "maximum": 8.0,
+          "minimum": 0.25,
+          "title": "Scale",
+          "type": "number",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "output",
+        "mode"
+      ],
+      "title": "Display",
+      "type": "object"
+    }
+  },
+  "pages": [],
+  "settings_version": 1
+}

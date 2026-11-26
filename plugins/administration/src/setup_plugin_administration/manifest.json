@@ -1,0 +1,116 @@
+{
+  "id": "administration",
+  "name": "Administration",
+  "author": "serrja",
+  "category": "system",
+  "kind": "system",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_administration.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "su"
+  ],
+  "provides": [],
+  "capabilities": [
+    "sudo-membership"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "grant-sudo",
+      "label": "Grant sudo access",
+      "page": "actions",
+      "target": "grant-sudo",
+      "permissions": [
+        "root",
+        "su"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "verify-sudo",
+      "label": "Verify effective access",
+      "page": "actions",
+      "target": "verify-sudo",
+      "permissions": [
+        "root",
+        "su"
+      ],
+      "supports_rollback": false,
+      "mode": "authenticated_check",
+      "description": "Authenticate and verify the selected account’s effective Debian sudo policy."
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Resolve one current configuration from the sources accepted by the plugin.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "grant-sudo": {
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "description": "An ordinary account in the local passwd and group databases.",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "title": "Existing local login",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "accounts",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "username"
+      ],
+      "title": "Login",
+      "type": "object"
+    },
+    "verify-sudo": {
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "description": "An ordinary account in the local passwd and group databases.",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "title": "Existing local login",
+          "type": "string",
+          "ui": {
+            "widget": "select",
+            "choice_provider": "accounts",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "username"
+      ],
+      "title": "Login",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Accounts"
+  ],
+  "settings_version": 1
+}

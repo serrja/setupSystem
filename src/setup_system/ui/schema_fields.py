@@ -8,14 +8,18 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr
+from setup_system_sdk.enums.errors import ErrorCode
+from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.errors import Error
+from setup_system_sdk.secrets import SecretUnavailableError
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Button, Input, Label, Select, SelectionList, Static, Switch
 
+from setup_system.errors import OperationError
 from setup_system.ui.plugin_dialogs import SecretPrompt
-from setup_system_sdk import Values
-from setup_system_sdk.secrets import SecretUnavailableError
 
 type Choices = Callable[[str, str], Awaitable[list[str]]]
 
@@ -34,6 +38,10 @@ class FieldSpec(BaseModel):
     variants: list[FieldSpec] = Field(default_factory=list, alias="anyOf")
     definitions: dict[str, FieldSpec] = Field(default_factory=dict, alias="$defs")
     ui: Values = Field(default_factory=dict)
+    required: frozenset[str] = frozenset()
+    pattern: str | None = None
+    minimum_length: int | None = Field(default=None, alias="minLength")
+    minimum_items: int | None = Field(default=None, alias="minItems")
     maximum_length: int = Field(default=65536, alias="maxLength")
     maximum_items: int = Field(default=128, alias="maxItems")
     minimum: float | None = None
@@ -78,6 +86,9 @@ class ValueEditor(Vertical):
         super().__init__()
         self.key = key
         self.spec = spec.resolve(definitions)
+        self.nullable = any(option.type == "null" for option in spec.variants)
+        self.optional_switch: Switch | None = None
+        self.error_label = Static("", markup=False, classes="field-error")
         self.label = spec.title or self.spec.title or key
         self.initial = value
         self.definitions = definitions
@@ -104,8 +115,28 @@ class ValueEditor(Vertical):
         value = self.initial
         units = spec.ui.get("units")
         yield Label(f"{self.label} ({units})" if units else self.label, markup=False)
+        yield self.error_label
+        if self.nullable and spec.type in ("boolean", "array", "object"):
+            yield Label("Set a value")
+            self.optional_switch = Switch(value=value is not None)
+            yield self.optional_switch
         if spec.description:
             yield Static(spec.description, markup=False, classes="description")
+        constraints = []
+        if spec.minimum is not None:
+            constraints.append(f"Minimum {spec.minimum:g}")
+        if spec.maximum is not None:
+            constraints.append(f"Maximum {spec.maximum:g}")
+        if spec.minimum_length is not None:
+            constraints.append(f"At least {spec.minimum_length} characters")
+        if spec.maximum_length != 65536:
+            constraints.append(f"Up to {spec.maximum_length} characters")
+        if spec.minimum_items is not None:
+            constraints.append(f"Select at least {spec.minimum_items}")
+        if spec.pattern:
+            constraints.append(f"Pattern {spec.pattern}")
+        if constraints:
+            yield Static(" · ".join(constraints), markup=False, classes="description")
         provider = spec.ui.get("choice_provider")
         readonly = bool(spec.ui.get("readonly", False))
         if spec.ui.get("widget") == "secret_reference":
@@ -191,10 +222,16 @@ class ValueEditor(Vertical):
             return
         try:
             self.control.value = str(await form.save_secret(secret))
+        except OperationError as failure:
+            self.error_label.update(failure.detail.message)
         except SecretUnavailableError:
             self.notify(
                 "System keyring unavailable. Unlock it before saving this reference.",
                 severity="warning",
+            )
+        except (ValueError, OSError):
+            self.error_label.update(
+                "Could not save the keyring reference. Check operation history."
             )
 
     @on(Button.Pressed, ".add")
@@ -202,6 +239,7 @@ class ValueEditor(Vertical):
         event.stop()
         if len(self.fields) < self.spec.maximum_items:
             await self.entries.mount(self._row(None))
+            self.post_message(SchemaForm.Edited())
 
     @on(Button.Pressed, ".remove")
     async def remove_entry(self, event: Button.Pressed) -> None:
@@ -210,6 +248,7 @@ class ValueEditor(Vertical):
         if isinstance(row, Horizontal):
             self.fields.remove(row.query_one(ValueEditor))
             await row.remove()
+            self.post_message(SchemaForm.Edited())
 
     def on_mount(self) -> None:
         if self.spec.ui.get("choice_provider"):
@@ -230,7 +269,14 @@ class ValueEditor(Vertical):
         ):
             return
         await asyncio.sleep(0.15)
-        options = await self.choices(provider, query)
+        try:
+            options = await self.choices(provider, query)
+        except OperationError as exc:
+            self.error_label.update(exc.detail.message)
+            return
+        except (ValueError, OSError):
+            self.error_label.update("Finish the related fields and request choices again.")
+            return
         if isinstance(self.control, SelectionList):
             selected = self._selection(self.control)
             self.visible_choices = set(options[:128])
@@ -259,10 +305,22 @@ class ValueEditor(Vertical):
 
     def value(self) -> JsonValue:
         spec = self.spec
+        if self.optional_switch is not None and not self.optional_switch.value:
+            return None
         if spec.type == "object":
-            return {field.key: field.value() for field in self.fields}
+            return {
+                field.key: value
+                for field in self.fields
+                if (value := field.value()) is not None
+                or field.nullable
+                or field.key in spec.required
+            }
         if isinstance(self.control, SelectionList):
-            return list[JsonValue](self._selection(self.control))
+            choices = self.spec.items.resolve(self.definitions).enum if self.spec.items else []
+            return [
+                next((v for v in choices if str(v) == entry), entry)
+                for entry in self._selection(self.control)
+            ]
         if spec.type == "array":
             return [item.value() for item in self.fields]
         if isinstance(self.control, Switch):
@@ -272,26 +330,47 @@ class ValueEditor(Vertical):
                 return self.custom.value
             if self.control.value is Select.BLANK:
                 return None
-            return str(self.control.value)
+            return next(
+                (value for value in spec.enum if str(value) == self.control.value),
+                str(self.control.value),
+            )
         if isinstance(self.control, Input):
             raw = self.control.value
             if spec.type in ("integer", "number"):
                 if not raw:
                     return None
-                number = int(raw) if spec.type == "integer" else float(raw)
+                try:
+                    number = int(raw) if spec.type == "integer" else float(raw)
+                except ValueError:
+                    raise OperationError(
+                        Error(
+                            code=ErrorCode.INVALID_INPUT,
+                            field=(self.key,),
+                            message="Enter a valid number.",
+                        )
+                    ) from None
                 if (spec.minimum is not None and number < spec.minimum) or (
                     spec.maximum is not None and number > spec.maximum
                 ):
-                    raise ValueError(f"{self.label} is outside its permitted range")
+                    raise OperationError(
+                        Error(
+                            code=ErrorCode.INVALID_INPUT,
+                            field=(self.key,),
+                            message="Enter a number inside the permitted range.",
+                        )
+                    )
                 return number
-            return None if raw == "" and self.initial is None else raw
+            return None if raw == "" and (self.nullable or self.initial is None) else raw
         if self.initial is None:
             raise ValueError(f"Unsupported field {self.label}")
         return self.initial
 
 
 class SchemaForm(Vertical):
-    DEFAULT_CSS = "SchemaForm { height: auto; }"
+    DEFAULT_CSS = "SchemaForm { height: auto; } .field-error { height: auto; color: $error; }"
+
+    class Edited(Message):
+        """The operation inputs or their effective visibility may have changed."""
 
     def __init__(self, schema: Values, values: Values, choices: Choices | None = None) -> None:
         super().__init__()
@@ -299,6 +378,7 @@ class SchemaForm(Vertical):
         self.save_secret: Callable[[SecretStr], Awaitable[UUID]] | None = None
         self.stored = dict(values)
         model = FieldSpec.model_validate(schema)
+        self.required = model.required
         self.fields = [
             ValueEditor(key, spec, values.get(key, spec.default), model.definitions, choices)
             for key, spec in sorted(model.properties.items(), key=lambda pair: pair[1].order)
@@ -310,7 +390,9 @@ class SchemaForm(Vertical):
     @on(Input.Changed)
     @on(Select.Changed)
     @on(Switch.Changed)
+    @on(SelectionList.SelectedChanged)
     def update_conditions(self) -> None:
+        self.post_message(self.Edited())
         current = {
             f.key: f.value()
             for f in self.fields
@@ -334,12 +416,32 @@ class SchemaForm(Vertical):
                     match = all(current.get(name) == value for name, value in conditions.items())
                     setattr(field, attribute, match if attribute == "display" else not match)
 
+    def clear_errors(self) -> None:
+        for editor in self.query(ValueEditor):
+            editor.error_label.update("")
+
+    def show_error(self, path: tuple[str | int, ...], message: str) -> None:
+        fields = self.fields
+        editor: ValueEditor | None = None
+        for key in path:
+            if isinstance(key, int):
+                editor = fields[key] if 0 <= key < len(fields) else None
+            else:
+                editor = next((field for field in fields if field.key == key), None)
+            if editor is None:
+                return
+            fields = editor.fields
+        if editor is not None:
+            editor.error_label.update(message)
+
     def values(self, *, explicit: bool = False, visible_only: bool = False) -> Values:
         result = {}
         for field in self.fields:
             if visible_only and not field.display:
                 continue
             value = field.value()
-            if not explicit or field.key in self.stored or value != field.spec.default:
+            if value is None and not field.nullable and field.key not in self.required:
+                continue
+            if not explicit or field.key in self.stored or value != field.initial:
                 result[field.key] = value
         return result

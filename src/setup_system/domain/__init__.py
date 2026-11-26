@@ -1,1 +1,1 @@
-"""Domain boundaries for the workstation application."""
+"""Domain components for setupSystem."""

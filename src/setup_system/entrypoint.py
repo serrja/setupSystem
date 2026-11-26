@@ -1,17 +1,11 @@
-"""Open the packaged Make target from an installed Python distribution."""
+"""Open the Textual interface or migrate the local database."""
 
 import os
-import subprocess
-import sys
 from importlib.metadata import version
-from pathlib import Path
 from typing import Annotated
 
+import anyio
 import typer
-
-from setup_system.authorization import encoded_preferences, session_environment, ssh_socket
-from setup_system.configuration import APPLICATION_ENV_PREFIX, Settings
-from setup_system.layout import INSTALLED, PACKAGE, resource_root
 
 cli = typer.Typer(
     add_completion=False,
@@ -20,39 +14,62 @@ cli = typer.Typer(
 )
 
 
-@cli.command()
+def _user() -> None:
+    if os.getuid() == 0 or os.geteuid() != os.getuid():
+        raise typer.BadParameter("Run setup-system as the database owner")
+
+
+async def _open() -> None:
+    from setup_system.app import SetupApp
+    from setup_system.bootstrap import runtime
+
+    async with runtime() as services:
+        app = SetupApp(services)
+        await app.run_async()
+        if app.return_code:
+            raise typer.Exit(app.return_code)
+
+
+@cli.callback(invoke_without_command=True)
 def open_app(
+    ctx: typer.Context,
     show_version: Annotated[
-        bool, typer.Option("--version", help="Print the installed version.")
+        bool, typer.Option("--version", is_eager=True, help="Print the installed version.")
     ] = False,
 ) -> None:
-    """Open the Textual workstation configurator."""
+    """Inspect and configure activated plugins."""
     if show_version:
-        if resource_root() == INSTALLED:
-            subprocess.run(
-                ["/usr/bin/dpkg-query", "-W", r"-f=${Version}\n", PACKAGE], check=True, timeout=10
-            )
-        else:
-            typer.echo(version(PACKAGE))
-        return
-    if os.getuid() == 0 or os.geteuid() != os.getuid():
-        typer.echo("Run setup-system as a normal user", err=True)
-        raise typer.Exit(2)
-    root = resource_root()
-    env = session_environment() | ssh_socket()
+        typer.echo(version("setup-system"))
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        _user()
+        anyio.run(_open, backend="asyncio")
+
+
+async def _migrate() -> None:
+    from setup_system.configuration.settings import Settings
+    from setup_system.infrastructure.database.engine import create_engine
+    from setup_system.infrastructure.database.migrations import HEAD, migrate
+
+    engine = create_engine(Settings())
     try:
-        preferences = Settings.application()
-        env["SETUP_SYSTEM_PLUGIN_OVERRIDES"] = encoded_preferences()
+        backup = await migrate(engine)
+        if backup:
+            typer.echo(f"Backup saved to {backup}")
+        typer.echo(f"Database revision {HEAD}")
+    finally:
+        await engine.dispose()
+
+
+@cli.command("migrate")
+def migrate_command() -> None:
+    """Upgrade the selected database under its exclusive schema lease."""
+    _user()
+    try:
+        anyio.run(_migrate, backend="asyncio")
     except (OSError, ValueError) as error:
-        typer.echo(f"Could not load application settings: {error}", err=True)
+        typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    for field, number in preferences.model_dump().items():
-        name = APPLICATION_ENV_PREFIX + field.upper()
-        if name in os.environ:
-            env[name] = str(number)
-    env["PATH"] = str(Path(sys.executable).parent) + ":/usr/bin:/bin"
-    os.chdir(root)
-    os.execve("/usr/bin/make", ["make", "-rR", "-j1", "-f", str(root / "Makefile"), "run"], env)
 
 
 def main() -> None:

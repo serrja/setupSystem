@@ -1,0 +1,108 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-codex"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Codex CLI workstation plugin"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4", "pydantic>=2.10,<3"]
+
+[project.entry-points."setup_system.plugins"]
+codex = "setup_plugin_codex.plugin:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_codex"]
+
+[tool.setup-system.manifest]
+name = "Codex CLI"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["user-files", "account-status", "native-terminal"]
+capabilities = ["project-settings", "model-list", "authorizations"]
+dependencies = []
+pages = ["Overview", "Settings", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Codex"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install official CLI"
+target = "install"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update official CLI"
+target = "update"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure"
+label = "Configure client"
+target = "configure"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "login"
+label = "Sign in"
+page = "accounts"
+target = "login"
+permissions = ["account-status", "native-terminal"]
+mode = "mutation"
+description = "Open the official client in a separate terminal and verify the selected sign-in."
+
+[[tool.setup-system.manifest.actions]]
+id = "status"
+label = "Account status"
+page = "accounts"
+permissions = ["account-status"]
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "logout"
+label = "Sign out"
+page = "accounts"
+target = "logout"
+permissions = ["account-status"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "mcp"
+label = "Manage MCP servers"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+id = "skills"
+label = "Manage skills"
+mode = "manual"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall managed CLI"
+target = "uninstall"
+permissions = ["user-files"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure-mcp"
+label = "Register a reviewed HTTPS MCP server"
+target = "configure-mcp"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
