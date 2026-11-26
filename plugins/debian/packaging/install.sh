@@ -109,7 +109,7 @@ case "${1:-}" in
     run)
         [ "$#" -eq 1 ] || { usage >&2; exit 2; }
         [ "$(id -u)" != 0 ] || fail 'Start the application as the desktop user.'
-        [ -x /usr/bin/setup-system ] || fail 'Install setup-system first. See https://github.com/serrja/setupSystem/blob/main/docs/debian.md for the install command.'
+        [ -x /usr/bin/setup-system ] || fail 'Install setup-system first. See https://github.com/serrja/setupSystem/blob/main/plugins/debian/docs/install.md for the install command.'
         exec /usr/bin/setup-system ;;
     install|update) action=$1; shift ;;
     *) usage >&2; exit 2 ;;
