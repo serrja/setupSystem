@@ -1,0 +1,104 @@
+{
+  "id": "rtk",
+  "name": "RTK",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=2,<3",
+  "entry_point": "setup_plugin_rtk.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "user-files"
+  ],
+  "capabilities": [],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check RTK",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install RTK",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update RTK",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall owned RTK binary",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Resolve one current configuration from the sources accepted by the plugin.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [],
+  "settings_version": 1
+}

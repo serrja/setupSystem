@@ -13,8 +13,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from setup_system.extensions import Release, wheel_manifest
 from setup_system.layout import GUIDES, INSTALLED, PACKAGE, PYTHON_PACKAGE
+from setup_system.services.extensions import Release, wheel_manifest
 
 
 def verify_resources(root: Path, wheel: Path, sdist: Path, deb: Path) -> None:
@@ -24,11 +24,12 @@ def verify_resources(root: Path, wheel: Path, sdist: Path, deb: Path) -> None:
         for p in subprocess.check_output(["git", "ls-files", "-z"], cwd=root).split(b"\0")
         if p
     ]
-    shared = {"config", "docs", "libexec", "mk", "profiles"}
+    shared = {"config", "docs", "libexec", "mk", "migrations"}
     expected = {
         p.as_posix(): (root / p).read_bytes()
         for p in files
-        if p.parts[0] in shared or p.as_posix() in {"Makefile", "ansible.cfg", "install.sh"}
+        if p.parts[0] in shared
+        or p.as_posix() in {"Makefile", "alembic.ini", "ansible.cfg", "install.sh"}
     }
     modules = {
         p.relative_to("src").as_posix(): (root / p).read_bytes()
@@ -46,7 +47,7 @@ def verify_resources(root: Path, wheel: Path, sdist: Path, deb: Path) -> None:
         for p, b in members.items()
         if p.startswith(prefix + "plugin_catalog/")
     }
-    projects = list((root / "plugins").glob("*/*/pyproject.toml"))
+    projects = list((root / "plugins").glob("*/pyproject.toml"))
     if not projects or len(catalog) != 2 * len(projects):
         raise ValueError("Unexpected number of plugin release files")
     plugin_assets: dict[str, bytes] = {}
@@ -61,7 +62,7 @@ def verify_resources(root: Path, wheel: Path, sdist: Path, deb: Path) -> None:
             or selected.manifest.id != identity
         ):
             raise ValueError("Built plugin release differs from its wheel")
-        module = selected.manifest.entry_point.partition(":")[0]
+        module = selected.manifest.entry_point.partition(":")[0].partition(".")[0]
         relative = next(
             (d / module).relative_to(root)
             for d in (project.parent / "src", project.parent)
@@ -106,9 +107,9 @@ def verify_resources(root: Path, wheel: Path, sdist: Path, deb: Path) -> None:
     package.update({PYTHON_PACKAGE.parent / p: b for p, b in modules.items()})
     package.update(
         {
-            INSTALLED / "sdk" / p.removeprefix("setup_system_sdk/"): b
+            INSTALLED / "sdk" / p.removeprefix("setup_system/execution/recipes/"): b
             for p, b in modules.items()
-            if p.startswith("setup_system_sdk/") and p.endswith((".mk", ".yml"))
+            if p.startswith("setup_system/execution/recipes/") and p.endswith((".mk", ".yml"))
         }
     )
     with tarfile.open(fileobj=io.BytesIO(deb_data)) as archive:

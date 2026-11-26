@@ -1,6 +1,6 @@
 # Linux execution boundaries
 
-Run `setup-system` in an interactive terminal as the normal workstation account. The shell owns active plugin operations. Use **Inspect** to read local facts. A plan can query release metadata, simulate packages and render files in a temporary run directory. **Save** writes the selected plugin profile. [Configuration](configuration.md)
+Run `setup-system` in an interactive terminal as the normal workstation account. The shell owns active plugin operations. Use **Inspect** to read local facts. A plan can query release metadata, simulate packages and render files in a temporary run directory. **Save** writes the current plugin settings. [Configuration](configuration.md)
 
 ## 🔐 When a task needs root
 

@@ -7,8 +7,8 @@ registry publication or deployment is part of this workflow.
 
 ## 📦 Promotion and exact identity
 
-1. Review the complete working-branch diff and exact SHA. Run `make native-ci` and include narrow regression evidence and honest
-   installation/GUI limits in the PR.
+1. Review the complete working-branch diff and exact SHA. Run `make native-ci` and include isolated diagnostic observations, the absence of automated product cases and
+   outstanding installation and GUI checks in the PR.
 2. Merge the lowerCamelCase working branch into `test` after actual required checks
    and review. Promote `test` → `dev` → `main` using ancestry-preserving merges.
    Preserve the permanent branches, configured approvals/checks and merge queue.

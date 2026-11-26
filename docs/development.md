@@ -13,11 +13,11 @@ make native-ci
 
 Use `make package` to build a Debian archive without sudo. `make install` is a separate package transaction. `make update` fetches the stable Debian release through the same verifier used by the HTTPS delivery command. Never install the system package or apply workstation changes on the development host as a test.
 
-The native gate runs Ruff, mypy, ShellCheck, Ansible checks and pytest. Coverage includes the application, Ansible helpers and filters, packaged executable assets and owned build tools. The combined statement and branch coverage floor is 75%. JUnit reports skipped cases separately from passing tests. Packaging compares the Make, Ansible, config and asset bytes in the wheel and source distribution, then exercises the installed wheel from a temporary directory. Tests use synthetic HOME and XDG paths for writes. The CI builder also checks the allocated wheel outside the source checkout.
+The native gate runs Ruff, mypy, compile and import checks, ShellCheck, Ansible lint and syntax checks, manifest validation and Alembic schema comparison. Artifact verification compares wheel, source distribution and Debian payloads and opens an installed schema outside the checkout. The product currently has no automated behavioural cases. The owner withdrew the suite and its coverage threshold. `make test` reports this explicitly. Keep manual observations and target acceptance results separate from build evidence.
 
 ## Change a setting
 
-For a UI timing or scan limit, declare the typed field and its bounds in `configuration/models.py` and the default in `config/application.toml`. Inject the validated setting at its consumer. Only normal-user application fields are eligible for environment overrides. A program setting belongs in its plugin Pydantic model. Regenerate its manifest and offline reference. Add a regression that changes the field and exercises its consumer in an isolated environment. Build the catalog to exercise activation from source.
+For a UI timing or scan limit, declare the typed field and its bounds in `setup_system/settings.py` and the default in `config/application.toml`. Inject the validated setting at its consumer. Only normal-user application fields are eligible for environment overrides. A program setting belongs in its plugin Pydantic model. Regenerate its manifest and offline reference. Exercise the field in an isolated environment and record the observed behaviour. Build the catalog to exercise activation from source.
 
 ```sh
 uv run --locked python docker/settings_reference.py --write

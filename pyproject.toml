@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "setup-system"
-version = "0.6.0.dev0"
+version = "0.7.0.dev0"
 description = "Debian workstation setup and portable user configuration"
 readme = "README.md"
 license = "MIT"
@@ -23,7 +23,8 @@ dependencies = [
     "ansible-core>=2.18,<3",
     "aiofiles>=24,<26",
     "aiosqlite>=0.20,<1",
-    "structlog>=24,<27",
+    "sqlalchemy[asyncio]>=2.0.40,<2.1",
+    "alembic>=1.13.2,<2",
     "keyring>=25,<27",
     "typer>=0.15.2,<1",
     "httpx>=0.27,<1",
@@ -38,7 +39,7 @@ dev = [
     "hatchling>=1.27,<2",
     "mypy>=2.3,<3",
     "pytest>=9,<10",
-    "pytest-cov>=7,<8",
+    "pytest-asyncio>=1,<2",
     "ruff>=0.16.4,<1",
     "types-pyyaml>=6,<7",
     "shellcheck-py>=0.11.0.1",
@@ -57,14 +58,15 @@ path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 # Ship only runtime inputs; local reports/caches must never enter a source release.
-include = ["/hatch_build.py", "/docker/plugin_artifacts.py", "/docs", "/src/setup_system", "/src/setup_system_sdk", "/plugins", "/profiles", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/debian", "/README.md", "/LICENSE.md", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
+include = ["/hatch_build.py", "/docker/plugin_artifacts.py", "/docs", "/src/setup_system", "/src/setup_system_sdk", "/plugins", "/migrations", "/alembic.ini", "/Makefile", "/mk", "/libexec", "/config", "/ansible.cfg", "/debian", "/README.md", "/LICENSE.md", "/THIRD_PARTY_NOTICES.md", "/install.sh", "/uv.lock"]
 exclude = ["**/__pycache__", "**/__pycache__/**", "**/*.pyc", "**/*.pyo"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_system", "src/setup_system_sdk"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"profiles" = "setup_system/bundle/profiles"
+"migrations" = "setup_system/bundle/migrations"
+"alembic.ini" = "setup_system/bundle/alembic.ini"
 "Makefile" = "setup_system/bundle/Makefile"
 "install.sh" = "setup_system/bundle/install.sh"
 "docs" = "setup_system/bundle/docs"
@@ -102,28 +104,10 @@ python_version = "3.12"
 strict = true
 mypy_path = ["src"]
 explicit_package_bases = true
-files = ["src", "plugins/*/*/src", "libexec", "debian", "docker/coverage_report.py", "docker/release_target.py", "docker/verify_native.py", "docker/settings_reference.py", "docker/plugin_artifacts.py", "docker/plugin_reference.py", "docker/verify-installed.py", "docker/installed_smoke.py", "hatch_build.py"]
+files = ["src", "migrations", "tests", "plugins/*/src", "libexec", "debian", "docker/release_target.py", "docker/verify_native.py", "docker/settings_reference.py", "docker/plugin_artifacts.py", "docker/plugin_reference.py", "docker/verify-installed.py", "hatch_build.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugins"]
-pythonpath = ["tests"]
 addopts = "--strict-markers --strict-config --import-mode=importlib"
-markers = ["unit: isolated unit checks", "integration: isolated system integration", "e2e: desktop checks"]
-
-[tool.coverage.run]
-branch = true
-source = ["src", "plugins", "libexec", "debian", "docker", "hatch_build"]
-patch = ["subprocess"]
-omit = ["*/docker/python_release.py", "*/docker/release.py", "*/plugins/*/*/tests/*"]
-
-[tool.coverage.report]
-fail_under = 75
-precision = 2
-show_missing = true
-include_namespace_packages = true
-
-[tool.coverage.json]
-output = "coverage/python/coverage.json"
-
-[tool.coverage.xml]
-output = "coverage/python/coverage.xml"
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"

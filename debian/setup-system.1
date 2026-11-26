@@ -8,21 +8,21 @@ setup-system \- manage Debian workstation applications and settings
 Open the Textual interface as the desktop user. Browse the extension catalog,
 select a program and review the actions and permissions on its page.
 Activating an extension prepares its worker. Choose Install to preview a program
-installation. Save profiles independently, preview an individual action, then
+installation. Save plugin settings, preview an individual action, then
 confirm its resource changes before Apply.
 .PP
 Full cleanup previews the exact resources and code recorded for this program.
 Review conflicts and preserved user data on the plugin page.
 .SH FILES
 .TP
-.I ~/.config/setup-system/plugins/
-Saved plugin profiles. XDG_CONFIG_HOME selects another configuration root.
+.I ~/.config/setup-system/v10/plugins/
+One TOML file per extension. XDG_CONFIG_HOME selects another configuration root.
 .TP
-.I ~/.local/share/setup-system/extensions/
+.I ~/.local/share/setup-system/v10/extensions/
 Separate worker environments. XDG_DATA_HOME selects another data root.
 .TP
-.I ~/.local/state/setup-system/
-Resource ledger and per-operation history. XDG_STATE_HOME selects another state root.
+.I ~/.local/state/setup-system/v10/
+Operation database and managed-file receipts. XDG_STATE_HOME selects another state root.
 .TP
 .I /usr/share/doc/setup-system/docs/
 Offline administration, configuration and recovery guides.

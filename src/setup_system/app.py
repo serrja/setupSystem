@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urlsplit, urlunsplit
 
+from platformdirs import user_data_path
+from sqlalchemy.ext.asyncio import AsyncEngine
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
@@ -28,17 +30,20 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from setup_system.authorization import (
+from setup_system.errors import OperationError
+from setup_system.execution.authorization import (
     BecomePassword,
     interactive_logins,
     prepare_sudo,
     restore_preferences,
 )
-from setup_system.configuration import Settings
-from setup_system.configuration.legacy import translate
-from setup_system.configuration.store import load_values, save_values
-from setup_system.configuration.store import profiles as profile_names
-from setup_system.extensions import (
+from setup_system.execution.downloads import GITHUB_RELEASE_HOSTS
+from setup_system.execution.palette import palette
+from setup_system.execution.system_paths import protected
+from setup_system.execution.worker import query
+from setup_system.layout import PackageLayout
+from setup_system.logging import export_history
+from setup_system.services.extensions import (
     Activation,
     CatalogEntry,
     TrustPolicy,
@@ -47,17 +52,19 @@ from setup_system.extensions import (
     installed,
     preview_link,
 )
-from setup_system.infrastructure.downloads import GITHUB_RELEASE_HOSTS
-from setup_system.infrastructure.palette import palette
-from setup_system.infrastructure.system_paths import protected
-from setup_system.layout import GUIDES, INSTALLED, resource_root
-from setup_system.plugin_manager import PluginManager, descriptor, protected_resources, query
-from setup_system.profiles import preview_profile, read_profiles
+from setup_system.services.operations import Operations
+from setup_system.services.settings import SettingsStore, load_values
+from setup_system.settings import Settings
+from setup_system.storage.engine import create_engine
+from setup_system.storage.migrations import upgrade
+from setup_system.storage.repositories.extensions import ExtensionRepository
+from setup_system.storage.repositories.operations import OperationRepository
+from setup_system.storage.session import session_factory
 from setup_system.ui.help import Help
-from setup_system.ui.plugin_dialogs import Choose, Confirm, Prompt, SecretPrompt
+from setup_system.ui.plugin_dialogs import Confirm, Prompt, SecretPrompt
 from setup_system.ui.plugin_page import PluginPage
-from setup_system_sdk import LifecycleAction, Outcome
-from setup_system_sdk.protocol import Request
+from setup_system_sdk.enums.operation import WorkerMethod
+from setup_system_sdk.schemas.wire import Request
 
 
 def source_policy() -> TrustPolicy:
@@ -97,23 +104,32 @@ class SetupApp(App[None]):
 
     def __init__(
         self,
-        root: Path | None = None,
-        manager: PluginManager | None = None,
-        store: Settings | None = None,
+        layout: PackageLayout | None = None,
+        settings: Settings | None = None,
+        store: SettingsStore | None = None,
     ) -> None:
         super().__init__()
-        self.root = root or resource_root()
-        self.manager = manager or PluginManager()
-        self.store = store or Settings()
+        self.layout_paths = layout or PackageLayout.locate()
+        self.options = settings or Settings()
+        self.store = store or SettingsStore()
+        self.engine: AsyncEngine = create_engine(self.options)
+        factory = session_factory(self.engine)
+        self.manager = Operations(
+            self.options,
+            user_data_path("setup-system") / "v10" / "extensions",
+            self.store,
+            OperationRepository(factory),
+            ExtensionRepository(factory),
+        )
+        self.selected_plugin: str | None = None
         self.entries: dict[str, CatalogEntry] = {}
         self.external: dict[str, CatalogEntry] = {}
+        self.candidates: dict[str, CatalogEntry] = {}
         self.active_ids: set[str] = set()
         self.unavailable: list[tuple[str, str]] = []
         self.opened: set[str] = set()
         self.startup_digests: dict[str, str] = {}
-        colors = palette(
-            self.root if (self.root / "config/shared/palette.toml").exists() else resource_root()
-        )
+        colors = palette(self.layout_paths.root)
         theme = Theme(
             name="mocha-green",
             primary=colors["green"],
@@ -141,7 +157,6 @@ class SetupApp(App[None]):
                 yield Button("Add from link", id="add-link")
                 yield Button("Global history", id="global-history")
                 yield Button("Export history", id="export-history")
-                yield Button("Profiles", id="workstation-profiles")
                 yield Button("Help and recovery", id="help")
             with ContentSwitcher(initial="welcome", id="pages"):
                 with Vertical(id="welcome"):
@@ -151,51 +166,59 @@ class SetupApp(App[None]):
                     yield Select[str]([], id="account", prompt="Select an existing local login")
                     yield Button("Prepare administrative access", id="authorize")
                     yield Static("Read-only access is available.", id="auth-state")
-                    yield Button("Review previous settings", id="legacy")
-                    yield Button("Restore a previous backup", id="old-restore")
         yield Static("", id="feedback", markup=False)
         yield Footer()
 
     async def on_mount(self) -> None:
+        try:
+            await upgrade(self.engine)
+        except Exception:
+            self.exit(
+                return_code=1,
+                message="Check the database identity, permissions and migration status.",
+            )
+            return
         names = await asyncio.to_thread(interactive_logins)
         picker = self.query_one("#account", Select)
         picker.set_options([(name, name) for name in names])
         current = pwd.getpwuid(os.getuid()).pw_name
         if current in names:
             picker.value = current
-        await self.reload_catalog()
-        for entry in await asyncio.to_thread(installed, self.manager.env_root):
-            if entry.manifest and not entry.reason and not entry.disabled:
-                state = await self.manager.activation(entry.manifest.id)
-                self.startup_digests[entry.manifest.id] = state.digest
+        await self.reload_catalog(initial=True)
 
-    async def reload_catalog(self) -> None:
+    async def reload_catalog(self, *, initial: bool = False) -> None:
         available, enabled = await asyncio.gather(
-            asyncio.to_thread(builtins, self.root),
+            asyncio.to_thread(builtins, self.layout_paths.root),
             asyncio.to_thread(installed, self.manager.env_root),
         )
-        self.active_ids = {
-            e.manifest.id for e in enabled if e.manifest and not e.disabled and not e.reason
-        }
-        self.unavailable = [
-            (e.source.name if e.source else "Extension", e.reason)
-            for e in enabled + available
-            if e.manifest is None
-        ]
-        self.entries = dict(self.external)
-        disabled = []
-        for entry in enabled + available:
-            if entry.manifest is None or entry.reason:
-                disabled.append(entry.reason)
-            if entry.manifest:
-                self.entries[entry.manifest.id] = entry
-        for entry in enabled:
-            if entry.manifest and entry.disabled and entry.manifest.id in self.entries:
-                from dataclasses import replace
-
-                self.entries[entry.manifest.id] = replace(
-                    self.entries[entry.manifest.id], disabled=True
+        self.active_ids.clear()
+        self.candidates = dict(self.external)
+        self.unavailable = []
+        for entry in available:
+            if entry.manifest is not None and not entry.reason:
+                self.candidates[entry.manifest.id] = entry
+            else:
+                self.unavailable.append(
+                    (entry.source.name if entry.source else "Extension", entry.reason)
                 )
+        self.entries = dict(self.candidates)
+        for entry in enabled:
+            if entry.manifest is None or entry.reason:
+                self.unavailable.append(
+                    (entry.source.name if entry.source else "Extension", entry.reason)
+                )
+                continue
+            plugin = entry.manifest.id
+            # Use the installed schema for active operations and interrupted readbacks.
+            self.entries[plugin] = entry
+            if not entry.disabled:
+                try:
+                    release = await self.manager.activation(plugin)
+                except (ValueError, OSError, OperationError):
+                    continue
+                if initial:
+                    self.startup_digests[plugin] = release.digest
+                self.active_ids.add(plugin)
         categories = sorted(
             {entry.manifest.category for entry in self.entries.values() if entry.manifest}
         )
@@ -204,7 +227,9 @@ class SetupApp(App[None]):
         )
         self.query_one("#category", Select).value = "all"
         self.render_catalog()
-        self.query_one("#feedback", Static).update(" · ".join(disabled))
+        self.query_one("#feedback", Static).update(
+            " · ".join(reason for _, reason in self.unavailable)
+        )
 
     def render_catalog(self) -> None:
         needle = self.query_one("#search", Input).value.casefold()
@@ -250,18 +275,31 @@ class SetupApp(App[None]):
     @on(OptionList.OptionSelected, "#catalog")
     async def open_plugin(self, event: OptionList.OptionSelected) -> None:
         key = event.option.id
-        if key is None or (manifest := self.entries[key].manifest) is None:
+        if key is not None:
+            await self.open_workspace(key)
+
+    async def open_workspace(self, key: str) -> None:
+        if key not in self.entries or self.entries[key].manifest is None:
             return
         switcher = self.query_one("#pages", ContentSwitcher)
+        if self.selected_plugin != key and self.selected_plugin is not None:
+            self.query_one("#plugin-" + self.selected_plugin, PluginPage).invalidate()
+        self.selected_plugin = key
+        if key in self.opened:
+            page = self.query_one("#plugin-" + key, PluginPage)
+            if page.manifest != self.entries[key].manifest:
+                await page.remove()
+                self.opened.remove(key)
         if key not in self.opened:
             self.opened.add(key)
             await switcher.mount(
                 PluginPage(
                     self.entries[key],
                     self.manager,
-                    self.store.for_version(manifest.settings_version),
+                    self.store,
                     self.activate,
                     self.startup_digests.get(key),
+                    self.candidates.get(key),
                 )
             )
         switcher.current = "plugin-" + key
@@ -296,59 +334,38 @@ class SetupApp(App[None]):
             if match != release.digest:
                 raise ValueError("The approved digest differs from this release")
         policy = policy.model_copy(update={"digests": policy.digests | {release.digest}})
-        previous = next(
-            (
-                e.manifest
-                for e in await asyncio.to_thread(installed, self.manager.env_root)
-                if e.manifest and e.manifest.id == manifest.id
-            ),
-            None,
-        )
-        before = self.store.for_version(previous.settings_version if previous else 1)
-        after = self.store.for_version(manifest.settings_version)
 
-        def verify_profiles(state: Activation) -> None:
-            proposals = []
-            for name in profile_names(before, manifest.id):
-                old = load_values(before, manifest.id, name)
-                if old.revision.endswith(":absent"):
-                    continue
-                reply = asyncio.run(
-                    query(
-                        state,
-                        Request(
-                            method="migrate",
-                            plugin_id=manifest.id,
-                            saved=old.values,
-                            settings_version=old.version,
-                        ),
-                        self.manager.options,
-                    )
+        def validate_settings(candidate: Activation) -> None:
+            document = load_values(self.store, manifest.id)
+            if document.values and document.version != manifest.settings_version:
+                raise ValueError("The saved settings require a separate schema migration.")
+            asyncio.run(
+                query(
+                    candidate,
+                    Request(
+                        method=WorkerMethod.VALIDATE, plugin_id=manifest.id, saved=document.values
+                    ),
+                    self.options,
                 )
-                if before.directory != after.directory:
-                    candidate = load_values(after, manifest.id, name)
-                    if (
-                        not candidate.revision.endswith(":absent")
-                        and candidate.values != reply.settings
-                    ):
-                        raise ValueError("A previous migration has conflicting profile values")
-                    proposals.append((name, candidate.revision, reply.settings, old.revision))
-            for name, revision, values, source_revision in proposals:
-                if source_revision != load_values(before, manifest.id, name).revision:
-                    raise ValueError("Profile changed during migration")
-                save_values(after, manifest.id, name, values, manifest.settings_version, revision)
+            )
 
-        async with self.manager.ledger.writer(manifest.id):
-            if await self.manager.ledger.pending(manifest.id):
-                raise ValueError("Reconcile interrupted operations before updating the extension")
-            await install_release(
+        async with self.manager.records.claim_extension(manifest.id):
+            if await self.manager.records.pending(manifest.id):
+                raise ValueError("Resolve interrupted operations before updating this extension.")
+            release_state = await install_release(
                 release,
                 policy=policy,
                 env_root=self.manager.env_root,
                 wheelhouse=entry.source.parent if entry.source else None,
-                validate_settings=verify_profiles,
+                validate_settings=validate_settings,
             )
+            await self.manager.extensions.activate(release_state.manifest, release_state.digest)
+        await self.reload_catalog()
         self.query_one("#feedback", Static).update(manifest.name + " extension activated.")
+        if self.selected_plugin == manifest.id and manifest.id in self.opened:
+            page = self.query_one("#plugin-" + manifest.id, PluginPage)
+            if page.manifest != manifest:
+                self.call_later(self.open_workspace, manifest.id)
 
     @on(Button.Pressed, "#add-link")
     @work(exit_on_error=False)
@@ -363,7 +380,7 @@ class SetupApp(App[None]):
             reserved = next(
                 (
                     e
-                    for e in await asyncio.to_thread(builtins, self.root)
+                    for e in await asyncio.to_thread(builtins, self.layout_paths.root)
                     if e.manifest and e.manifest.id == manifest.id
                 ),
                 None,
@@ -408,157 +425,9 @@ class SetupApp(App[None]):
                 text = "Native sudo is unavailable. Review Administration to prepare an account."
             self.query_one("#auth-state", Static).update(text)
 
-    @on(Button.Pressed, "#legacy")
-    @work(exit_on_error=False)
-    async def review_legacy(self) -> None:
-        names = await asyncio.to_thread(
-            lambda: [
-                name
-                for name in (
-                    "base.toml",
-                    "workspace.toml",
-                    "system-intentions.toml",
-                    "settings.toml",
-                )
-                if (self.store.directory / name).is_file()
-            ]
-        )
-        if not names:
-            self.query_one("#feedback", Static).update("No previous stage settings found.")
-            return
-        choice = await self.push_screen_wait(
-            Choose("Previous settings", [(name, name) for name in names])
-        )
-        if choice not in names or not choice:
-            return
-        converted = await asyncio.to_thread(translate, self.store.directory / choice)
-        lines = [f"{r.plugin} · {r.action} · {r.inputs}" for r in converted.actions]
-        lines.extend(f"{p} · {values}" for p, values in converted.settings.items())
-        if not await self.push_screen_wait(
-            Confirm("\n".join(lines) or "No selected actions", "Import profile values")
-        ):
-            return
-        from setup_system.cleanup import save_profile
-
-        for plugin, values in converted.settings.items():
-            state = await self.manager.activation(plugin)
-            await query(
-                state,
-                Request(method="validate", plugin_id=plugin, overrides=values),
-                self.manager.options,
-            )
-            old = await self.store.read(plugin, "imported")
-            if old.values and old.values != values:
-                raise ValueError("Existing imported profile has local changes")
-            await save_profile(
-                self.manager,
-                self.store,
-                plugin,
-                "imported",
-                values,
-                state.manifest.settings_version,
-                old.revision,
-            )
-        self.query_one("#feedback", Static).update(
-            "Imported profile values saved. Review each selected action on its plugin page."
-        )
-
-    @on(Button.Pressed, "#old-restore")
-    @work(exit_on_error=False)
-    async def restore_previous(self) -> None:
-        from setup_system.application.rollback import RecoveryPlan
-        from setup_system.infrastructure.receipt_repository import list_operations
-
-        registered = await self.manager.ledger.registered_receipts()
-        receipts = [
-            (r, s) for r, s in await asyncio.to_thread(list_operations) if r not in registered
-        ]
-        if not receipts:
-            self.query_one("#feedback", Static).update("No file recovery receipts found.")
-            return
-        receipt = await self.push_screen_wait(
-            Choose("Previous backup", [(f"{name} · {status}", name) for name, status in receipts])
-        )
-        if receipt:
-            plan = await asyncio.to_thread(RecoveryPlan.inspect, receipt)
-            if await self.push_screen_wait(
-                Confirm("\n".join(f"{s} · {n}" for n, s in plan.entries), "Restore reviewed files")
-            ):
-                result = await self.manager.run_recovery(plan)
-                self.query_one("#feedback", Static).update(
-                    result.outcome.value + " · " + result.message
-                )
-
     @on(Button.Pressed, "#help")
     def action_help(self) -> None:
-        self.push_screen(Help(GUIDES if self.root == INSTALLED else self.root / "docs"))
-
-    @on(Button.Pressed, "#workstation-profiles")
-    @work(exclusive=True, group="profiles", exit_on_error=False)
-    async def run_profile(self) -> None:
-        profiles = await asyncio.to_thread(read_profiles, self.root)
-        name = await self.push_screen_wait(
-            Choose("Workstation profile", [(p.name, key) for key, p in profiles.items()])
-        )
-        if not name:
-            return
-        try:
-            snapshots = await preview_profile(self.manager, self.store, profiles[name])
-        except (ValueError, OSError, ExceptionGroup):
-            self.query_one("#feedback", Static).update(
-                "Activate the selected profile extensions and check their settings."
-            )
-            return
-        detail = []
-        for snapshot in snapshots:
-            item = snapshot.mutation
-            detail.extend(
-                [
-                    f"{snapshot.plugin_id} · {item.action_id} · {item.plan.outcome}",
-                    item.plan.summary,
-                    *item.plan.warnings,
-                ]
-            )
-            detail.extend(r.description() for r in item.plan.resources)
-        if not await self.push_screen_wait(Confirm("\n".join(detail), "Apply profile")):
-            return
-        if any(
-            s.mutation.plan.outcome not in (Outcome.READY, Outcome.NO_CHANGES) for s in snapshots
-        ):
-            self.query_one("#feedback", Static).update("Profile blocked by the reviewed actions.")
-            return
-        for snapshot in snapshots:
-            if (
-                snapshot.mutation.plan.outcome == Outcome.NO_CHANGES
-                and snapshot.mutation.action_id
-                not in (LifecycleAction.INSTALL, LifecycleAction.UPDATE)
-            ):
-                continue
-            state = await self.manager.activation(snapshot.plugin_id)
-            action = descriptor(state, snapshot.mutation.action_id)
-            password = None
-            if snapshot.mutation.plan.outcome is not Outcome.NO_CHANGES and {
-                "root",
-                "sudo",
-                "su",
-            } & set(action.permissions):
-                await asyncio.to_thread(protected_resources, state)
-                secret = await self.push_screen_wait(
-                    SecretPrompt(f"Native authorization for {state.manifest.name}")
-                )
-                if secret is None:
-                    self.query_one("#feedback", Static).update(
-                        "Profile stopped at an action boundary."
-                    )
-                    return
-                password = BecomePassword(secret.get_secret_value())
-                del secret
-            result = await self.manager.apply(snapshot, password)
-            self.query_one("#feedback", Static).update(
-                f"{snapshot.plugin_id} · {result.outcome} · {result.message}"
-            )
-            if result.outcome not in (Outcome.COMPLETE, Outcome.CHANGED, Outcome.NO_CHANGES):
-                return
+        self.push_screen(Help(self.layout_paths.guides))
 
     def action_search(self) -> None:
         self.query_one("#search", Input).focus()
@@ -566,11 +435,12 @@ class SetupApp(App[None]):
     @on(Button.Pressed, "#global-history")
     @work(exit_on_error=False)
     async def action_history(self) -> None:
-        events = await self.manager.journal.history()
+        events = await self.manager.records.events(limit=200)
         await self.push_screen_wait(
             Confirm(
                 "\n".join(
-                    f"{e.timestamp:%Y-%m-%d %H:%M} UTC · {e.plugin_id} · {e.action_id} · {e.phase}"
+                    f"{e.timestamp:%Y-%m-%d %H:%M} UTC · {e.plugin_id} · "
+                    f"{e.action_id} · {e.phase.value} · {e.message_code}"
                     for e in events
                 )
                 or "No recorded operations.",
@@ -581,15 +451,24 @@ class SetupApp(App[None]):
     @on(Button.Pressed, "#export-history")
     @work(exit_on_error=False)
     async def export_history(self) -> None:
-        path = await self.manager.journal.export()
-        self.query_one("#feedback", Static).update(f"Saved history report to {path}")
+        try:
+            destination = await export_history(self.manager.records)
+        except (OSError, ValueError):
+            self.query_one("#feedback", Static).update(
+                "Could not export the local operation journal."
+            )
+            return
+        self.query_one("#feedback", Static).update(f"Saved the operation journal to {destination}")
 
     async def action_quit(self) -> None:
         await self.manager.drain()
         self.exit()
 
     async def on_unmount(self) -> None:
-        await self.manager.drain()
+        try:
+            await self.manager.drain()
+        finally:
+            await self.engine.dispose()
 
 
 def main() -> None:
@@ -602,6 +481,8 @@ def main() -> None:
         sys.stderr.write("Invalid application settings or package resources.\n")
         raise SystemExit(1) from None
     app.run()
+    if app.return_code:
+        raise SystemExit(app.return_code)
 
 
 if __name__ == "__main__":

@@ -14,5 +14,7 @@ Each plugin ships a generated `settings_reference.md` beside its manifest and He
 | `SETUP_SYSTEM_TERMINAL_TIMEOUT_SECONDS` | number, min 1, max 3600 | `600.0` |
 | `SETUP_SYSTEM_TERMINATION_GRACE_SECONDS` | number, min 0.01, max 30 | `2.0` |
 | `SETUP_SYSTEM_READ_ONLY_TIMEOUT_SECONDS` | number, min 0.01, max 86400 | `900.0` |
+| `SETUP_SYSTEM_DATABASE_URL` | string | `"sqlite+aiosqlite:////<XDG_STATE_HOME>/setup-system/v10/state.sqlite3"` |
+| `SETUP_SYSTEM_DATABASE_BUSY_TIMEOUT_MS` | integer, min 100, max 10000 | `5000` |
 
-See [Configuration](configuration.md) for profile storage and precedence.
+See [Configuration](configuration.md) for plugin settings storage and precedence.

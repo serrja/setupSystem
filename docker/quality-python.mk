@@ -1,15 +1,13 @@
 # Managed Python specialization of the portable Docker recipe.
-COVERAGE_REPORT ?= coverage/coverage.json
-COVERAGE_FORMAT ?= coveragepy
-COVERAGE_COMMAND ?= python docker/coverage_report.py $(COVERAGE_REPORT) --format $(COVERAGE_FORMAT) --after coverage/.started
+CI_LOCAL_TARGETS ?= check build verify release-check
 VERSION_COMMAND ?= $(QUALITY_RUN) python docker/release.py version
 RELEASE_CHECK_COMMAND ?= $(QUALITY_RUN) python docker/release.py release-check
 BUILD_RECEIPT_COMMAND ?= $(QUALITY_RUN) python docker/release.py capture-build
 RECEIPT_COMMAND ?= $(QUALITY_RUN) python docker/release.py receipt
 QUALITY_EXTRA_TARGETS ?= docs-check compile lock-check format-check
 QUALITY_RUN_ARGS += --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory --env GIT_CONFIG_VALUE_0=/app \
-	--env UV_NO_SYNC=1 --env COVERAGE_FILE=/app/coverage/.coverage \
-	--env PYTEST_ADDOPTS=-o\ cache_dir=/tmp/pytest-cache --env UV_CACHE_DIR=/tmp/uv \
+	--env UV_NO_SYNC=1  \
+	--env UV_CACHE_DIR=/tmp/uv \
 	--env RUFF_CACHE_DIR=/tmp/ruff --env MYPY_CACHE_DIR=/tmp/mypy \
 	--env PYTHONPYCACHEPREFIX=/tmp/pycache
 RENDER_OUTPUT ?= $(CURDIR)/.local/rendered
@@ -27,4 +25,3 @@ verify-installed: ## Fresh installed-package tests in a separate container conte
 	@touch "$(REPORT_DIR)/installed/.started"
 	$(DOCKER) run --rm --init --read-only --network none --tmpfs /tmp:rw,mode=1777,size=512m --user "$$(id -u):$$(id -g)" --mount "type=bind,source=$(CURDIR)/$(REPORT_DIR),target=/app/coverage" $(QUALITY_IMAGE)-installed
 	@$(DOCKER) image inspect $(QUALITY_IMAGE)-installed --format '{{.Id}}' > "$(REPORT_DIR)/installed/test-image-id.txt"
-	$(DOCKER) run --rm --read-only --network none --user "$$(id -u):$$(id -g)" --mount "type=bind,source=$(CURDIR)/$(REPORT_DIR),target=/app/coverage" --entrypoint python $(QUALITY_IMAGE)-installed docker/coverage_report.py /app/coverage/installed/coverage.json --after /app/coverage/installed/.started --output /app/coverage/installed/summary.md

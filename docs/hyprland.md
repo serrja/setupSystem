@@ -17,4 +17,4 @@ The managed `$XDG_CONFIG_HOME/hypr/hyprland.lua` loads `setup-system.profile` an
 
 Check sound, screen sharing through the portal, clipboard, monitor scaling, lock and suspend on the actual target hardware. Read the desktop shortcuts in `$XDG_CONFIG_HOME/hypr/setup-system/keys.txt`. [Display preview](theme.md) · [Graphical login](desktop_login.md)
 
-Open the extension’s **Help** tab for offline instructions. [Hyprland Help](../plugins/desktop/hyprland/src/setup_plugin_hyprland/help.md) · [Waybar Help](../plugins/desktop/waybar/src/setup_plugin_waybar/help.md)
+Open the extension’s **Help** tab for offline instructions. [Hyprland Help](../plugins/hyprland/src/setup_plugin_hyprland/help.md) · [Waybar Help](../plugins/waybar/src/setup_plugin_waybar/help.md)

@@ -1,14 +1,9 @@
 # shellcheck shell=sh
-# Source from a runtime recipe before choosing its Python interpreter.
-root=$(pwd -P)
-installed_root=$(/usr/bin/python3 -I -B -c 'from setup_system.layout import INSTALLED; print(INSTALLED)' 2>/dev/null) || installed_root=
-interpreter=/usr/bin/python3
-if [ "$root" != "$installed_root" ]; then
-    if [ -x "$root/.venv/bin/python" ]; then
-        interpreter="$root/.venv/bin/python"
-    elif [ -n "${SETUP_SYSTEM_INTERPRETER:-}" ]; then
-        interpreter=$SETUP_SYSTEM_INTERPRETER
-    fi
-fi
-# Used by the calling recipe, including its native playbook selection.
+# Select the interpreter for a normal-user application or migration recipe.
+set -eu
+[ "$(id -u)" != 0 ] || { echo 'Run setup-system as a normal user.' >&2; exit 2; }
+case "$(pwd -P)" in
+    /usr/lib/setup-system) interpreter=/usr/bin/python3 ;;
+    *) if [ -x .venv/bin/python ]; then interpreter=.venv/bin/python; else interpreter=python3; fi ;;
+esac
 : "${interpreter:?}"

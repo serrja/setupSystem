@@ -1,0 +1,17 @@
+[
+  {
+    "id": "telegram-desktop",
+    "title": "Telegram Desktop",
+    "source": "https://api.snapcraft.io/v2/snaps/info/",
+    "snap_id": "jpdoHqMd90M39DdH2JSZbeQxipqHtwLo",
+    "publisher_id": "EXRxowJU0BSPUYQhLXu58z3mwKY33Hcp",
+    "publisher": "Telegram FZ-LLC",
+    "channel": "latest/stable",
+    "confinement": "strict",
+    "platforms": [
+      "amd64",
+      "arm64"
+    ],
+    "removal": "Close Telegram before removal. Snap saves and verifies a snapshot of all users’ application data. Sign in, manage sessions and configure notifications inside Telegram Desktop."
+  }
+]

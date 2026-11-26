@@ -1,0 +1,254 @@
+{
+  "id": "neovim",
+  "name": "Neovim",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=2,<3",
+  "entry_point": "setup_plugin_neovim.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-files"
+  ],
+  "capabilities": [
+    "language-support",
+    "wayland-clipboard"
+  ],
+  "dependencies": [
+    "git"
+  ],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Neovim",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Apply editor settings",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install-plugins",
+      "label": "Install editor plugins",
+      "page": "actions",
+      "target": "install-plugins",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install-parsers",
+      "label": "Install selected parsers",
+      "page": "actions",
+      "target": "install-parsers",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "verify-editor",
+      "label": "Verify language services",
+      "page": "actions",
+      "target": "verify-editor",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-parsers",
+      "label": "Remove managed parsers",
+      "page": "actions",
+      "target": "remove-parsers",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "languages": {
+        "description": "Select the language support to configure in Neovim.",
+        "items": {
+          "const": "python",
+          "type": "string"
+        },
+        "maxItems": 1,
+        "title": "Editor languages",
+        "type": "array",
+        "ui": {
+          "widget": "selection_list",
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        },
+        "default": []
+      },
+      "clipboard": {
+        "default": true,
+        "description": "Use the desktop clipboard when a Wayland session is available.",
+        "title": "Use Wayland clipboard when available",
+        "type": "boolean",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      },
+      "primary_editor": {
+        "default": true,
+        "description": "Set Neovim as the editor for subsequent login sessions.",
+        "title": "Set Neovim as the login editor",
+        "type": "boolean",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "install-plugins": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "install-parsers": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-parsers": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "verify-editor": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}
