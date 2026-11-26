@@ -14,4 +14,4 @@ Choose **Verify effective access** for an existing member to inspect the stock p
 
 On a supported machine without sudo, the reviewed delivery script accepts `sh install.sh install --auth su`. The package transaction and the administrative membership grant have separate confirmations. Start the installed application with `setup-system`. [Debian delivery](debian.md)
 
-Open the extension’s **Help** tab for offline instructions. [Administration Help](../plugins/system/administration/src/setup_plugin_administration/help.md)
+Open the extension’s **Help** tab for offline instructions. [Administration Help](../plugins/administration/src/setup_plugin_administration/help.md)

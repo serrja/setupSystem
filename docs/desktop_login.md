@@ -12,4 +12,4 @@ Hyprlock authenticates the owner of an existing session. Its password field and 
 
 Use a local text console if the graphical login fails. Review the active display-manager alias, default systemd target, journal and root-owned recovery records under `/var/lib/setup-system`. Retain checked backups when local edits conflict with restoration. Verify a real login, expired credentials, locking, fallback TTY and a second ordinary account only on the authorized disposable target. [Acceptance and evidence](testing.md)
 
-Open the extension’s **Help** tab for offline instructions. [Greeter Help](../plugins/desktop/greeter/src/setup_plugin_greeter/help.md) · [Hyprlock Help](../plugins/desktop/hyprlock/src/setup_plugin_hyprlock/help.md)
+Open the extension’s **Help** tab for offline instructions. [Greeter Help](../plugins/greeter/src/setup_plugin_greeter/help.md) · [Hyprlock Help](../plugins/hyprlock/src/setup_plugin_hyprlock/help.md)

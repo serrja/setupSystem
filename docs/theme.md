@@ -12,4 +12,4 @@ Choose terminal font size under **Foot**. **Hyprlock** controls the native lock 
 
 In an active Hyprland session, select an observed output, mode, position and scale. **Test monitor temporarily** applies the proposed mode for twelve seconds and checks that the original layout returned. **Save monitor layout** writes the reviewed configuration for the session. The backend checks the output's advertised modes again before publishing. [Hyprland](hyprland.md)
 
-Open the extension’s **Help** tab for offline instructions. [Waybar Help](../plugins/desktop/waybar/src/setup_plugin_waybar/help.md) · [Hyprlock Help](../plugins/desktop/hyprlock/src/setup_plugin_hyprlock/help.md)
+Open the extension’s **Help** tab for offline instructions. [Waybar Help](../plugins/waybar/src/setup_plugin_waybar/help.md) · [Hyprlock Help](../plugins/hyprlock/src/setup_plugin_hyprlock/help.md)

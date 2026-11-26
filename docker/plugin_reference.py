@@ -1,13 +1,19 @@
 """Regenerate trusted source manifests and offline field references in the build tree."""
 
 import argparse
+import importlib
 import importlib.util
 import json
 import sys
 import tomllib
 from pathlib import Path
 
-from setup_system_sdk import PLUGIN_GROUP, Backend, Manifest, Values
+from setup_system_sdk import PLUGIN_GROUP
+from setup_system_sdk.enums.ui import StorageScope
+from setup_system_sdk.plugin import Backend
+from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.forms import form_schema
+from setup_system_sdk.schemas.manifest import Manifest
 
 
 def reference(manifest: Manifest) -> str:
@@ -76,28 +82,33 @@ def update(project: Path, write: bool) -> list[Path]:
     entries = metadata["entry-points"][PLUGIN_GROUP]
     ((plugin, entry),) = entries.items()
     module, _, name = entry.partition(":")
-    folder = project.parent / "src" / module
+    package = module.split(".")[0]
+    folder = project.parent / "src" / package
     spec = importlib.util.spec_from_file_location(
-        module, folder / "__init__.py", submodule_search_locations=[str(folder)]
+        package, folder / "__init__.py", submodule_search_locations=[str(folder)]
     )
     if not spec or not spec.loader:
         raise ValueError("Cannot load the reviewed source model")
     imported = importlib.util.module_from_spec(spec)
-    sys.modules[module] = imported
+    sys.modules[package] = imported
     spec.loader.exec_module(imported)
-    backend = getattr(imported, name)
-    if not issubclass(backend, Backend):
+    strategy = getattr(importlib.import_module(module), name)
+    if not isinstance(strategy, type) or not issubclass(strategy, Backend):
         raise ValueError("Invalid backend")
+    backend = strategy()
     path = folder / "manifest.json"
     data: Values = json.loads(path.read_bytes())
     data.update(
         id=plugin,
         entry_point=entry,
         version=metadata["version"],
-        environment_fields=backend.settings_model.environment_fields,
+        environment_fields=dict(backend.settings_model.environment_fields),
         settings_version=backend.settings_model.schema_version,
-        settings_schema=backend.settings_model.model_json_schema(),
-        input_schemas={key: model.model_json_schema() for key, model in backend.inputs.items()},
+        settings_schema=form_schema(backend.settings_model, StorageScope.SETTINGS),
+        input_schemas={
+            key: form_schema(command.schema, StorageScope.ACTION)
+            for key, command in backend.commands().items()
+        },
     )
     manifest = Manifest.model_validate(data)
     files = {
@@ -119,7 +130,7 @@ def main() -> None:
     parser.add_argument("projects", type=Path, nargs="*")
     args = parser.parse_args()
     paths = args.projects or sorted(
-        (Path(__file__).resolve().parents[1] / "plugins").glob("*/*/pyproject.toml")
+        (Path(__file__).resolve().parents[1] / "plugins").glob("*/pyproject.toml")
     )
     changed = [file for project in paths for file in update(project, args.write)]
     if changed and not args.write:

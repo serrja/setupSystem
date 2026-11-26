@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-python"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "Python tools workstation tools"
+license = "MIT"
+dependencies = ["setup-system>=0.7.0.dev0"]
+
+[project.entry-points."setup_system.plugins"]
+python = "setup_plugin_python.plugin:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_python"]

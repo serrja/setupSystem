@@ -1,0 +1,695 @@
+{
+  "id": "git",
+  "name": "Git",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=2,<3",
+  "entry_point": "setup_plugin_git.plugin:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "user-files",
+    "root",
+    "account-keys",
+    "ui-code"
+  ],
+  "capabilities": [
+    "author-identities",
+    "ssh-keys"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check Git",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure",
+      "label": "Configure author identity",
+      "page": "actions",
+      "target": "configure",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "generate-key",
+      "label": "Create an SSH key",
+      "page": "actions",
+      "target": "generate-key",
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "upload-key",
+      "label": "Upload public SSH key",
+      "page": "actions",
+      "target": "upload-key",
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "revoke-key",
+      "label": "Revoke owned SSH key",
+      "page": "actions",
+      "target": "revoke-key",
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "import-identity",
+      "label": "Import repository identity",
+      "page": "actions",
+      "target": "import-identity",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "use-identity",
+      "label": "Apply identity to checkout",
+      "page": "actions",
+      "target": "use-identity",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "remote",
+      "id": "remove-owned-keys",
+      "label": "Revoke managed SSH keys",
+      "page": "actions",
+      "target": "remove-owned-keys",
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "configure-style",
+      "label": "Configure colors and aliases",
+      "page": "actions",
+      "target": "configure-style",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "verify-ssh",
+      "label": "Verify SSH account access",
+      "page": "actions",
+      "target": null,
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "cleanup_phase": "local",
+      "id": "remove-local-keys",
+      "label": "Remove managed local SSH keys",
+      "page": "actions",
+      "target": "remove-local-keys",
+      "permissions": [
+        "account-keys"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "cleanup_phase": null,
+      "id": "remove-retired-package",
+      "label": "Remove one formerly managed package",
+      "page": "actions",
+      "target": "remove-retired-package",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": "Migrate a package installed by a previous Git plugin. Review the selected package and its exact removal before installing from the new plugin."
+    }
+  ],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "enterprise_host": {
+        "default": "",
+        "description": "Enter the exact GitHub Enterprise DNS hostname you intend to use.",
+        "maxLength": 253,
+        "pattern": "^$|^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]([a-z0-9-]*[a-z0-9])?$",
+        "title": "Approved enterprise host",
+        "type": "string",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-retired-package": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Choose one package removed from this plugin's install list.",
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9+.-]+$",
+          "title": "Formerly managed package",
+          "type": "string",
+          "ui": {
+            "choice_provider": "retired-packages",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {}
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RetiredPackage",
+      "type": "object"
+    },
+    "upload-key": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "description": "Choose the hosting service for this account operation.",
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Host",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "account": {
+          "description": "Select the account whose session or resources this action will inspect.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Account",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "public_key": {
+          "description": "Choose the OpenSSH public key file to associate with the remote account.",
+          "format": "path",
+          "title": "OpenSSH public key",
+          "type": "string",
+          "ui": {
+            "widget": "path",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "title": {
+          "description": "Enter a recognizable display label for the selected record.",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "account",
+        "public_key",
+        "title"
+      ],
+      "title": "Upload",
+      "type": "object"
+    },
+    "verify-ssh": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "description": "Choose the hosting service for this account operation.",
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Host",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "account": {
+          "description": "Select the account whose session or resources this action will inspect.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Account",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "public_key": {
+          "description": "Choose the OpenSSH public key file to associate with the remote account.",
+          "format": "path",
+          "title": "OpenSSH public key",
+          "type": "string",
+          "ui": {
+            "widget": "path",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "login": {
+          "default": "git",
+          "description": "Enter the SSH account login shown by the hosting service.",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
+          "title": "SSH transport user",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "account",
+        "public_key"
+      ],
+      "title": "Probe",
+      "type": "object"
+    },
+    "revoke-key": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "github.com",
+          "description": "Choose the hosting service for this account operation.",
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Host",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "account": {
+          "description": "Select the account whose session or resources this action will inspect.",
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$",
+          "title": "Account",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "key_id": {
+          "description": "Select the remote public key by its server-issued identifier.",
+          "exclusiveMinimum": 0,
+          "title": "Remote key ID",
+          "type": "integer",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "account",
+        "key_id"
+      ],
+      "title": "Revoke",
+      "type": "object"
+    },
+    "configure": {
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "description": "Name the local Git author identity used for this repository selection.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Identity name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "directory": {
+          "description": "Apply this identity to repositories under this existing directory.",
+          "format": "path",
+          "title": "Repository directory",
+          "type": "string",
+          "ui": {
+            "widget": "path",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "name": {
+          "description": "Set the author name recorded in new Git commits.",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Commit author",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "email": {
+          "description": "Use this email address as the author address for commits.",
+          "maxLength": 254,
+          "pattern": "^[^@\\s<>]+@[^@\\s<>]+$",
+          "title": "Commit email",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "editor": {
+          "default": "nvim",
+          "description": "Open commit messages with the selected editor.",
+          "enum": [
+            "nvim",
+            "vim",
+            "nano"
+          ],
+          "title": "Commit editor",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "signing_key": {
+          "default": "",
+          "description": "Full OpenPGP fingerprint. Leave empty for unsigned commits.",
+          "pattern": "^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})?$",
+          "title": "Signing Key",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "identity",
+        "directory",
+        "name",
+        "email"
+      ],
+      "title": "Identity",
+      "type": "object"
+    },
+    "configure-style": {
+      "additionalProperties": false,
+      "description": "Install the optional Git color and alias fragment.",
+      "properties": {},
+      "title": "Style",
+      "type": "object"
+    },
+    "import-identity": {
+      "additionalProperties": false,
+      "description": "Save the selected repository identity in a private fragment.",
+      "properties": {
+        "identity": {
+          "description": "Name the local Git author identity used for this repository selection.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Identity name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "repository": {
+          "description": "Select the root of the Git checkout to inspect or configure.",
+          "format": "path",
+          "title": "Checkout root",
+          "type": "string",
+          "ui": {
+            "widget": "path",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "identity",
+        "repository"
+      ],
+      "title": "ImportIdentity",
+      "type": "object"
+    },
+    "use-identity": {
+      "additionalProperties": false,
+      "description": "Override identity only inside this exact repository.",
+      "properties": {
+        "identity": {
+          "description": "Name the local Git author identity used for this repository selection.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Identity name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "repository": {
+          "description": "Select the root of the Git checkout to inspect or configure.",
+          "format": "path",
+          "title": "Checkout root",
+          "type": "string",
+          "ui": {
+            "widget": "path",
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "identity",
+        "repository"
+      ],
+      "title": "UseIdentity",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "remove-owned-keys": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "CleanupKeys",
+      "type": "object"
+    },
+    "generate-key": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "A new private directory under ~/.ssh/setup-system contains the pair.",
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Key name",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Generate",
+      "type": "object"
+    },
+    "remove-local-keys": {
+      "additionalProperties": false,
+      "description": "Remove unchanged key pairs recorded as created by this plugin.",
+      "properties": {},
+      "title": "RemoveLocal",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

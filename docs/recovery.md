@@ -2,9 +2,9 @@
 
 Open **Managed resources** on the plugin page to inspect verified resources and unresolved operations. After an interruption, choose **Check interrupted operations**. The manager inspects the approved release and current facts before recording a verified result. A lost connection during a mutation leaves an unknown outcome. Keep the worker and its environment until inspection completes.
 
-**Uninstall application** uses the package's native removal action. **Remove extension** retires sealed code after checking for local changes. **Full cleanup** lists remote, local and program actions, exact settings and keyring references, and code generations. Review the list of preserved resources. Cleanup can stop at a conflict or failed readback. Keep the evidence and use a fresh preview to continue.
+**Uninstall application** uses the package's native removal action. **Remove extension** retires sealed code after checking for local changes. **Full cleanup** lists remote, local and program actions, verified keyring references, and code generations. Review the list of preserved resources. Cleanup can stop at a conflict or failed readback. Keep the evidence and use a fresh preview to continue.
 
-The resource ledger is `$XDG_STATE_HOME/setup-system/resources.sqlite3`. It records prepared changes, verified fingerprints, consumers and unresolved reservations. The bounded JSONL journal in `$XDG_STATE_HOME/setup-system/history` records operation events. User-specific recovery evidence and before-images remain in `$XDG_STATE_HOME/setup-system/backups`.
+The database stores confirmed operations and their events. File before-images live under `$XDG_STATE_HOME/setup-system/v10/files/backups`. Preserve this directory alongside the database. [Database and earlier installations](database.md)
 
 ## Receipts and backups
 
@@ -19,7 +19,7 @@ A native flock serializes package changes, Apply and Restore. Preview optional r
 | Login or boot files | Stage-specific backups under `/var/lib/setup-system` |
 | Debian packages | Native APT and dpkg status and logs |
 
-Managed-file publication retains its recovery index in `$XDG_STATE_HOME/setup-system/workstation.json`. The SQLite ledger records plugin ownership. File journals and original bytes are under `$XDG_STATE_HOME/setup-system/backups/`.
+Managed-file publication retains its recovery index in `$XDG_STATE_HOME/setup-system/v10/files/workstation.json`. The SQLite ledger records plugin ownership. File journals and original bytes are under `$XDG_STATE_HOME/setup-system/v10/files/backups/`.
 
 When the system task replaces the managed Firefox
 policy, it retains the original inode in a private sibling directory named
@@ -30,7 +30,7 @@ intended bytes and permissions. A new file at the live path is preserved.
 
 ## ♻️ Restore user files
 
-For current operations, open **Managed resources** and choose **Roll back a file operation**. For earlier backups, choose **Restore a previous backup** on the welcome screen. The preview lists
+For current operations, open **Managed resources** and choose **Roll back a file operation**. The preview lists
 which files will be restored or removed. Apply checks the current hash, owner and
 mode against the recorded state. A later edit requires review. A successful
 restore removes empty directories created by that operation and leaves additional
@@ -45,19 +45,13 @@ and preview that operation before retrying. Keep its private staging directory
 until Restore finishes. A conflict can leave both the editor's version and the
 displaced file available for inspection. Restore also retains the inode it removes. If an
 editor later saves through a file descriptor it already had open, preview the same
-operation to find those bytes. Legacy file journals are
-converted on explicit recovery when their before/after evidence is sufficient.
-Original journals are retained. Unknown schemas and ambiguous legacy ownership
-require manual review. Private application databases use their application's
-native recovery procedure.
+operation to find those bytes. Keep earlier file journals intact for manual recovery.
 
 ## 📦 Recover a package transaction
 
 System recovery depends on the stage that completed. Keep original release
 artifacts. Use `dpkg --audit` to inspect an interrupted package operation and
 review APT's proposed resolution before authorizing repair.
-
-Open **Help and recovery**, then choose **Recovery** to see the last recorded stage and status from a recognized pre-plugin package journal. The original journal stays on disk. New package transactions use native package status and logs.
 
 ## 🖥️ Recover graphical login
 
@@ -90,11 +84,9 @@ and `displaced` files after a conflict or interruption. Retain the original
 initramfs and these directories until normal and recovery boots have succeeded.
 Historical entries can omit these fields. Confirm their mode independently. Follow the [graphical unlock recovery procedure](graphical_unlock.md).
 
-When an older journal is migrated in place, its original bytes are saved in the adjacent `.v0.json` file. The `.v0.retained-*` entry keeps the original inode so later writes through an open editor remain recoverable. If migration reports a concurrent edit, inspect the current file and the retained or conflict files before retrying.
-
 ## 🧹 Resume a partial cleanup
 
-Open **Managed resources → Check interrupted operations** to inspect prepared changes. If an administrative inspection requires a fresh authorization, review its resources and authorize the readback. A lost connection to a mutating action never triggers an automatic retry. **Review remaining cleanup** verifies completed deletions and offers a new confirmation for the remaining owned resources. Full cleanup restores successive managed-file revisions in reverse order. A local edit that changes the next expected fingerprint stops recovery.
+Open **Managed resources → Check interrupted operations** to inspect prepared changes. If an administrative inspection requires a fresh authorization, review its resources and authorize the readback. A lost connection to a mutating action never triggers an automatic retry. Preview remaining owned resources again before confirming another cleanup. Full cleanup restores successive managed-file revisions in reverse order. A local edit that changes the next expected fingerprint stops recovery.
 
 After interrupted extension retirement, use **Remove extension** to resume removal of the recorded files. New or modified files require review. **Export history** writes a private JSONL report containing the same bounded, allowlisted events shown in global history.
 

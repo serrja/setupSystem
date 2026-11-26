@@ -8,4 +8,4 @@ Copier runs as the current user. Template creation and updates require the offic
 
 Create requires a new or empty destination. Update checks the existing Copier answers and origin. Template tasks stay disabled. Review any merge conflicts before committing a generated project. [Copier documentation](https://copier.readthedocs.io/).
 
-Open the extension’s **Help** tab for offline instructions. [Projects and templates Help](../plugins/development/projects/src/setup_plugin_projects/help.md)
+Open the extension’s **Help** tab for offline instructions. [Projects and templates Help](../plugins/projects/src/setup_plugin_projects/help.md)

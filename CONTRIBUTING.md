@@ -13,9 +13,9 @@ make native-check
 make native-ci
 ```
 
-`native-check` runs the locked formatter, linter, type checker, lock and entrypoint checks, and fixture tests. `native-ci` also builds the wheel and source archive, compares their runtime resources and installs the wheel in a temporary environment outside the checkout. Run `make package` from the repository root to build the Debian archive from the tracked Git content. Record failed, skipped and unavailable checks in the PR. [Development](docs/development.md) · [Disposable Debian tests](docs/testing.md)
+`native-check` runs the locked formatter, linter, type checker, lock and entrypoint checks, and schema checks. `native-ci` also builds the wheel and source archive, compares their runtime resources and installs the wheel in a temporary environment outside the checkout. Run `make package` from the repository root to build the Debian archive from the tracked Git content. Record failed, skipped and unavailable checks in the PR. [Development](docs/development.md) · [Disposable Debian tests](docs/testing.md)
 
-Add a configuration field and regenerate its offline reference using the [configuration development workflow](docs/development.md#change-a-setting). Exercise the field through its consuming interface.
+Add a configuration field and regenerate its offline reference using the [configuration development workflow](docs/development.md#change-a-setting). Exercise the field through its consuming interface in a temporary HOME. Automated product cases and coverage are absent by owner decision.
 
 ## 🤝 Review and delivery
 

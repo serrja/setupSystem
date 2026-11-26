@@ -24,7 +24,7 @@ GIT_ENVIRONMENT = {
     "GIT_NO_REPLACE_OBJECTS": "1",
 }
 
-RUNTIME_TREES = ("mk", "config", "libexec", "profiles")
+RUNTIME_TREES = ("mk", "config", "libexec", "migrations")
 PACKAGES = ("setup_system", "setup_system_sdk")
 
 
@@ -42,6 +42,7 @@ def export_source(root: Path, sha: str, source_root: Path) -> None:
         "pyproject.toml",
         "Makefile",
         "ansible.cfg",
+        "alembic.ini",
         "install.sh",
         "LICENSE.md",
         "docs",
@@ -91,7 +92,7 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
     distribution = base / "usr/lib/python3/dist-packages"
     pairs = [(source_root / folder, runtime / folder) for folder in RUNTIME_TREES]
     pairs.extend((source_root / "src" / name, distribution / name) for name in PACKAGES)
-    pairs.append((source_root / "src/setup_system_sdk", runtime / "sdk"))
+    pairs.append((source_root / "src/setup_system/execution/recipes", runtime / "sdk"))
     project = tomllib.loads((source_root / "pyproject.toml").read_text())["project"]
     public_version = project["version"] if version.startswith("0~local+") else version
     info = distribution / f"setup_system-{public_version}.dist-info"
@@ -145,6 +146,7 @@ def prepare_package(source_root: Path, base: Path, sha: str, version: str) -> st
                 if dest == runtime / "sdk" and path.suffix not in {".yml", ".mk"}:
                     continue
                 copy_file(path, dest / path.relative_to(source))
+    copy_file(source_root / "alembic.ini", runtime / "alembic.ini")
     copy_file(source_root / "Makefile", runtime / "Makefile")
     copy_file(source_root / "install.sh", runtime / "install.sh", 0o755)
     copy_file(source_root / "ansible.cfg", runtime / "ansible.cfg")
