@@ -8,8 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from setup_system.execution.native_target import current_boot_identity, current_target
-from setup_system.layout import INSTALLED, require_installed_resource
+from setup_plugin_administration.adapters.native import (
+    INSTALLED,
+    current_boot_identity,
+    current_target,
+    require_installed_resource,
+)
 
 from .account import (
     read_account,
@@ -67,7 +71,7 @@ def append(username: str, before: str, after: str) -> None:
             "localhost,",
             "-c",
             "local",
-            str(INSTALLED / RELATIVE / "membership.yml"),
+            str(INSTALLED / RELATIVE / "resources/membership.yml"),
             "-e",
             f"selected_user={account.username}",
             "-e",

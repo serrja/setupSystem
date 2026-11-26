@@ -10,26 +10,25 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
-
-from setup_plugin_firefox.enums import PolicyAction
-from setup_plugin_firefox.settings import Settings
-from setup_system.execution.atomic_rename import move_new
-from setup_system.execution.native_target import current_target
-from setup_system.execution.system_files import validate_system_path
-from setup_system.execution.system_paths import protected
-from setup_system.execution.system_publication import (
+from setup_system_sdk.enums.lifecycle import LifecycleAction
+from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
+from setup_system_sdk.files.atomic_rename import move_new
+from setup_system_sdk.files.system_files import validate_system_path
+from setup_system_sdk.files.system_paths import protected
+from setup_system_sdk.files.system_publication import (
     ObservedFile,
     observe_file,
     publish_file,
     save_backup,
 )
-from setup_system.layout import require_installed_resource
-from setup_system_sdk.enums.lifecycle import LifecycleAction
-from setup_system_sdk.enums.operation import Outcome
-from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
 from setup_system_sdk.plugin import owned_resources
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource
+
+from setup_plugin_firefox.adapters.native import current_target, require_installed_resource
+from setup_plugin_firefox.enums import PolicyAction
+from setup_plugin_firefox.models import Settings
 
 PATH = Path("/etc/firefox/policies/policies.json")
 JSON = TypeAdapter(dict[str, JsonValue])

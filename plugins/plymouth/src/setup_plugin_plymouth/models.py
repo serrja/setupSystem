@@ -2,12 +2,15 @@
 
 from pathlib import Path
 from typing import Literal, Self
+from uuid import UUID
 
 from pydantic import Field, StrictBool, StrictInt, model_validator
-
-from setup_system.execution.contracts import ContractModel
-from setup_system.execution.manifest_types import Digest, FrozenMap
-from setup_system.execution.system_facts import FileMode
+from setup_system_sdk.enums.lifecycle import LifecycleAction
+from setup_system_sdk.files.contracts import ContractModel
+from setup_system_sdk.files.manifest_types import Digest, FileMode, FrozenMap
+from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.schemas.operation import Plan
+from setup_system_sdk.settings import PluginSettings
 
 BootStatus = Literal[
     "prepared",
@@ -55,3 +58,13 @@ class UnlockPlan(ContractModel):
     identity: Digest | None
     blockers: tuple[str, ...] = ()
     packages: tuple[str, ...] = ()
+
+
+class Confirmation(Inputs):
+    action: Literal[LifecycleAction.INSTALL, LifecycleAction.UPDATE, LifecycleAction.CONFIGURE]
+    plan: Plan
+    operation: UUID
+    step_key: Literal["backup", "config"]
+
+
+Settings = PluginSettings

@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_neovim.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -12,6 +12,7 @@
     "root",
     "user-files"
   ],
+  "provides": [],
   "capabilities": [
     "language-support",
     "wayland-clipboard"
@@ -21,6 +22,12 @@
   ],
   "actions": [
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install",
@@ -34,6 +41,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update",
@@ -47,6 +60,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
@@ -60,6 +79,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Neovim",
@@ -71,6 +91,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure",
       "label": "Apply editor settings",
@@ -84,6 +105,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "install-plugins",
       "label": "Install editor plugins",
@@ -97,6 +119,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "install-parsers",
       "label": "Install selected parsers",
@@ -110,6 +133,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "verify-editor",
       "label": "Verify language services",
@@ -123,6 +147,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "local",
       "id": "remove-parsers",
       "label": "Remove managed parsers",

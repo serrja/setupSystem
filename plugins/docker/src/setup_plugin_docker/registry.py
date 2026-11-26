@@ -6,13 +6,13 @@ from tempfile import TemporaryDirectory
 from typing import Literal
 
 from pydantic import Field, TypeAdapter
-
-from setup_system.execution.recipes import user_terminal
-from setup_system.execution.recipes.native import command
-from setup_system.execution.user_storage import inside_home
 from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.files.backend import command
+from setup_system_sdk.files.user_storage import inside_home
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Result
+
+from setup_plugin_docker.adapters import user_terminal
 
 DOCKER = Path("/usr/bin/docker")
 

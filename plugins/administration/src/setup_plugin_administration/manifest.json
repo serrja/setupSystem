@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "system",
   "kind": "system",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_administration.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -12,12 +12,14 @@
     "root",
     "su"
   ],
+  "provides": [],
   "capabilities": [
     "sudo-membership"
   ],
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "grant-sudo",
       "label": "Grant sudo access",
@@ -32,6 +34,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "verify-sudo",
       "label": "Verify effective access",

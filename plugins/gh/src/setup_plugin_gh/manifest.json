@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_gh.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -13,12 +13,14 @@
     "native-terminal",
     "root"
   ],
+  "provides": [],
   "capabilities": [
     "github-auth"
   ],
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Git",
@@ -30,6 +32,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "status",
       "label": "Account status",
@@ -43,6 +46,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "login",
       "label": "Sign in",
@@ -57,6 +61,7 @@
       "description": "Open the official client in a separate terminal and verify the selected sign-in."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "logout",
       "label": "Sign out",
@@ -70,6 +75,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install",
@@ -83,6 +94,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update",
@@ -96,6 +113,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",

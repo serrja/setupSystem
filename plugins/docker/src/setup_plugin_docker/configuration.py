@@ -6,11 +6,10 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, JsonValue, TypeAdapter
-
-from setup_system.execution.recipes.native import command
-from setup_system.execution.user_storage import capture_receipt, inside_home
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
+from setup_system_sdk.files.backend import command
+from setup_system_sdk.files.user_storage import capture_receipt, inside_home
 from setup_system_sdk.plugin import owned_resources
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result

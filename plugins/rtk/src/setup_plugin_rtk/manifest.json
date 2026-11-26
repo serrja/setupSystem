@@ -4,17 +4,19 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_rtk.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "user-files"
   ],
+  "provides": [],
   "capabilities": [],
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check RTK",
@@ -26,6 +28,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install RTK",
@@ -39,6 +42,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update RTK",
@@ -52,6 +56,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall owned RTK binary",

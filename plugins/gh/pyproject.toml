@@ -8,10 +8,82 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "GitHub CLI workstation plugin"
 license = "MIT"
-dependencies = ["setup-system>=0.7.0.dev0", "pydantic>=2.10,<3", "pyyaml>=6,<7", "httpx>=0.27,<1"]
+dependencies = ["setup-system-sdk>=3,<4", "pydantic>=2.10,<3", "pyyaml>=6,<7", "httpx>=0.27,<1"]
 
 [project.entry-points."setup_system.plugins"]
 gh = "setup_plugin_gh.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_gh"]
+
+[tool.setup-system.manifest]
+name = "GitHub CLI"
+author = "serrja"
+category = "applications"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["account-status", "native-terminal", "root"]
+capabilities = ["github-auth"]
+dependencies = []
+pages = ["Overview", "Settings", "Accounts", "Actions", "Managed resources", "History", "Help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check Git"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "status"
+label = "Account status"
+page = "accounts"
+permissions = ["account-status"]
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "login"
+label = "Sign in"
+page = "accounts"
+target = "login"
+permissions = ["account-status", "native-terminal"]
+mode = "mutation"
+description = "Open the official client in a separate terminal and verify the selected sign-in."
+
+[[tool.setup-system.manifest.actions]]
+id = "logout"
+label = "Sign out"
+page = "accounts"
+target = "logout"
+permissions = ["account-status"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"

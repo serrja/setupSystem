@@ -7,9 +7,9 @@ import os
 import stat
 from pathlib import Path
 
-from setup_system.execution.recipes.native import command
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceOwnership
+from setup_system_sdk.files.backend import command
 from setup_system_sdk.schemas.operation import Plan, Resource
 
 from .project_layout import active_projects, load_layout

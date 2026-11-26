@@ -9,9 +9,9 @@ import pwd
 import subprocess
 from pathlib import Path
 
-from setup_system.execution.account_identity import TargetUser
-from setup_system.execution.identity import validate_home
-from setup_system.execution.processes import run_command
+from setup_system_sdk.files.account_identity import TargetUser
+from setup_system_sdk.files.identity import validate_home
+from setup_system_sdk.processes import run_command
 
 from .models import AdminAccount, AdminIntent
 

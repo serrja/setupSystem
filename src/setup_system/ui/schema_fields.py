@@ -8,6 +8,10 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr
+from setup_system_sdk.enums.errors import ErrorCode
+from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.errors import Error
+from setup_system_sdk.secrets import SecretUnavailableError
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -15,11 +19,7 @@ from textual.message import Message
 from textual.widgets import Button, Input, Label, Select, SelectionList, Static, Switch
 
 from setup_system.errors import OperationError
-from setup_system.execution.recipes.secrets import SecretUnavailableError
 from setup_system.ui.plugin_dialogs import SecretPrompt
-from setup_system_sdk.enums.errors import ErrorCode
-from setup_system_sdk.schemas.common import Values
-from setup_system_sdk.schemas.errors import Error
 
 type Choices = Callable[[str, str], Awaitable[list[str]]]
 

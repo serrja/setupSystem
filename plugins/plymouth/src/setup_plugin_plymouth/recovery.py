@@ -9,9 +9,9 @@ import stat
 import tempfile
 from pathlib import Path
 
-from setup_system.execution import system_files
-from setup_system.execution.atomic_rename import move_new
-from setup_system.execution.system_paths import protected
+from setup_system_sdk.files import system_files
+from setup_system_sdk.files.atomic_rename import move_new
+from setup_system_sdk.files.system_paths import protected
 
 from .models import BootFile, BootReceipt, BootStatus
 

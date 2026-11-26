@@ -7,17 +7,17 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-
-from setup_system.execution.file_publication import observe
-from setup_system.execution.managed_files import apply_files
-from setup_system.execution.processes import run_command
-from setup_system.execution.receipts import FileState
-from setup_system.execution.user_storage import checked_directory, inside_home
 from setup_system_sdk.enums.resources import ResourceOwnership
+from setup_system_sdk.files.file_publication import observe
+from setup_system_sdk.files.managed_files import apply_files
+from setup_system_sdk.files.receipts import FileState
+from setup_system_sdk.files.user_storage import checked_directory, inside_home
+from setup_system_sdk.processes import run_command
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Resource
 
@@ -125,7 +125,9 @@ def style_changes() -> list[Edit]:
     config = inside_home(Path.home() / ".gitconfig")
     root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     fragment = inside_home(root / "git/setup-system-style.inc")
-    content = (Path(__file__).parent / "style.inc").read_bytes()
+    content = (
+        Path(str(package_files("setup_plugin_git").joinpath("resources"))) / "style.inc"
+    ).read_bytes()
     before = observe(fragment)
     if before and before.sha256 != hashlib.sha256(content).hexdigest():
         raise ValueError("Review the existing Git style fragment")

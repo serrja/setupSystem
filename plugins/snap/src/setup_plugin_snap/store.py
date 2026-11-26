@@ -8,9 +8,9 @@ from typing import Literal
 import httpx
 import yaml
 from pydantic import BaseModel, Field, TypeAdapter
+from setup_system_sdk.schemas.common import Inputs
 
 from setup_plugin_snap.catalog import STORE, SnapName
-from setup_system_sdk.schemas.common import Inputs
 
 
 class Revision(Inputs):

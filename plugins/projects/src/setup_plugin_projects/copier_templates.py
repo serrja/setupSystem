@@ -18,6 +18,9 @@ from pathlib import Path
 import yaml
 from packaging.version import Version
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from setup_system_sdk.diagnostics import PartialApplyError
+from setup_system_sdk.files.user_storage import safe_file
+from setup_system_sdk.processes import run_command
 
 from setup_plugin_projects.models import (
     TemplateMetadata,
@@ -30,9 +33,6 @@ from setup_plugin_projects.template_models import (
     TemplateSource,
     answer_values,
 )
-from setup_system.diagnostics import PartialApplyError
-from setup_system.execution.processes import run_command
-from setup_system.execution.user_storage import safe_file
 
 
 class _AnswersSource(BaseModel):

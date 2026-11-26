@@ -1,0 +1,16 @@
+from enum import StrEnum
+from pathlib import Path
+from setup_system_sdk.files.backend import FilesBackend
+from setup_system_sdk.schemas.common import Inputs
+
+
+class Actions(StrEnum):
+    SAVE = "save"
+
+
+class Plugin(FilesBackend):
+    action_inputs = {Actions.SAVE: Inputs}
+    file_actions = frozenset({Actions.SAVE})
+
+    def files(self, action_id, settings, inputs):
+        return {Path.home() / "fixture-file": b"replacement"}

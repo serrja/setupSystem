@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_happ.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -12,6 +12,7 @@
     "user-files",
     "root"
   ],
+  "provides": [],
   "capabilities": [
     "subscriptions",
     "routing-export"
@@ -19,6 +20,7 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Happ",
@@ -30,6 +32,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "save-subscription",
       "label": "Save subscription details",
@@ -43,6 +46,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "import",
       "label": "Import in Happ",
@@ -54,6 +58,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "update-subscription",
       "label": "Refresh in Happ",
@@ -65,6 +70,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "remove-subscription",
       "label": "Remove in Happ",
@@ -76,6 +82,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "export-route",
       "label": "Add or move a route rule",
@@ -89,6 +96,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "reconnect",
       "label": "Reconnect in Happ",
@@ -100,6 +108,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install",
@@ -113,6 +127,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update",
@@ -126,6 +146,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
@@ -139,6 +165,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "start-system-service",
       "label": "Start Happ service",
@@ -152,6 +184,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "stop-system-service",
       "label": "Stop Happ service",
@@ -165,6 +203,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "forget-local",
       "label": "Forget local subscription records",
@@ -178,6 +217,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "local",
       "id": "forget-owned-files",
       "label": "Forget managed subscriptions",

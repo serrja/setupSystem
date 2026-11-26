@@ -8,8 +8,7 @@ from typing import Annotated
 
 from packaging.version import InvalidVersion, Version
 from pydantic import ConfigDict, Field, field_validator, model_validator
-
-from setup_system.execution.contracts import ContractModel
+from setup_system_sdk.files.contracts import ContractModel
 
 OwnerGroup = Annotated[str, Field(pattern=r"^[a-z][A-Za-z0-9]*$")]
 

@@ -1,0 +1,233 @@
+#!/usr/bin/python3
+"""Assemble a Debian archive from reviewed Python wheels and release descriptors."""
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+import tomllib
+import zipfile
+from email.parser import Parser
+from pathlib import Path, PurePosixPath
+
+from packaging.utils import canonicalize_name, parse_wheel_filename
+from setup_system_sdk.manifests import Manifest
+
+PACKAGE = Path(__file__).resolve().parent
+RESOURCES = PACKAGE.parent / "src/setup_plugin_debian/resources"
+RUNTIME = Path("usr/lib/setup-system")
+PYTHON = Path("usr/lib/python3/dist-packages")
+
+
+def sha(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def unpack(wheel: Path, destination: Path) -> None:
+    with zipfile.ZipFile(wheel) as archive:
+        for entry in archive.infolist():
+            rel = PurePosixPath(entry.filename)
+            if (
+                rel.is_absolute()
+                or ".." in rel.parts
+                or "\\" in entry.filename
+                or any(n.endswith(".data") for n in rel.parts)
+                or stat.S_ISLNK(entry.external_attr >> 16)
+            ):
+                raise ValueError("Unsupported wheel member")
+            target = destination.joinpath(*rel.parts)
+            if entry.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(entry) as content, target.open("xb") as stream:
+                shutil.copyfileobj(content, stream)
+            target.chmod(0o644)
+
+
+def stage(
+    base: Path, host: Path, sdk: Path, releases: list[Path], version: str, source: str
+) -> None:
+    runtime = base / RUNTIME
+    python = base / PYTHON
+    runtime.mkdir(parents=True)
+    for wheel, expected in ((host, "setup-system"), (sdk, "setup-system-sdk")):
+        name, _, _, _ = parse_wheel_filename(wheel.name)
+        if name != expected:
+            raise ValueError(f"Expected wheel for {expected}")
+        unpack(wheel, python)
+    shutil.copytree(RESOURCES, runtime, dirs_exist_ok=True)
+    catalog = runtime / "plugin_catalog"
+    catalog.mkdir()
+    installed = set()
+    executor_records = base / "etc/setup-system/executors"
+    executor_records.mkdir(parents=True)
+    grants = tomllib.loads((PACKAGE / "executors.toml").read_text())["handlers"]
+    for release in releases:
+        raw = release.read_bytes()
+        variants = json.loads(raw)["releases"]
+        record = variants[0]
+        if any(
+            v["manifest"] != record["manifest"] or v["wheels"][0] != record["wheels"][0]
+            for v in variants
+        ):
+            raise ValueError("Package variants have different primary wheels")
+        manifest = Manifest.model_validate(record["manifest"])
+        if manifest.id in installed:
+            raise ValueError("Repeated plugin release")
+        installed.add(manifest.id)
+        for descriptor in (w for variant in variants for w in variant["wheels"]):
+            filename = descriptor["name"]
+            if filename != Path(filename).name:
+                raise ValueError("Invalid wheel name")
+            parse_wheel_filename(filename)
+            src = release.parent / filename
+            if sha(src) != descriptor["sha256"]:
+                raise ValueError("Reviewed wheel digest differs")
+            dest = catalog / filename
+            if dest.exists() and sha(src) != sha(dest):
+                raise ValueError("Conflicting release wheels")
+            if not dest.exists():
+                shutil.copyfile(src, dest)
+        primary = catalog / record["wheels"][0]["name"]
+        dist, rel_version, _, _ = parse_wheel_filename(primary.name)
+        if str(rel_version) != manifest.version:
+            raise ValueError("Wheel version differs from manifest")
+        package = manifest.entry_point.split(":")[0].split(".")[0]
+        plugin_root = runtime / "plugins" / manifest.id
+        unpack(primary, plugin_root)
+        packaged = Manifest.model_validate_json(
+            (plugin_root / package / "manifest.json").read_bytes()
+        )
+        if packaged != manifest:
+            raise ValueError("Primary wheel differs from release descriptor")
+        if manifest.id == "debian":
+            if dist != canonicalize_name("setup-system-plugin-debian"):
+                raise ValueError("Unexpected Debian provider distribution")
+            unpack(primary, python)
+        (catalog / (manifest.id + ".json")).write_bytes(raw)
+        handlers = grants.get(manifest.id, ())
+        if handlers:
+            expected = "setup_plugin_" + manifest.id.replace("-", "_")
+            if (
+                dist != canonicalize_name("setup-system-plugin-" + manifest.id)
+                or package != expected
+            ):
+                raise ValueError(
+                    "Native grant requires its reviewed distribution and import package"
+                )
+            if manifest.id != "debian" and not set(handlers) <= {
+                a.id for a in manifest.actions if {"root", "sudo", "su"}.intersection(a.permissions)
+            }:
+                raise ValueError("The release does not declare its reviewed native handlers")
+            launcher = runtime / "libexec/launcher"
+            digest = hashlib.sha256(raw).hexdigest()
+            protected_files = {
+                str(Path("/") / p.relative_to(base)): sha(p)
+                for p in sorted((plugin_root / package).rglob("*"))
+                if p.is_file()
+            }
+            trust = dict(
+                plugin_id=manifest.id,
+                version=manifest.version,
+                release_digest=digest,
+                allowed_handlers=sorted(handlers),
+                launcher=str(Path("/") / launcher.relative_to(base)),
+                launcher_sha256=sha(launcher),
+                resources=protected_files,
+            )
+            (executor_records / (manifest.id + ".json")).write_text(
+                json.dumps(trust, sort_keys=True)
+            )
+    if "debian" not in installed:
+        raise ValueError("Select the reviewed Debian provider release")
+    for name, target in [
+        ("setup-system.sh", "usr/bin/setup-system"),
+        ("setup-system.conf", "usr/lib/tmpfiles.d/setup-system.conf"),
+        ("setup-system.desktop", "usr/share/applications/setup-system.desktop"),
+    ]:
+        path = base / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PACKAGE / name, path)
+    (base / "usr/bin/setup-system").chmod(0o755)
+    docs = base / "usr/share/doc/setup-system"
+    docs.mkdir(parents=True)
+    root = PACKAGE.parents[2]
+    for src, dest in (
+        ("LICENSE.md", "copyright"),
+        ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"),
+        ("README.md", "README.md"),
+    ):
+        shutil.copyfile(root / src, docs / dest)
+    shutil.copytree(root / "docs", docs / "docs")
+    for plugin_docs in sorted(PACKAGE.parent.parent.glob("*/docs")):
+        shutil.copytree(plugin_docs, docs / "plugins" / plugin_docs.parent.name / "docs")
+    manual = base / "usr/share/man/man1/setup-system.1.gz"
+    manual.parent.mkdir(parents=True)
+    manual.write_bytes(gzip.compress((PACKAGE / "setup-system.1").read_bytes(), mtime=0))
+    control = base / "DEBIAN"
+    control.mkdir()
+    description = (PACKAGE / "control").read_text()
+    if Parser().parsestr(description)["Package"] != "setup-system":
+        raise ValueError("Unexpected control identity")
+    (control / "control").write_text(
+        f"Version: {version}\nX-Setup-System-Source: {source}\n{description}"
+    )
+    for name in ("preinst", "prerm"):
+        shutil.copyfile(PACKAGE / "guard.sh", control / name)
+        (control / name).chmod(0o755)
+    for path in base.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o755)
+        elif path.is_file() and path.parent != control:
+            mode = (
+                0o755
+                if path.is_relative_to(runtime / "libexec") or path == base / "usr/bin/setup-system"
+                else 0o644
+            )
+            path.chmod(mode)
+    with (control / "md5sums").open("w") as sums:
+        for path in sorted(base.rglob("*")):
+            if path.is_file() and not path.is_relative_to(control):
+                with path.open("rb") as stream:
+                    digest = hashlib.file_digest(
+                        stream, lambda: hashlib.md5(usedforsecurity=False)
+                    ).hexdigest()
+                sums.write(f"{digest}  {path.relative_to(base)}\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host-wheel", required=True, type=Path)
+    parser.add_argument("--sdk-wheel", required=True, type=Path)
+    parser.add_argument("--release", required=True, type=Path, action="append")
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--source", required=True, help="Reviewed source commit")
+    args = parser.parse_args()
+    if not re.fullmatch(r"[0-9a-f]{40}", args.source):
+        raise ValueError("Expected a full source commit SHA")
+    if not re.fullmatch(r"[0-9][0-9A-Za-z.+~:-]*", args.version):
+        raise ValueError("Invalid Debian version")
+    args.output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=args.output) as temporary:
+        base = Path(temporary) / "root"
+        stage(base, args.host_wheel, args.sdk_wheel, args.release, args.version, args.source)
+        artifact = Path(temporary) / f"setup-system_{args.version}_all.deb"
+        subprocess.run(
+            ["dpkg-deb", "--root-owner-group", "--build", str(base), str(artifact)], check=True
+        )
+        result = args.output / artifact.name
+        os.link(artifact, result)
+        print(result)
+
+
+if __name__ == "__main__":
+    main()

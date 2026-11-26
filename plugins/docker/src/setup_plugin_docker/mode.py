@@ -1,26 +1,29 @@
 """Bind a normal-user Docker CLI launcher to a verified local Engine and context."""
 
-import asyncio
 import hashlib
 import os
 import pwd
 import re
 import stat
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, TypeAdapter
-
-from setup_plugin_docker.enums import DockerAction
-from setup_plugin_docker.settings import Settings
-from setup_system.execution.recipes.managed_assets import PublishedAssets
-from setup_system.execution.recipes.native import command
+from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.files.assets import PublishedAssets
+from setup_system_sdk.files.backend import command
 from setup_system_sdk.plugin import PluginSettings
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Result
 
-LAUNCHER_SOURCE = Path(__file__).with_name("selected_daemon.sh")
+from setup_plugin_docker.enums import DockerAction
+from setup_plugin_docker.models import Settings
+
+LAUNCHER_SOURCE = (
+    Path(str(package_files("setup_plugin_docker").joinpath("resources"))) / "selected_daemon.sh"
+)
 DOCKER = "/usr/bin/docker"
 SYSTEMCTL = "/usr/bin/systemctl"
 CONTEXT_NAME = r"^[a-z][a-z0-9_-]{0,63}$"
@@ -237,7 +240,7 @@ def mutate(settings: Settings, selection: DaemonMode, plan: Plan) -> Result:
 
 
 async def verify(settings: Settings, selection: DaemonMode, plan: Plan) -> Result:
-    found = await asyncio.to_thread(inspect, settings, selection)
+    found = await run_sync(inspect, settings, selection)
     if isinstance(found, Launcher):
         desired = {
             str(path): hashlib.sha256(content).hexdigest()

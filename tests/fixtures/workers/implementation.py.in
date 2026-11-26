@@ -1,0 +1,42 @@
+from enum import StrEnum
+from pathlib import Path
+from setup_system_sdk.files.backend import NativeBackend
+from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.operations import Plan, Result
+from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.resources import ResourceOwnership
+from setup_system_sdk.resources import Resource
+
+
+class Actions(StrEnum):
+    SAVE = "save"
+
+
+class Plugin(NativeBackend):
+    action_inputs = {Actions.SAVE: Inputs}
+
+    def prepare(self, action_id, settings, inputs):
+        return Plan(
+            summary="Create a fixture",
+            resources=[
+                Resource(
+                    kind="file",
+                    identity="fixture",
+                    ownership=ResourceOwnership.CREATED,
+                    after="yes",
+                    cleanup=True,
+                )
+            ],
+        )
+
+    def mutate(self, action_id, settings, inputs, plan):
+        (Path.home() / "marker").write_text("yes")
+        return Result(outcome=Outcome.CHANGED, message="Saved", resources=plan.resources)
+
+    async def verify(self, plan, settings, inputs, context=None):
+        ok = (Path.home() / "marker").read_text() == "yes"
+        return Result.observed(
+            outcome=Outcome.COMPLETE if ok else Outcome.UNKNOWN_OUTCOME,
+            message="Inspected",
+            resources=plan.resources,
+        )

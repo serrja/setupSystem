@@ -78,7 +78,8 @@ def reference(manifest: Manifest) -> str:
 
 
 def update(project: Path, write: bool) -> list[Path]:
-    metadata = tomllib.loads(project.read_text())["project"]
+    package_metadata = tomllib.loads(project.read_text())
+    metadata = package_metadata["project"]
     entries = metadata["entry-points"][PLUGIN_GROUP]
     ((plugin, entry),) = entries.items()
     module, _, name = entry.partition(":")
@@ -97,8 +98,16 @@ def update(project: Path, write: bool) -> list[Path]:
         raise ValueError("Invalid backend")
     backend = strategy()
     path = folder / "manifest.json"
-    data: Values = json.loads(path.read_bytes())
+    data: Values = package_metadata["tool"]["setup-system"]["manifest"].copy()
     data.update(
+        provides=[
+            {
+                "id": key,
+                "version": backend.contract_versions.get(key, "1"),
+                "request_schema": provider.request_model.model_json_schema(),
+            }
+            for key, provider in backend.providers.items()
+        ],
         id=plugin,
         entry_point=entry,
         version=metadata["version"],

@@ -9,10 +9,11 @@ import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from setup_system.execution.account_identity import TargetUser
-from setup_system.execution.identity import validate_user_path
-from setup_system.execution.processes import run_command
-from setup_system.execution.system_facts import SystemSnapshot
+from setup_system_sdk.files.account_identity import TargetUser
+from setup_system_sdk.files.identity import validate_user_path
+from setup_system_sdk.processes import run_command
+
+from setup_plugin_greeter.adapters.system_facts import SystemSnapshot
 
 from .login_boot import manager_enabled
 from .login_files import (

@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
+from setup_system_sdk.files.contracts import ContractModel
+from setup_system_sdk.files.manifest_types import Digest, FrozenMap
 
-from setup_system.execution.contracts import ContractModel
-from setup_system.execution.manifest_types import Digest, FrozenMap
-from setup_system.execution.system_facts import FileMode
+from setup_plugin_greeter.adapters.system_facts import FileMode
 
 
 @dataclass(frozen=True)
@@ -164,6 +164,6 @@ class LoginFiles:
 
     def move_new(self, source: Path, destination: Path) -> None:
         """Move one root-owned name between previously checked directories."""
-        from setup_system.execution.atomic_rename import move_new
+        from setup_system_sdk.files.atomic_rename import move_new
 
         move_new(source, destination, check_directory=self.check_path)

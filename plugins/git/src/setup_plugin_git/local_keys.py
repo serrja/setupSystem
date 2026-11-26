@@ -8,26 +8,26 @@ import subprocess
 from pathlib import Path
 
 from pydantic import Field
-
-from setup_plugin_git.keys import public_material
-from setup_system.execution import retirement_checkpoint as checkpoint
-from setup_system.execution.authorization import session_environment
-from setup_system.execution.file_publication import move_new
-from setup_system.execution.processes import run_command
-from setup_system.execution.recorded_tree import CLAIM_DIRECTORY, Entry, remove_recorded
-from setup_system.execution.system_paths import protected
-from setup_system.execution.user_storage import (
+from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.resources import ResourceOwnership
+from setup_system_sdk.environment import session_environment
+from setup_system_sdk.files import retirement_checkpoint as checkpoint
+from setup_system_sdk.files.file_publication import move_new
+from setup_system_sdk.files.recorded_tree import CLAIM_DIRECTORY, Entry, remove_recorded
+from setup_system_sdk.files.system_paths import protected
+from setup_system_sdk.files.user_storage import (
     FileSnapshot,
     checked_directory,
     inside_home,
     private_directory,
     safe_file,
 )
-from setup_system_sdk.enums.operation import Outcome
-from setup_system_sdk.enums.resources import ResourceOwnership
 from setup_system_sdk.plugin import owned_resources
+from setup_system_sdk.processes import run_command
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
+
+from setup_plugin_git.keys import public_material
 
 ASKPASS = Path("/usr/lib/openssh/gnome-ssh-askpass")
 KEYGEN = "/usr/bin/ssh-keygen"

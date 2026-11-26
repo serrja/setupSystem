@@ -1,13 +1,13 @@
-# 🧩 Write a plugin
+# Plugin authoring
 
-Create `plugins/<id>/pyproject.toml` with a backend entry in `setup_system.plugins`, for example `setup_plugin_example.plugin:Plugin`. Ship the manifest and offline Help with the import package. Specify the navigation category in the manifest, independently of the package directory.
+Give the plugin its own distribution in `plugins/<name>`. Depend on `setup-system-sdk` and declare the backend under `setup_system.plugins`. Custom Textual panels use `setup_system.plugin_ui` and the SDK's `ui` extra. Package the manifest, Help, reference and other resources alongside the import package. Use `importlib.resources` to locate them.
 
-Declare a dependency on the `setup-system` distribution (v2 SDK from `0.7.0.dev0`) and the supported SDK range in the manifest. Use `setup_system_sdk.plugin.PluginSettings` for settings and `setup_system_sdk.schemas.common.Inputs` for command parameters. In the package’s `enums.py`, declare its action IDs as a StrEnum. Register the supported action and its input model with the backend. Provide labels, descriptions, defaults, bounds and UI hints on fields. Identify sensitive values through keyring references. Declare the compatible SDK major version and the permissions for each command.
+Declare actions and capabilities in the manifest. Implement application planning, step execution, readback and final verification using the SDK. A provider supplies a request model and a handler for its versioned capability. A consumer sends a capability request through its worker context and includes the returned step in its plan. Keep step keys stable and assign every mutable resource to exactly one step.
 
-Implement read-only planning and readback in the activated worker. The protocol carries a version, the stable action ID, typed inputs, resource observations and an operation ID. Native mutation requires a fixed Make target, confirmation and the matching active release. Manual and read-only actions declare their mode explicitly. A backend environment runs with the local user’s access to the filesystem. [Extension trust](plugin_trust.md)
+Build a distribution with `uv build --package <distribution>`. Changes to plugin checks belong in its own `ci/Makefile` under the target `check`. The common runner discovers these files by directory.
 
-A resource identifies its kind, canonical identity, owner relationship, operation, before and after fingerprints, permissions, consumers and supported cleanup. The host records the plan before mutation. Read back each affected resource. For partial completion, mark only demonstrated changes as verified. Use `Result.events` for bounded `ActionEvent` observations with stable message codes and resource counts. The host binds the operation, action, plugin and UTC timestamp before publishing to History. Keep passwords, tokens, private keys and entire requests out of diagnostics. [Recovery](recovery.md)
+Declare the interface labels, action modes, permissions and capability requirements under `[tool.setup-system.manifest]` in the plugin's `pyproject.toml`. Register its action inputs, settings and provider models on the backend. Regenerate the packaged manifest and reference from the workspace root.
 
-Most cards use the native schema editors. For a custom trusted panel, declare `setup_system.plugin_ui`, request `ui-code`, and put the component in a separate module inside the plugin package. Use the standard library, public Textual modules and the public SDK inside the panel. The loader checks the module’s declared imports before executing it. Import the host SDK's `PluginPanel` and use its `UIContext` to select actions. Backend-only packages belong in the plugin venv. Restart the host to activate a new UI version. [Textual screens](https://textual.textualize.io/guide/screens/)
-
-Regenerate the trusted package metadata and offline references with `uv run --locked python docker/plugin_reference.py --write`. Review manifest changes alongside the action, exercise the worker using isolated state, and run the [development gate](development.md).
+```sh
+uv run --locked python docker/plugin_reference.py --write plugins/<name>/pyproject.toml
+```

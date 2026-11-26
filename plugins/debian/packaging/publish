@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# Publish the Debian companion without modifying the shared provider's immutable release.
+set -euo pipefail
+version=$1
+artifacts=$(realpath -- "$2")
+repository=serrja/setupSystem
+[[ "$GITHUB_REPOSITORY" == "$repository" && "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == push ]]
+[[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" && "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+stable=v$version
+tag=deb-$stable
+file=setup-system_${version}_all.deb
+expected=("$file" "$file.sha256" "$file.sigstore.json")
+ref() {
+    gh api "repos/$repository/git/matching-refs/tags/$1" |
+        jq -r --arg ref "refs/tags/$1" '.[] | select(.ref == $ref) | .object | [.type, .sha] | @tsv'
+}
+source_commit() {
+    local kind oid
+    read -r kind oid <<< "$1"
+    [[ "$oid" =~ ^[a-f0-9]{40}$ ]] || return 1
+    case "$kind" in
+        commit) printf '%s\n' "$oid" ;;
+        tag) gh api "repos/$repository/git/tags/$oid" --jq '.object | select(.type == "commit") | .sha' ;;
+        *) return 1 ;;
+    esac
+}
+verify_bundle() {
+    gh attestation verify "${2:-$artifacts/$file}" --bundle "$1" --repo "$repository" \
+        --signer-workflow "$repository/.github/workflows/plugin-release.yml" --signer-digest "$GITHUB_SHA" \
+        --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --deny-self-hosted-runners \
+        --predicate-type https://slsa.dev/provenance/v1
+}
+verify_package() {
+    [[ "$(dpkg-deb -f "$1" Package)" == setup-system && "$(dpkg-deb -f "$1" Version)" == "$version" ]]
+    [[ "$(dpkg-deb -f "$1" Architecture)" == all && "$(dpkg-deb -f "$1" X-Setup-System-Source)" == "$GITHUB_SHA" ]]
+}
+temp=$(mktemp -d)
+trap 'rm -rf -- "$temp"' EXIT
+# Include original event order in the companion. The shared provider considers
+# all public releases when deciding whether a later canonical event becomes latest.
+gh api "repos/$repository/releases/tags/$stable" |
+    jq -e --arg tag "$stable" --arg sha "$GITHUB_SHA" --arg v "$version" --arg repo "$repository" '
+      select(.tag_name == $tag and .draft == false and .prerelease == false)
+      | (.body | fromjson)
+      | select(.schemaVersion == 2 and .contractSchema == "h02-python/v1")
+      | select(.repository == $repo and .branch == "main" and .sha == $sha and .version == $v)
+      | select((.runId | test("^[1-9][0-9]*$")) and (.eventCreatedAt | fromdateiso8601 > 0))
+      | {canonicalRelease: ("https://github.com/" + $repo + "/releases/tag/" + $tag),
+         source: .sha, eventCreatedAt, runId}' > "$temp/notes.json"
+refdata=$(ref "$stable")
+[[ "$(source_commit "$refdata")" == "$GITHUB_SHA" ]]
+cd "$artifacts"
+digest=$(sha256sum "$file")
+[[ "$digest" == "$(cat "$file.sha256")" ]]
+verify_package "$file"
+verify_bundle "$file.sigstore.json"
+# The signed Debian archive authenticates each standalone plugin and its release document.
+plugin_assets() {
+    local work member name
+    work=$(mktemp -d "$temp/catalog.XXXXXX")
+    dpkg-deb -x "$artifacts/$file" "$work"
+    expected=("$file" "$file.sha256" "$file.sigstore.json")
+    for member in "$work"/usr/lib/setup-system/plugin_catalog/*; do
+        [[ -f "$member" && ! -L "$member" ]] || return 1
+        name=${member##*/}
+        [[ "$name" =~ ^[a-z][a-z0-9_-]{0,63}\.json$ || "$name" =~ ^[a-zA-Z0-9_]+-[0-9][a-zA-Z0-9.+_-]*\.whl$ ]] || return 1
+        cp -- "$member" "$artifacts/$name"
+        expected+=("$name")
+    done
+    printf '%s\n' "${expected[@]}" | jq -R . | jq -s . > "$temp/expected.json"
+}
+plugin_assets
+refdata=$(ref "$tag")
+if [[ -z "$refdata" ]]; then
+    gh api -X POST "repos/$repository/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null
+    refdata=$(ref "$tag")
+fi
+[[ "$(source_commit "$refdata")" == "$GITHUB_SHA" ]]
+# The list includes drafts with a write token. An unknown API failure must stop publication.
+release_id() {
+    gh api --paginate "repos/$repository/releases?per_page=100" |
+    jq -sr --arg tag "$tag" '[.[][] | select(.tag_name == $tag) | .id] | if length > 1 then error("duplicate release") else .[0] // empty end'
+}
+id=$(release_id)
+if [[ -z "$id" ]]; then
+    # The releases list can lag creation. Address the draft returned by this POST.
+    id=$(gh api -X POST "repos/$repository/releases" -f tag_name="$tag" \
+        -f target_commitish="$GITHUB_SHA" -f name="Debian package for $stable" \
+        -F body="@$temp/notes.json" -F draft=true -f make_latest=false |
+        jq -er --arg tag "$tag" 'select(.tag_name == $tag and .draft == true and .prerelease == false)
+          | .id | select(type == "number" and . > 0 and . == floor)')
+fi
+[[ "$id" =~ ^[1-9][0-9]*$ ]]
+release() {
+    gh api "repos/$repository/releases/$id" > "$temp/release.json"
+    jq -e --argjson id "$id" --arg tag "$tag" --arg sha "$GITHUB_SHA" --slurpfile expected "$temp/expected.json" \
+        --slurpfile notes "$temp/notes.json" '
+        .id == $id and .tag_name == $tag and .prerelease == false and (.draft | type == "boolean")
+        and (.target_commitish == $sha or .target_commitish == "main")
+        and (.body | fromjson) == $notes[0]
+        and (.assets | type == "array")
+        and ([.assets[].name] - $expected[0]) == []
+        and ([.assets[].name] | length == (unique | length))
+        and ([.assets[].id] | length == (unique | length))
+        and all(.assets[]; .state == "uploaded"
+            and (.id | type == "number" and . > 0 and . == floor)
+            and (.size | type == "number" and . > 0 and . == floor)
+            and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")))' \
+        "$temp/release.json" >/dev/null
+    jq '[.assets[] | {name, id, digest, size}] | sort_by(.name)' "$temp/release.json" > "$temp/assets.json"
+    if [[ -f "$temp/verified-assets.json" ]]; then
+        # A stale response may omit an entry. Any returned entry must retain its verified identity.
+        jq -e --slurpfile verified "$temp/verified-assets.json" '. - $verified[0] == []' \
+            "$temp/assets.json" >/dev/null || { echo 'Verified release asset identity changed.' >&2; return 1; }
+    fi
+}
+wait_for_release() {
+    local published=$1 attempt
+    for attempt in 1 2 3 4 5; do
+        release
+        if jq -e --argjson published "$published" --argjson count "${#expected[@]}" \
+            '(.assets | length == $count) and ($published == false or .draft == false)' "$temp/release.json" >/dev/null; then
+            return 0
+        fi
+        if (( attempt < 5 )); then sleep "$attempt"; fi
+    done
+    printf 'Release %s did not reflect the completed operation. Retry publication to verify it.\n' "$id" >&2
+    return 1
+}
+download_asset() {
+    local name=$1 asset_id hash size
+    asset_id=$(jq -er --arg name "$name" '.[] | select(.name == $name) | .id' "$temp/assets.json")
+    gh api -H 'Accept: application/octet-stream' "repos/$repository/releases/assets/$asset_id" > "$temp/$name"
+    hash=$(sha256sum < "$temp/$name")
+    size=$(stat -c %s -- "$temp/$name")
+    jq -e --argjson id "$asset_id" --argjson size "$size" --arg digest "sha256:${hash%% *}" \
+        'any(.[]; .id == $id and .size == $size and .digest == $digest)' "$temp/assets.json" >/dev/null || {
+        echo "Downloaded asset does not match the release metadata: $name" >&2; return 1
+    }
+}
+verify_existing() {
+    local name=$1
+    download_asset "$name"
+    if [[ "$name" == "$file.sigstore.json" ]]; then verify_bundle "$temp/$name"; else cmp "$temp/$name" "$artifacts/$name"; fi
+}
+release
+if [[ "$(jq '.assets | length' "$temp/release.json")" != "${#expected[@]}" ]]; then
+    jq -e '.draft' "$temp/release.json" >/dev/null
+    # If the earlier signed build used a different dpkg, resume its bytes.
+    # Reconstruct sidecars only after verifying the existing archive's provenance.
+    if jq -e --arg name "$file" '.assets | any(.name == $name)' "$temp/release.json" >/dev/null; then
+        download_asset "$file"
+        if ! cmp -s "$temp/$file" "$artifacts/$file"; then
+            verify_package "$temp/$file"
+            artifacts=$temp/original
+            mkdir "$artifacts"
+            cp "$temp/$file" "$artifacts/"
+            (
+                cd "$artifacts"
+                sha256sum "$file" > "$file.sha256"
+                digest=$(cut -d ' ' -f 1 "$file.sha256")
+                gh attestation download "$file" --repo "$repository" --predicate-type https://slsa.dev/provenance/v1
+                while IFS= read -r bundle || [[ -n "$bundle" ]]; do
+                    printf '%s\n' "$bundle" > "$file.sigstore.json"
+                    if verify_bundle "$file.sigstore.json" "$file"; then exit 0; fi
+                done < "sha256:$digest.jsonl"
+                exit 1
+            )
+            plugin_assets
+        fi
+    fi
+    missing=()
+    for name in "${expected[@]}"; do
+        if jq -e --arg name "$name" '.assets | any(.name == $name)' "$temp/release.json" >/dev/null; then
+            verify_existing "$name"
+        else
+            missing+=("$name")
+        fi
+    done
+    for name in "${missing[@]}"; do
+        gh api -X POST "https://uploads.github.com/repos/$repository/releases/$id/assets?name=$name" \
+            -H 'Content-Type: application/octet-stream' --input "$artifacts/$name" > "$temp/upload.json"
+        jq -e --arg name "$name" '.name == $name and .state == "uploaded"' "$temp/upload.json" >/dev/null
+    done
+fi
+wait_for_release false
+cp "$temp/assets.json" "$temp/verified-assets.json"
+for name in "${expected[@]}"; do download_asset "$name"; done
+# An earlier successful build may have used a different dpkg revision. Its own
+# signed bytes and exact source, version and checksum are authoritative.
+(
+    cd "$temp"
+    sha256sum "$file" > expected.sha256
+    cmp expected.sha256 "$file.sha256"
+    verify_package "$file"
+    verify_bundle "$temp/$file.sigstore.json" "$temp/$file"
+    mkdir "$temp/proven"
+    dpkg-deb -x "$file" "$temp/proven"
+    for name in "${expected[@]:3}"; do
+        cmp "$temp/$name" "$temp/proven/usr/lib/setup-system/plugin_catalog/$name"
+        verify_bundle "$temp/$file.sigstore.json" "$temp/$name"
+    done
+)
+wait_for_release false
+if jq -e '.draft' "$temp/release.json" >/dev/null; then
+    gh api -X PATCH "repos/$repository/releases/$id" -F draft=false -f make_latest=false >/dev/null
+fi
+wait_for_release true
+[[ "$(source_commit "$(ref "$tag")")" == "$GITHUB_SHA" ]]

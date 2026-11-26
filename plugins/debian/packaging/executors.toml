@@ -1,0 +1,9 @@
+# Reviewed handlers implemented by the package-owned launcher and its installed recipes.
+[handlers]
+administration = ["grant-sudo", "verify-sudo"]
+debian = ["packages", "package-cleanup", "operation.recovery"]
+firefox = ["configure", "remove-policy"]
+greeter = ["activate-login"]
+plymouth = ["install", "update", "configure"]
+regional = ["timezone", "locale", "keyboard"]
+snap = ["install-apps", "update-apps", "remove-apps"]

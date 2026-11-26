@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_git.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -14,6 +14,7 @@
     "account-keys",
     "ui-code"
   ],
+  "provides": [],
   "capabilities": [
     "author-identities",
     "ssh-keys"
@@ -21,6 +22,7 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Git",
@@ -32,6 +34,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure",
       "label": "Configure author identity",
@@ -45,6 +48,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "generate-key",
       "label": "Create an SSH key",
@@ -58,6 +62,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install",
@@ -71,6 +81,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update",
@@ -84,6 +100,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
@@ -97,6 +119,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "upload-key",
       "label": "Upload public SSH key",
@@ -110,6 +133,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "revoke-key",
       "label": "Revoke owned SSH key",
@@ -123,6 +147,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "import-identity",
       "label": "Import repository identity",
@@ -136,6 +161,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "use-identity",
       "label": "Apply identity to checkout",
@@ -149,6 +175,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "remote",
       "id": "remove-owned-keys",
       "label": "Revoke managed SSH keys",
@@ -162,6 +189,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure-style",
       "label": "Configure colors and aliases",
@@ -175,6 +203,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "verify-ssh",
       "label": "Verify SSH account access",
@@ -188,6 +217,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "local",
       "id": "remove-local-keys",
       "label": "Remove managed local SSH keys",
@@ -201,6 +231,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "remove-retired-package",
       "label": "Remove one formerly managed package",

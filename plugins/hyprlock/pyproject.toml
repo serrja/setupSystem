@@ -8,10 +8,66 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Hyprlock desktop configuration"
 license = "MIT"
-dependencies = ["setup-system>=0.7.0.dev0"]
+dependencies = ["setup-system-sdk>=3,<4"]
 
 [project.entry-points."setup_system.plugins"]
 hyprlock = "setup_plugin_hyprlock.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_hyprlock"]
+
+[tool.setup-system.manifest]
+name = "Hyprlock"
+author = "serrja"
+category = "desktop"
+kind = "system"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "user-files"]
+capabilities = ["session-lock"]
+dependencies = []
+pages = []
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check program"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install"
+target = "install"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update"
+target = "update"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+cleanup_phase = "program"
+id = "uninstall"
+label = "Uninstall"
+target = "uninstall"
+permissions = ["root"]
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure"
+label = "Save configuration"
+target = "configure"
+permissions = ["user-files"]
+supports_rollback = true
+mode = "mutation"
