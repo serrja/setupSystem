@@ -114,9 +114,15 @@ def test_deb_metadata_payload_and_reproducibility(package: Path, tmp_path: Path)
     names = {canonicalize_name(Requirement(requirement).name) for requirement in runtime}
     debian_names = {"ansible-core": "ansible-core", "pyyaml": "python3-yaml"}
     required = {debian_names.get(name, f"python3-{name}") for name in names}
-    assert required | {"make", "git", "ca-certificates"} <= {
-        part.split(" (")[0] for part in dependencies.split(", ")
-    }
+    # Textual requests markdown-it-py's plugins extra. Debian declares it as
+    # optional, while isolated workers verify the complete Python requirement.
+    assert required | {
+        "make",
+        "git",
+        "ca-certificates",
+        "python3-mdit-py-plugins",
+        "python3-cryptography",
+    } <= {part.split(" (")[0] for part in dependencies.split(", ")}
     raw = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(package)])
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         names = set(archive.getnames())
