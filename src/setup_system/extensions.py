@@ -21,6 +21,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from email.parser import BytesParser
+from enum import StrEnum
 from importlib.metadata import distribution, distributions
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal, Self
@@ -548,7 +549,14 @@ def installed(env_root: Path) -> tuple[CatalogEntry, ...]:
     return tuple(result)
 
 
-async def _run(argv: list[str], cwd: Path) -> None:
+class EnvironmentStep(StrEnum):
+    CREATE = "creating the environment"
+    INSTALL = "installing the plugin wheel"
+    DEPENDENCIES = "checking Debian dependencies"
+    BACKEND = "loading the plugin backend"
+
+
+async def _run(argv: list[str], cwd: Path, step: EnvironmentStep) -> None:
     process = await asyncio.create_subprocess_exec(
         *argv,
         cwd=cwd,
@@ -568,7 +576,9 @@ async def _run(argv: list[str], cwd: Path) -> None:
     try:
         async with asyncio.timeout(120):
             if await process.wait():
-                raise ValueError("Could not prepare or verify the isolated plugin environment")
+                raise ValueError(
+                    f"Plugin activation failed while {step.value} (exit {process.returncode})"
+                )
     finally:
         if process.returncode is None:
             try:
@@ -783,7 +793,7 @@ async def install_release(
             ]
             if system:
                 args.append("--system-site-packages")
-            await _run(args, stage)
+            await _run(args, stage, EnvironmentStep.CREATE)
             await _run(
                 [
                     uv,
@@ -803,6 +813,7 @@ async def install_release(
                     *[str(stage / w.name) for w in selected.wheels],
                 ],
                 stage,
+                EnvironmentStep.INSTALL,
             )
             if system:
                 # uv does not resolve against Debian packages inherited through site-packages.
@@ -818,6 +829,7 @@ async def install_release(
                         *(str(parse_wheel_filename(w.name)[0]) for w in selected.wheels),
                     ],
                     stage,
+                    EnvironmentStep.DEPENDENCIES,
                 )
             (generation / "manifest.json").write_text(selected.manifest.model_dump_json())
             state = await asyncio.to_thread(_read_generation, root, pointer)
@@ -832,6 +844,7 @@ async def install_release(
                     selected.manifest.id,
                 ],
                 stage,
+                EnvironmentStep.BACKEND,
             )
             if validate_settings:
                 await asyncio.to_thread(validate_settings, state)
