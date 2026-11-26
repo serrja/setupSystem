@@ -10,18 +10,17 @@ import tomllib
 from pathlib import Path
 
 from pydantic import Field, TypeAdapter
-
-from setup_system.execution.file_publication import move_new
-from setup_system.execution.file_publication import observe as file_state
-from setup_system.execution.processes import run_command
-from setup_system.execution.user_storage import (
+from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
+from setup_system_sdk.files.file_publication import move_new
+from setup_system_sdk.files.file_publication import observe as file_state
+from setup_system_sdk.files.user_storage import (
     checked_directory,
     inside_home,
     private_directory,
 )
-from setup_system_sdk.enums.operation import Outcome
-from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
 from setup_system_sdk.plugin import owned_resources
+from setup_system_sdk.processes import run_command
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 

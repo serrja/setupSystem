@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from pydantic import Field
-
 from setup_system_sdk.plugin import PluginSettings
 
 

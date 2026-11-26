@@ -11,18 +11,7 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Markdown, Select
 
-TOPICS = {
-    "database": "Local database and migrations",
-    "configuration": "Configuration",
-    "plugin_authoring": "Plugin SDK",
-    "plugin_trust": "Extension trust and privileges",
-    "settings_map": "Settings reference",
-    "administration": "Administrative access",
-    "recovery": "Recovery",
-    "desktop_login": "Login and screen lock",
-    "graphical_unlock": "Disk unlock",
-    "applications": "Application sources",
-}
+TOPICS = {"help": "Plugin help", "settings_reference": "Settings reference"}
 
 
 class Help(ModalScreen[None]):
@@ -35,7 +24,7 @@ class Help(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         yield Select(
             [(label, key) for key, label in TOPICS.items()],
-            value="configuration",
+            value="help",
             allow_blank=False,
             id="help-topic",
         )

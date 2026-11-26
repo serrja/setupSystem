@@ -16,16 +16,15 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field
+from setup_system_sdk.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
+from setup_system_sdk.files.contracts import ContractModel
+from setup_system_sdk.files.file_publication import observe
+from setup_system_sdk.files.managed_files import apply_files
+from setup_system_sdk.files.receipt_repository import ownership
+from setup_system_sdk.files.receipts import FileState
+from setup_system_sdk.processes import run_command
 
 from setup_plugin_rtk.facts import RtkStatus
-from setup_system.execution.contracts import ContractModel
-from setup_system.execution.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
-from setup_system.execution.file_publication import observe
-from setup_system.execution.managed_files import apply_files
-from setup_system.execution.native_target import architecture
-from setup_system.execution.processes import run_command
-from setup_system.execution.receipt_repository import ownership
-from setup_system.execution.receipts import FileState
 
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 1024 * 1024
@@ -53,9 +52,9 @@ def release(version: str | None = None) -> Release:
     if version and not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Invalid RTK release version")
     platform_asset = {
-        "amd64": "rtk-x86_64-unknown-linux-musl.tar.gz",
-        "arm64": "rtk-aarch64-unknown-linux-gnu.tar.gz",
-    }.get(architecture(platform.machine()))
+        "x86_64": "rtk-x86_64-unknown-linux-musl.tar.gz",
+        "aarch64": "rtk-aarch64-unknown-linux-gnu.tar.gz",
+    }.get(platform.machine())
     if platform.system() != "Linux" or not platform_asset:
         raise ValueError("Official RTK requires Linux amd64 or arm64")
     selector = f"tags/v{version}" if version else "latest"

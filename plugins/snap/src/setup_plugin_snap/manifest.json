@@ -4,13 +4,14 @@
   "author": "serrja",
   "category": "system",
   "kind": "system",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_snap.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "root"
   ],
+  "provides": [],
   "capabilities": [
     "debian-package",
     "snap-inventory",
@@ -19,6 +20,12 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install snapd",
@@ -32,6 +39,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update snapd",
@@ -45,6 +58,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Remove snapd",
@@ -58,6 +77,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Snap runtime",
@@ -69,6 +89,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "list-installed",
       "label": "List installed revisions",
@@ -80,6 +101,12 @@
       "description": "Read all installed revisions from the local snapd daemon."
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "start-system-service",
       "label": "Start Snap service",
@@ -93,6 +120,12 @@
       "description": "Start the installed system snapd.service."
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install-apps",
       "label": "Install applications",
@@ -106,6 +139,12 @@
       "description": "Install selected strict Store revisions."
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update-apps",
       "label": "Update applications",
@@ -119,6 +158,7 @@
       "description": "Refresh selected installed applications to reviewed stable revisions."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "remove-apps",
       "label": "Remove applications",
@@ -132,6 +172,7 @@
       "description": "Save and verify data snapshots before removing the selected snaps."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check-apps",
       "label": "Check applications",

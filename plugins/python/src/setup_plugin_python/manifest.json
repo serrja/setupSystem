@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "development",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_python.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -12,6 +12,7 @@
     "sudo",
     "user-files"
   ],
+  "provides": [],
   "capabilities": [
     "toolchain",
     "native-editor-tools"
@@ -19,6 +20,7 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check tool availability",
@@ -30,6 +32,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install Debian prerequisites",
@@ -43,6 +46,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update Debian prerequisites",
@@ -56,6 +60,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure",
       "label": "Configure user tools",
@@ -69,6 +74,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Remove owned Debian packages",
@@ -82,6 +88,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "local",
       "id": "remove-tools",
       "label": "Remove managed tool generations",

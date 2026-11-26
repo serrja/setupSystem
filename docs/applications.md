@@ -21,4 +21,4 @@ Select a program in the catalog. Its Overview identifies the extension, and Chec
 
 Uninstall previews the application resources recorded as created. The ledger records the complete APT transaction. Uninstall removes directly requested packages created by this plugin. Additional libraries remain available to other consumers. Review candidates in the separate APT autoremove action. Repositories, Docker volumes, vault notes and other personal documents stay under user control. Open the plugin’s Help for its specific cleanup behavior.
 
-The program guides describe independent actions and the native steps required by external services. [Git identities](git_identities.md) · [Happ routing](happ_guide.md) · [ChatGPT Desktop](chatgpt_guide.md) · [Neovim](neovim_guide.md).
+The program guides describe independent actions and the native steps required by external services. [Git identities](../plugins/git/docs/git_identities.md) · [Happ routing](../plugins/happ/docs/happ_guide.md) · [ChatGPT Desktop](../plugins/chatgpt/docs/chatgpt_guide.md) · [Neovim](../plugins/neovim/docs/neovim_guide.md).

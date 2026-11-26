@@ -4,13 +4,14 @@
   "author": "serrja",
   "category": "system",
   "kind": "system",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_regional.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
   "permissions": [
     "root"
   ],
+  "provides": [],
   "capabilities": [
     "locale-generation",
     "console-keyboard"
@@ -18,6 +19,12 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update regional tools",
@@ -31,6 +38,12 @@
       "description": "Use the signed Debian locale and console keyboard packages."
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install regional tools",
@@ -44,6 +57,7 @@
       "description": "Use the signed Debian locale and console keyboard packages."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "timezone",
       "label": "Set timezone",
@@ -57,6 +71,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "locale",
       "label": "Set locale",
@@ -70,6 +85,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "keyboard",
       "label": "Set keyboard",

@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import ConfigDict, Field, StrictBool
+from setup_system_sdk.files.account_identity import TargetUser
+from setup_system_sdk.files.contracts import ContractModel
+from setup_system_sdk.files.manifest_types import Digest, FrozenMap
+from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.settings import PluginSettings
 
-from setup_system.execution.account_identity import TargetUser
-from setup_system.execution.contracts import ContractModel
-from setup_system.execution.manifest_types import Digest, FrozenMap
-from setup_system.execution.system_facts import FileMode, SystemSnapshot
+from setup_plugin_greeter.adapters.system_facts import FileMode, SystemSnapshot
 
 
 class LoginConsent(ContractModel):
@@ -55,3 +57,13 @@ class DesktopPlan(ContractModel):
     @property
     def previous_target(self) -> str:
         return self.consent.previous_target
+
+
+class Confirmation(Inputs):
+    user: str
+    boot: str
+    consent: LoginConsent
+    roots: dict[str, Path]
+
+
+Settings = PluginSettings

@@ -10,16 +10,15 @@ import tarfile
 from pathlib import Path
 
 from pydantic import Field
-
-from setup_system.execution.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
-from setup_system.execution.file_publication import observe
-from setup_system.execution.managed_files import apply_files
-from setup_system.execution.recipes.apt import GithubRelease
-from setup_system.execution.user_storage import inside_home
+from setup_system_sdk.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
 from setup_system_sdk.enums.lifecycle import LifecycleAction
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceOwnership
+from setup_system_sdk.files.file_publication import observe
+from setup_system_sdk.files.managed_files import apply_files
+from setup_system_sdk.files.user_storage import inside_home
 from setup_system_sdk.plugin import owned_resources
+from setup_system_sdk.releases import GithubRelease
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 

@@ -1,0 +1,43 @@
+from pathlib import Path
+from setup_system_sdk import Backend
+from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.operations import Receipt, Result, StepPlan
+from setup_system_sdk.schemas.common import Inputs
+
+
+class Writer:
+    request_model = Inputs
+
+    async def inspect(self, request, context):
+        return {"exists": (Path.home() / "provider-marker").exists()}
+
+    async def plan(self, request, context):
+        return StepPlan(
+            step_key=request.step_key,
+            executor=context.executor,
+            handler="write",
+            capability=request.capability,
+            contract_version="1",
+            lock_keys=("shared",),
+        )
+
+    async def execute(self, step, context):
+        (Path.home() / "provider-marker").write_text("done")
+        return Receipt(
+            operation_id=context.operation_id,
+            step_key=step.step_key,
+            executor=context.executor,
+            result=Result(outcome=Outcome.CHANGED, message="Wrote marker"),
+        )
+
+    async def readback(self, step, receipt, context):
+        return Result(
+            outcome=Outcome.COMPLETE
+            if (Path.home() / "provider-marker").is_file()
+            else Outcome.UNKNOWN_OUTCOME,
+            message="Checked marker",
+        )
+
+
+class Plugin(Backend):
+    providers = {"fixture.write": Writer()}

@@ -8,10 +8,37 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Grant sudo access to an existing local login"
 license = "MIT"
-dependencies = ["setup-system>=0.7.0.dev0"]
+dependencies = ["setup-system-sdk>=3,<4"]
 
 [project.entry-points."setup_system.plugins"]
 administration = "setup_plugin_administration.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_administration"]
+
+[tool.setup-system.manifest]
+name = "Administration"
+author = "serrja"
+category = "system"
+kind = "system"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "su"]
+capabilities = ["sudo-membership"]
+dependencies = []
+pages = ["Accounts"]
+
+[[tool.setup-system.manifest.actions]]
+id = "grant-sudo"
+label = "Grant sudo access"
+target = "grant-sudo"
+permissions = ["root", "su"]
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "verify-sudo"
+label = "Verify effective access"
+target = "verify-sudo"
+permissions = ["root", "su"]
+mode = "authenticated_check"
+description = "Authenticate and verify the selected account’s effective Debian sudo policy."

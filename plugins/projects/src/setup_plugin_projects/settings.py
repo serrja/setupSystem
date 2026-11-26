@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pydantic import Field
-
 from setup_system_sdk.plugin import PluginSettings
 
 

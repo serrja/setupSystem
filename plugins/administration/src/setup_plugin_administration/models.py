@@ -4,8 +4,8 @@ from pathlib import PurePosixPath
 from typing import Annotated, Self
 
 from pydantic import Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
-
-from setup_system.execution.contracts import ContractModel
+from setup_system_sdk.files.contracts import ContractModel
+from setup_system_sdk.schemas.common import Inputs
 
 ADMIN_REQUEST_BYTES = 32 * 1024
 
@@ -62,3 +62,23 @@ class AdminAccount(AdminIntent):
         ):
             raise ValueError("Expected an absolute local account path")
         return value
+
+
+class Login(Inputs):
+    username: str = Field(
+        title="Existing local login",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[a-z_][a-z0-9_-]{0,31}$",
+        description="An ordinary account in the local passwd and group databases.",
+        json_schema_extra={
+            "ui": {"widget": "select", "choice_provider": "accounts", "allow_custom": False}
+        },
+    )
+
+    @field_validator("username")
+    @classmethod
+    def ordinary(cls, name: str) -> str:
+        if name == "root":
+            raise ValueError("Select an ordinary interactive login.")
+        return name

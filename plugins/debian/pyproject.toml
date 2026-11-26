@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-debian"
+version = "1.0.0"
+description = "Debian platform and native package operations for setupSystem"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4", "ansible-core>=2.18,<3", "pexpect>=4.9,<5"]
+
+[dependency-groups]
+dev = ["ansible-lint>=26.11.0", "pytest>=8", "pytest-asyncio>=1", "ruff>=0.14"]
+
+[project.entry-points."setup_system.plugins"]
+debian = "setup_plugin_debian:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_debian"]
+
+[tool.setup-system.manifest]
+name = "Debian"
+author = "serrja"
+category = "system"
+kind = "system"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "remove-preexisting"]
+capabilities = ["packages"]
+dependencies = []
+pages = []
+actions = []

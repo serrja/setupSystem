@@ -1,30 +1,29 @@
-"""Manage ChatGPT through its supported Debian package and native interface."""
+"""Declare the plugin settings, actions and capability handlers."""
+
+from __future__ import annotations
 
 from enum import StrEnum
-from pathlib import Path
 from typing import ClassVar
 
-from setup_plugin_chatgpt.enums import PluginAction
-from setup_system.execution.recipes.apt import DebianPackages, apply_packages
 from setup_system_sdk.enums.lifecycle import LifecycleAction
-from setup_system_sdk.plugin import PluginSettings
 from setup_system_sdk.schemas.common import Inputs
-from setup_system_sdk.schemas.operation import Plan
+
+from setup_plugin_chatgpt.actions import PluginActions
+from setup_plugin_chatgpt.models import Settings
 
 
-class Plugin(DebianPackages):
-    executable = "/usr/bin/chatgpt"
-    package_folder = Path(__file__).parent
-    manual: ClassVar[dict[StrEnum, str]] = {
-        PluginAction.ACCOUNT: "Sign in from the official ChatGPT account dialog.",
-        PluginAction.SETTINGS: "Open ChatGPT Settings for personalization and account preferences.",
+class Plugin(PluginActions):
+    settings_model = Settings
+    delegated_step_key = "packages"
+    delegated_actions: ClassVar[dict[str, str]] = {
+        "install": "system.packages",
+        "uninstall": "system.packages",
+        "update": "system.packages",
     }
     action_inputs: ClassVar[dict[StrEnum, type[Inputs]]] = {
-        **DebianPackages.package_inputs,
+        **dict.fromkeys(
+            (LifecycleAction.INSTALL, LifecycleAction.UPDATE, LifecycleAction.UNINSTALL), Inputs
+        ),
         LifecycleAction.CHECK: Inputs,
-        **dict.fromkeys(manual, Inputs),
+        **dict.fromkeys(PluginActions.manual, Inputs),
     }
-
-
-def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    apply_packages("chatgpt", action_id, plan)

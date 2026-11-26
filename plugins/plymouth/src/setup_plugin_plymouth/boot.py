@@ -13,15 +13,15 @@ import stat
 import subprocess
 import tempfile
 from collections.abc import Callable
+from importlib.resources import files
+from importlib.resources import files as package_files
 from pathlib import Path
 
 from pydantic import TypeAdapter
-
-from setup_system.execution.native_templates import render_asset
-from setup_system.execution.palette import palette
-from setup_system.execution.processes import run_command
-from setup_system.execution.system_paths import protected
-from setup_system.layout import resource_root
+from setup_system_sdk.files.palette import palette
+from setup_system_sdk.files.system_paths import protected
+from setup_system_sdk.files.templates import render_asset
+from setup_system_sdk.processes import run_command
 
 from .models import UnlockPlan
 from .recovery import BootRecovery
@@ -175,7 +175,9 @@ def _identity() -> str:
 
 def prerequisites() -> tuple[str, ...]:
     probes = TypeAdapter(dict[str, str]).validate_json(
-        Path(__file__).with_name("probes.json").read_bytes()
+        (
+            Path(str(package_files("setup_plugin_plymouth").joinpath("resources"))) / "probes.json"
+        ).read_bytes()
     )
     return tuple(name for name, path in probes.items() if not Path(path).is_file())
 
@@ -210,7 +212,8 @@ def inspect_unlock() -> UnlockPlan:
 
 def _theme(root: Path | None = None) -> bytes:
     return render_asset(
-        Path(__file__).with_name("mocha.plymouth"), palette(root or resource_root())
+        Path(str(package_files("setup_plugin_plymouth").joinpath("resources"))) / "mocha.plymouth",
+        palette(root or Path(str(files("setup_plugin_plymouth") / "resources"))),
     )
 
 

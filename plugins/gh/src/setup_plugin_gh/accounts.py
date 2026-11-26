@@ -9,14 +9,13 @@ from typing import Annotated
 import httpx
 import yaml
 from pydantic import BaseModel, Field
-from yaml.events import AliasEvent, CollectionEndEvent, CollectionStartEvent
-from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
-
-from setup_system.execution.recipes.native import command
-from setup_system.execution.user_storage import inside_home, private_directory
 from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.files.backend import command
+from setup_system_sdk.files.user_storage import inside_home, private_directory
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Result
+from yaml.events import AliasEvent, CollectionEndEvent, CollectionStartEvent
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 GH = "/usr/bin/gh"
 NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$")

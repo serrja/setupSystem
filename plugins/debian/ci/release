@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Build and publish the workstation companion for an attested canonical host release.
+set -euo pipefail
+plugin=$(cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(git -C "$plugin" rev-parse --show-toplevel)
+mode=$1 version=$2 output=$3
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+name=setup-system_${version}_all.deb
+case "$mode" in
+    bundle) cp -- "$4" "$output/$name.sigstore.json"; exit ;;
+    publish) exec bash "$plugin/packaging/publish" "$version" "$output" ;;
+    build) ;;
+    *) exit 2 ;;
+esac
+[[ "$(git -C "$root" rev-parse HEAD)" == "$GITHUB_SHA" ]]
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
+mkdir -p "$output" "$stage/host" "$stage/wheels"
+cd "$root"
+gh release download "v$version" --repo "$GITHUB_REPOSITORY" -D "$stage/host" \
+    -p "setup_system-$version-py3-none-any.whl"
+gh attestation verify "$stage/host/"*.whl --repo "$GITHUB_REPOSITORY" \
+    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --signer-digest "$GITHUB_SHA" \
+    --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+unset GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+uv build --all-packages --wheel --out-dir "$stage/wheels"
+PYTHONPATH="$root/docker" uv run --locked --package setup-system python "$plugin/tooling/catalog.py" \
+    --wheels "$stage/wheels" --output "$stage/catalog"
+releases=()
+for manifest in "$stage/catalog/"*.json; do releases+=(--release "$manifest"); done
+uv run --locked --package setup-system python "$plugin/packaging/build.py" \
+    --source "$GITHUB_SHA" --version "$version" --output "$output" --host-wheel "$stage/host/"*.whl \
+    --sdk-wheel "$stage/wheels/"setup_system_sdk-*.whl "${releases[@]}"
+python3 "$plugin/tooling/verify_native.py" "$output/$name"
+(cd "$output" && sha256sum "$name" > "$name.sha256")
+cp "$output/$name.sha256" "$4"
+(cd "$stage/catalog" && sha256sum -- *.json *.whl) >> "$4"

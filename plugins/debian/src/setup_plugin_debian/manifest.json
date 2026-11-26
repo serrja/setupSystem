@@ -1,0 +1,532 @@
+{
+  "id": "debian",
+  "name": "Debian",
+  "author": "serrja",
+  "category": "system",
+  "kind": "system",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_debian:Plugin",
+  "version": "1.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "remove-preexisting"
+  ],
+  "provides": [
+    {
+      "id": "system.package-cleanup",
+      "version": "1",
+      "request_schema": {
+        "$defs": {
+          "JsonValue": {},
+          "Mode": {
+            "enum": [
+              "remove",
+              "purge",
+              "autoremove"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "Resource": {
+            "additionalProperties": false,
+            "properties": {
+              "source_sha256": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Sha256"
+              },
+              "kind": {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "title": "Kind",
+                "type": "string"
+              },
+              "identity": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Identity",
+                "type": "string"
+              },
+              "verified": {
+                "default": false,
+                "title": "Verified",
+                "type": "boolean"
+              },
+              "remote_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Remote Id"
+              },
+              "ownership": {
+                "$ref": "#/$defs/ResourceOwnership"
+              },
+              "before": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before"
+              },
+              "after": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "After"
+              },
+              "cleanup": {
+                "default": false,
+                "title": "Cleanup",
+                "type": "boolean"
+              },
+              "effect": {
+                "$ref": "#/$defs/ResourceEffect",
+                "default": "ensure"
+              },
+              "before_permissions": {
+                "anyOf": [
+                  {
+                    "maximum": 4095,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before Permissions"
+              },
+              "permissions": {
+                "anyOf": [
+                  {
+                    "maximum": 4095,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permissions"
+              },
+              "consumers": {
+                "default": [],
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "title": "Consumers",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "identity",
+              "ownership"
+            ],
+            "title": "Resource",
+            "type": "object"
+          },
+          "ResourceEffect": {
+            "enum": [
+              "ensure",
+              "remove"
+            ],
+            "title": "ResourceEffect",
+            "type": "string"
+          },
+          "ResourceOwnership": {
+            "enum": [
+              "created",
+              "modified",
+              "preexisting",
+              "shared"
+            ],
+            "title": "ResourceOwnership",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "consumer": {
+            "const": "cleanup",
+            "title": "Consumer",
+            "type": "string"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Mode"
+              },
+              {
+                "const": "inspect",
+                "type": "string"
+              }
+            ],
+            "title": "Action"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/Resource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence"
+          }
+        },
+        "required": [
+          "consumer",
+          "action",
+          "inputs"
+        ],
+        "title": "CleanupRequest",
+        "type": "object"
+      }
+    },
+    {
+      "id": "system.packages",
+      "version": "1",
+      "request_schema": {
+        "$defs": {
+          "JsonValue": {},
+          "PackageAction": {
+            "enum": [
+              "remove-retired-package"
+            ],
+            "title": "PackageAction",
+            "type": "string"
+          },
+          "Resource": {
+            "additionalProperties": false,
+            "properties": {
+              "source_sha256": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Sha256"
+              },
+              "kind": {
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                "title": "Kind",
+                "type": "string"
+              },
+              "identity": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Identity",
+                "type": "string"
+              },
+              "verified": {
+                "default": false,
+                "title": "Verified",
+                "type": "boolean"
+              },
+              "remote_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Remote Id"
+              },
+              "ownership": {
+                "$ref": "#/$defs/ResourceOwnership"
+              },
+              "before": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before"
+              },
+              "after": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "After"
+              },
+              "cleanup": {
+                "default": false,
+                "title": "Cleanup",
+                "type": "boolean"
+              },
+              "effect": {
+                "$ref": "#/$defs/ResourceEffect",
+                "default": "ensure"
+              },
+              "before_permissions": {
+                "anyOf": [
+                  {
+                    "maximum": 4095,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Before Permissions"
+              },
+              "permissions": {
+                "anyOf": [
+                  {
+                    "maximum": 4095,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Permissions"
+              },
+              "consumers": {
+                "default": [],
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "title": "Consumers",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "identity",
+              "ownership"
+            ],
+            "title": "Resource",
+            "type": "object"
+          },
+          "ResourceEffect": {
+            "enum": [
+              "ensure",
+              "remove"
+            ],
+            "title": "ResourceEffect",
+            "type": "string"
+          },
+          "ResourceOwnership": {
+            "enum": [
+              "created",
+              "modified",
+              "preexisting",
+              "shared"
+            ],
+            "title": "ResourceOwnership",
+            "type": "string"
+          },
+          "ServiceAction": {
+            "enum": [
+              "start-system-service",
+              "stop-system-service"
+            ],
+            "title": "ServiceAction",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "consumer": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Consumer",
+            "type": "string"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "enum": [
+                  "install",
+                  "update",
+                  "uninstall"
+                ],
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/PackageAction"
+              },
+              {
+                "$ref": "#/$defs/ServiceAction"
+              }
+            ],
+            "title": "Action"
+          },
+          "inventory": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z0-9][a-z0-9+.-]+$",
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Inventory",
+            "type": "array"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/Resource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence"
+          }
+        },
+        "required": [
+          "consumer",
+          "action"
+        ],
+        "title": "PackageRequest",
+        "type": "object"
+      }
+    },
+    {
+      "id": "operation.recovery",
+      "version": "1",
+      "request_schema": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "owner": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "title": "Owner",
+            "type": "string"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt"
+          },
+          "release_digest": {
+            "title": "Release Digest",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "snapshot": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Snapshot",
+            "type": "object"
+          }
+        },
+        "required": [
+          "owner",
+          "release_digest",
+          "operation",
+          "snapshot"
+        ],
+        "title": "RecoveryQuery",
+        "type": "object"
+      }
+    }
+  ],
+  "capabilities": [
+    "packages"
+  ],
+  "dependencies": [],
+  "actions": [],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "description": "Resolve one current configuration from the sources accepted by the plugin.",
+    "properties": {},
+    "title": "PluginSettings",
+    "type": "object"
+  },
+  "input_schemas": {},
+  "pages": [],
+  "settings_version": 1
+}

@@ -1,18 +1,5 @@
-# Verification
+# Testing
 
-The owner withdrew automated product cases. The pytest fixtures supply a synthetic HOME, XDG directories, a migrated local database and a Textual application for future work. Run `make native-ci` for the current static, migration and packaging checks. Manual diagnostics should record the exact artifact, release digest, inputs, outcome and scope without passwords or tokens.
+Run `uv run --locked pytest -n 2 tests` for host, SDK and contract tests. The fixtures create private HOME, XDG and temporary directories per test. Database tests use synthetic SQLite files. Async tests declare their asyncio marker and use an asyncio backend. Worker cancellation, signals and terminal behavior require real subprocesses.
 
-## Disposable Debian target
-
-Record the disposable target's identity and authorization, Debian release, CPU architecture, available filesystem space, encryption layout and current boot loader. Use synthetic accounts, content and secrets.
-
-1. Install the stable Debian package on a clean system. Record its dpkg version and source field. Check which dependencies changed. Confirm that the UI did not start and the selected workstation software was not installed.
-2. Change into an unrelated directory and start `setup-system` as the normal user. Activate two independent extensions, save each extension’s settings and inspect a program. Capture the file hashes, modes, managed-file backup identities and a deliberately hand-edited file.
-3. Reinstall the same package, then update from the preceding version. Confirm that selections, manual edits and backups survive. Repeat an update while Apply or Restore is active. The update must report a lock conflict.
-4. Remove the configurator, check the preserved files and workstation applications, reinstall, and reopen the plugin pages.
-5. Exercise a representative native Apply, repeat to verify idempotence, then test recovery with a later user edit. Test the live compositor and connected monitor modes in an actual graphical session.
-6. For existing LUKS only, verify the supported boot layout, backup, graphical prompt, text fallback and recovery menu on that target. Record a normal and a recovery boot.
-
-Report package construction, publication, installation, graphical login and boot as separate results.
-
-On that same target keep the rescue console available while testing root-authenticated package installation and the one-time sudo grant. Exercise a wrong password, a locked root account, a repeated grant and an account changed since preview. Verify unrelated groups and the current session before opening a fresh login and testing the user's own sudo password. At the same resolution and scale, compare the greeter and lock layout, failed and successful PAM challenges, and the identity after unlock. Record normal and recovery Plymouth boots separately.
+Use `make plugins-check` to invoke package-owned checks. Installation, hardware and boot acceptance require an explicitly authorized disposable target. See [development](development.md).

@@ -8,6 +8,35 @@ resolution-markers = [
 ]
 
 [manifest]
+members = [
+    "setup-system",
+    "setup-system-plugin-administration",
+    "setup-system-plugin-chatgpt",
+    "setup-system-plugin-cleanup",
+    "setup-system-plugin-codex",
+    "setup-system-plugin-debian",
+    "setup-system-plugin-docker",
+    "setup-system-plugin-firefox",
+    "setup-system-plugin-foot",
+    "setup-system-plugin-gh",
+    "setup-system-plugin-git",
+    "setup-system-plugin-greeter",
+    "setup-system-plugin-happ",
+    "setup-system-plugin-hyprland",
+    "setup-system-plugin-hyprlock",
+    "setup-system-plugin-neovim",
+    "setup-system-plugin-obsidian",
+    "setup-system-plugin-plymouth",
+    "setup-system-plugin-projects",
+    "setup-system-plugin-python",
+    "setup-system-plugin-regional",
+    "setup-system-plugin-rtk",
+    "setup-system-plugin-snap",
+    "setup-system-plugin-waybar",
+    "setup-system-plugin-zsh",
+    "setup-system-sdk",
+]
+constraints = [{ name = "anyio", specifier = "==4.9.0" }]
 build-constraints = [
     { name = "hatchling", specifier = "==1.33.0" },
     { name = "packaging", specifier = "==26.3" },
@@ -128,15 +157,16 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.16.0"
+version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
-    { name = "typing-extensions", marker = "python_full_version < '3.15'" },
+    { name = "sniffio" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a1/98/7e457a3b014976887a050561955c0b76e1e7e2d6e27b78ecef2ef80518f2/anyio-4.16.0.tar.gz", hash = "sha256:59bb03251907983d1603d27c3087ddb1e93299ea2163adcdba37899a4fb12ffb", size = 310971, upload-time = "2026-11-01T11:20:07.282Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/7d/4c1bd541d4dffa1b52bd83fb8527089e097a106fc90b467a7313b105f840/anyio-4.9.0.tar.gz", hash = "sha256:673c0c244e15788651a4ff38710fea9675823028a6f08a5eda409e0c9840a028", size = 190949, upload-time = "2025-03-17T00:02:54.77Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/16/7757fb84c819accc7d7e9af5291b261e4abb8627ee040f99e7d35ef2457a/anyio-4.16.0-py3-none-any.whl", hash = "sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026", size = 134521, upload-time = "2026-11-01T11:20:05.59Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/ee/48ca1a7c89ffec8b6a0c5d02b89c305671d5ffd8d3c94acf8b8c408575bb/anyio-4.9.0-py3-none-any.whl", hash = "sha256:9f76d541cad6e36af7beb62e978876f3b41e3e04f2c1fbf0884604c0a9c4d93c", size = 100916, upload-time = "2025-03-17T00:02:52.713Z" },
 ]
 
 [[package]]
@@ -471,6 +501,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/18/82/51a4e2ed9a7fef19888e5e0ba9a493c8f1878ab89b10b05cc9564b4f5df8/dunamai-1.26.5.tar.gz", hash = "sha256:b1435d8d2b0aceef240cde8e8f6ba910e85b1aa0e22fa9e21454d2d22fb0a89c", size = 47730, upload-time = "2026-11-09T00:29:38.803Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/77/d38fa217006289616e0487977a1f72ef88373f05ee01541caa6beb0ad825/dunamai-1.26.5-py3-none-any.whl", hash = "sha256:91099127a6a16dbcb08c941d5a07879d8b24eb2096368dc37750e681573eedc4", size = 27793, upload-time = "2026-11-09T00:29:37.681Z" },
+]
+
+[[package]]
+name = "execnet"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/89/780e11f9588d9e7128a3f87788354c7946a9cbb1401ad38a48c4db9a4f07/execnet-2.1.2.tar.gz", hash = "sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd", size = 166622, upload-time = "2025-11-12T09:56:37.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl", hash = "sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec", size = 40708, upload-time = "2025-11-12T09:56:36.333Z" },
 ]
 
 [[package]]
@@ -1350,6 +1389,31 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-subprocess"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/7a/0d5855132e11de2a96da26e596560757ebbbf8190cfe36cbf85d7423f384/pytest_subprocess-1.6.0.tar.gz", hash = "sha256:b2d746eb1b768a6f9087e5c7c91f87fb9d40c7fdc777550dc00397af428a0654", size = 47910, upload-time = "2026-05-10T08:22:54.207Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/4f/ebe38bf128380f6a8a9b0fbbbe24cbf83915bb2f934717be65cadf55b6fa/pytest_subprocess-1.6.0-py3-none-any.whl", hash = "sha256:00037100f30429c8546adc81f357fddb5213eb036fe3bfb47b7b6befc965e5b2", size = 23803, upload-time = "2026-05-10T08:22:52.52Z" },
+]
+
+[[package]]
+name = "pytest-xdist"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1653,17 +1717,18 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiosqlite" },
     { name = "alembic" },
-    { name = "ansible-core" },
+    { name = "anyio" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "keyring" },
     { name = "packaging" },
-    { name = "pexpect" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
+    { name = "setup-system-sdk" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tenacity" },
     { name = "textual" },
     { name = "tomlkit" },
     { name = "typer" },
@@ -1671,20 +1736,17 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "ansible-lint" },
-    { name = "copier" },
     { name = "hatchling" },
     { name = "mypy" },
     { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-subprocess" },
+    { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "shellcheck-py" },
     { name = "types-aiofiles" },
     { name = "types-pyyaml" },
-]
-plugin-runtime = [
-    { name = "copier" },
 ]
 
 [package.metadata]
@@ -1692,17 +1754,18 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24,<26" },
     { name = "aiosqlite", specifier = ">=0.20,<1" },
     { name = "alembic", specifier = ">=1.13.2,<2" },
-    { name = "ansible-core", specifier = ">=2.18,<3" },
+    { name = "anyio", specifier = ">=4.8,<5" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "keyring", specifier = ">=25,<27" },
     { name = "packaging", specifier = ">=24,<27" },
-    { name = "pexpect", specifier = ">=4.9,<5" },
     { name = "platformdirs", specifier = ">=4,<5" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pydantic-settings", specifier = ">=2.8.1,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "setup-system-sdk", editable = "sdk" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.40,<2.1" },
+    { name = "tenacity", specifier = ">=9,<10" },
     { name = "textual", specifier = ">=2.1,<7" },
     { name = "tomlkit", specifier = ">=0.13,<1" },
     { name = "typer", specifier = ">=0.15.2,<1" },
@@ -1710,19 +1773,399 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "ansible-lint", specifier = ">=26.11.0" },
-    { name = "copier", specifier = "==9.17.2" },
     { name = "hatchling", specifier = ">=1.27,<2" },
     { name = "mypy", specifier = ">=2.3,<3" },
     { name = "packaging", specifier = ">=25,<27" },
     { name = "pytest", specifier = ">=9,<10" },
     { name = "pytest-asyncio", specifier = ">=1,<2" },
+    { name = "pytest-subprocess", specifier = ">=1.5,<2" },
+    { name = "pytest-xdist", specifier = ">=3.6,<4" },
     { name = "ruff", specifier = ">=0.16.4,<1" },
     { name = "shellcheck-py", specifier = ">=0.11.0.1" },
     { name = "types-aiofiles", specifier = ">=25.1.0.20261107" },
     { name = "types-pyyaml", specifier = ">=6,<7" },
 ]
-plugin-runtime = [{ name = "copier", specifier = "==9.17.2" }]
+
+[[package]]
+name = "setup-system-plugin-administration"
+version = "2.0.0"
+source = { editable = "plugins/administration" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-chatgpt"
+version = "2.0.0"
+source = { editable = "plugins/chatgpt" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-cleanup"
+version = "2.0.0"
+source = { editable = "plugins/cleanup" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-codex"
+version = "2.0.0"
+source = { editable = "plugins/codex" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-debian"
+version = "1.0.0"
+source = { editable = "plugins/debian" }
+dependencies = [
+    { name = "ansible-core" },
+    { name = "pexpect" },
+    { name = "setup-system-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ansible-lint" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ansible-core", specifier = ">=2.18,<3" },
+    { name = "pexpect", specifier = ">=4.9,<5" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ansible-lint", specifier = ">=26.11.0" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=1" },
+    { name = "ruff", specifier = ">=0.14" },
+]
+
+[[package]]
+name = "setup-system-plugin-docker"
+version = "2.0.0"
+source = { editable = "plugins/docker" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-firefox"
+version = "2.0.0"
+source = { editable = "plugins/firefox" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-foot"
+version = "2.0.0"
+source = { editable = "plugins/foot" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-gh"
+version = "2.0.0"
+source = { editable = "plugins/gh" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-git"
+version = "2.0.0"
+source = { editable = "plugins/git" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "setup-system-sdk", extra = ["ui"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=43" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", extras = ["ui"], editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-greeter"
+version = "2.0.0"
+source = { editable = "plugins/greeter" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-happ"
+version = "2.0.0"
+source = { editable = "plugins/happ" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-hyprland"
+version = "2.0.0"
+source = { editable = "plugins/hyprland" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-hyprlock"
+version = "2.0.0"
+source = { editable = "plugins/hyprlock" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-neovim"
+version = "2.0.0"
+source = { editable = "plugins/neovim" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-obsidian"
+version = "2.0.0"
+source = { editable = "plugins/obsidian" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-plymouth"
+version = "2.0.0"
+source = { editable = "plugins/plymouth" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-projects"
+version = "2.0.0"
+source = { editable = "plugins/projects" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.optional-dependencies]
+templates = [
+    { name = "copier" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "copier", marker = "extra == 'templates'", specifier = ">=9.10,<10" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+provides-extras = ["templates"]
+
+[[package]]
+name = "setup-system-plugin-python"
+version = "2.0.0"
+source = { editable = "plugins/python" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-regional"
+version = "2.0.0"
+source = { editable = "plugins/regional" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-rtk"
+version = "2.0.0"
+source = { editable = "plugins/rtk" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-snap"
+version = "2.0.0"
+source = { editable = "plugins/snap" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "setup-system-sdk", editable = "sdk" },
+]
+
+[[package]]
+name = "setup-system-plugin-waybar"
+version = "2.0.0"
+source = { editable = "plugins/waybar" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-plugin-zsh"
+version = "2.0.0"
+source = { editable = "plugins/zsh" }
+dependencies = [
+    { name = "setup-system-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+
+[[package]]
+name = "setup-system-sdk"
+version = "3.0.0"
+source = { editable = "sdk" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "keyring" },
+    { name = "packaging" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "tenacity" },
+]
+
+[package.optional-dependencies]
+ui = [
+    { name = "textual" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4.8,<5" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
+    { name = "keyring", specifier = ">=25,<27" },
+    { name = "packaging", specifier = ">=24,<27" },
+    { name = "platformdirs", specifier = ">=4,<5" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pydantic-settings", specifier = ">=2.8.1,<3" },
+    { name = "tenacity", specifier = ">=9,<10" },
+    { name = "textual", marker = "extra == 'ui'", specifier = ">=2.1,<7" },
+]
+provides-extras = ["ui"]
 
 [[package]]
 name = "shellcheck-py"
@@ -1743,6 +2186,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b27b655beb4b4e9c62313a4e8da8c676e142cc210d58e/shellingham-1.5.4.tar.gz", hash = "sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de", size = 10310, upload-time = "2023-10-24T04:13:40.426Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686", size = 9755, upload-time = "2023-10-24T04:13:38.866Z" },
+]
+
+[[package]]
+name = "sniffio"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
 ]
 
 [[package]]
@@ -1798,6 +2250,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/22/991efbf35bc811dfe7edcd749253f0931d2d4838cf55176132633e1c82a7/subprocess_tee-0.4.2.tar.gz", hash = "sha256:91b2b4da3aae9a7088d84acaf2ea0abee3f4fd9c0d2eae69a9b9122a71476590", size = 14951, upload-time = "2024-06-17T19:51:51.249Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/ab/e3a3be062cd544b2803760ff707dee38f0b1cb5685b2446de0ec19be28d9/subprocess_tee-0.4.2-py3-none-any.whl", hash = "sha256:21942e976715af4a19a526918adb03a8a27a8edab959f2d075b777e3d78f532d", size = 5249, upload-time = "2024-06-17T19:51:15.949Z" },
+]
+
+[[package]]
+name = "tenacity"
+version = "9.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/9e/497c1c8ebe5a5b5d1d4a7511aea22c0bb1a97e3170d98abdef0e1b34265a/tenacity-9.2.1.tar.gz", hash = "sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839", size = 58261, upload-time = "2026-10-07T12:13:01.633Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/26/1ff2b0721ac66a3ec5b1402b333110b352ab0a8724052ac279a7b82d40c4/tenacity-9.2.1-py3-none-any.whl", hash = "sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e", size = 32310, upload-time = "2026-10-07T12:13:00.102Z" },
 ]
 
 [[package]]

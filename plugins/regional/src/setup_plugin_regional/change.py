@@ -6,8 +6,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from setup_system.execution.native_target import current_boot_identity, current_target
-from setup_system.layout import require_installed_resource
+from setup_plugin_regional.adapters.native import (
+    current_boot_identity,
+    current_target,
+    require_installed_resource,
+)
 
 from . import regional
 from .models import RegionalKind

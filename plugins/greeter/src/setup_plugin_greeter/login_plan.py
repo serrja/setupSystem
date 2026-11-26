@@ -10,13 +10,15 @@ import shlex
 import stat
 import subprocess
 from collections.abc import Callable, Mapping
+from importlib.resources import files as package_files
 from pathlib import Path
 
-from setup_system.execution.account_identity import TargetUser
-from setup_system.execution.inspection import inspect_system
-from setup_system.execution.native_templates import render_asset
-from setup_system.execution.palette import desktop_style, palette
-from setup_system.execution.system_facts import EncryptionState, SystemSnapshot
+from setup_system_sdk.files.account_identity import TargetUser
+from setup_system_sdk.files.palette import desktop_style, palette
+from setup_system_sdk.files.templates import render_asset
+
+from setup_plugin_greeter.adapters.native import inspect_system
+from setup_plugin_greeter.adapters.system_facts import EncryptionState, SystemSnapshot
 
 from .login_boot import manager_enabled
 from .login_files import LoginFiles
@@ -27,7 +29,8 @@ XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOM
 
 def greeter_style(root: Path) -> bytes:
     return render_asset(
-        Path(__file__).parent / "assets/login/greeter.css",
+        Path(str(package_files("setup_plugin_greeter").joinpath("resources")))
+        / "assets/login/greeter.css",
         {"auth_screen": desktop_style(root).auth_screen.tokens(palette(root))},
     )
 
@@ -107,7 +110,10 @@ def plan_login(
         ).encode()
         + b"\n"
     )
-    bridge_source = (Path(__file__).parent / "assets/login/login_session.py").read_bytes()
+    bridge_source = (
+        Path(str(package_files("setup_plugin_greeter").joinpath("resources")))
+        / "assets/login/login_session.py"
+    ).read_bytes()
     session_command = shlex.join((str(paths.bridge), str(paths.registry)))
     greeter_command = shlex.join(
         (

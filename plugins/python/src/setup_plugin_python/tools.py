@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 import re
@@ -15,27 +14,28 @@ from pathlib import Path
 from typing import ClassVar
 
 from platformdirs import user_data_path
-
-from setup_plugin_python.enums import ToolAction
-from setup_system.execution import retirement_checkpoint as checkpoint
-from setup_system.execution.file_publication import move_new, observe
-from setup_system.execution.managed_files import apply_files
-from setup_system.execution.processes import run_command
-from setup_system.execution.recipes.apt import DebianPackages
-from setup_system.execution.recorded_tree import record_tree, remove_recorded
-from setup_system.execution.user_storage import (
+from setup_system_sdk.blocking import run_sync
+from setup_system_sdk.enums.lifecycle import LifecycleAction
+from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.resources import ResourceOwnership
+from setup_system_sdk.files import retirement_checkpoint as checkpoint
+from setup_system_sdk.files.backend import NativeBackend
+from setup_system_sdk.files.file_publication import move_new, observe
+from setup_system_sdk.files.generations import fingerprint, generation_lock, seal_generation
+from setup_system_sdk.files.managed_files import apply_files
+from setup_system_sdk.files.recorded_tree import record_tree, remove_recorded
+from setup_system_sdk.files.user_storage import (
     checked_directory,
     inside_home,
     private_directory,
     safe_file,
 )
-from setup_system.services.extension_lifecycle import fingerprint, generation_lock, seal_generation
-from setup_system_sdk.enums.lifecycle import LifecycleAction
-from setup_system_sdk.enums.operation import Outcome
-from setup_system_sdk.enums.resources import ResourceOwnership
 from setup_system_sdk.plugin import PluginSettings, owned_resources
+from setup_system_sdk.processes import run_command
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
+
+from setup_plugin_python.enums import ToolAction
 
 
 def execute(argv: list[str], stage: Path, *, capture: bool = False) -> str:
@@ -139,13 +139,15 @@ def _remove_wrapper(path: Path, row: Resource) -> None:
         raise
 
 
-class Toolchain(DebianPackages):
+class Toolchain(NativeBackend):
     """Keep generations under one plugin and expose fixed tools to the user's editor."""
 
     plugin_id: ClassVar[str]
     binaries: ClassVar[dict[str, str]]
     action_inputs: ClassVar[dict[StrEnum, type[Inputs]]] = {
-        **DebianPackages.package_inputs,
+        **dict.fromkeys(
+            (LifecycleAction.INSTALL, LifecycleAction.UPDATE, LifecycleAction.UNINSTALL), Inputs
+        ),
         LifecycleAction.CHECK: Inputs,
         LifecycleAction.CONFIGURE: Inputs,
         ToolAction.REMOVE: Inputs,
@@ -200,7 +202,7 @@ class Toolchain(DebianPackages):
         )
 
     async def inspect(self, settings: PluginSettings) -> Result:
-        plan = await asyncio.to_thread(self.status, settings)
+        plan = await run_sync(self.status, settings)
         return Result(outcome=plan.outcome, message=plan.summary, resources=plan.resources)
 
     def verify_generation(self, folder: Path, settings: PluginSettings) -> bool:
@@ -400,7 +402,7 @@ class Toolchain(DebianPackages):
             r.effect == "remove" and r.kind in {"file", "toolchain_generation"}
             for r in plan.resources
         ):
-            good = await asyncio.to_thread(
+            good = await run_sync(
                 lambda: all(
                     not os.path.lexists(r.identity)
                     and not (
@@ -427,7 +429,7 @@ class Toolchain(DebianPackages):
                     return False
             return True
 
-        good = await asyncio.to_thread(matches)
+        good = await run_sync(matches)
         return Result.observed(
             outcome=Outcome.COMPLETE if good else Outcome.PARTIAL,
             resources=plan.resources,

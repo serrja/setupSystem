@@ -5,6 +5,9 @@ Each plugin ships a generated `settings_reference.md` beside its manifest and He
 
 | Field | Type and limits | Default |
 | --- | --- | --- |
+| `SETUP_SYSTEM_PROFILE` | string, `^[a-z][a-z0-9_-]{0,63}$` | `required` |
+| `SETUP_SYSTEM_CATALOGS` | list of string | `required` |
+| `SETUP_SYSTEM_PROVIDERS` | object | `see nested fields` |
 | `SETUP_SYSTEM_SUGGESTION_DEBOUNCE_SECONDS` | number, min 0, max 1 | `0.075` |
 | `SETUP_SYSTEM_SUGGESTION_CACHE_DIRECTORIES` | integer, min 1, max 128 | `32` |
 | `SETUP_SYSTEM_SUGGESTION_SCAN_ENTRIES` | integer, min 1, max 8192 | `2048` |

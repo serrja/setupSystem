@@ -8,12 +8,14 @@ import stat
 import subprocess
 from pathlib import Path
 
-from setup_system.diagnostics import PartialApplyError, error_text
-from setup_system.execution import processes, system_files
-from setup_system.execution.clock import timezone_file, validate_timezone
-from setup_system.execution.recipes import xkb
-from setup_system.execution.system_facts import InspectionPaths
-from setup_system.execution.system_paths import protected
+from setup_system_sdk import processes
+from setup_system_sdk.diagnostics import PartialApplyError, error_text
+from setup_system_sdk.files import system_files
+from setup_system_sdk.files.system_paths import protected
+
+from setup_plugin_regional.adapters import xkb
+from setup_plugin_regional.adapters.clock import timezone_file, validate_timezone
+from setup_plugin_regional.adapters.clock_paths import InspectionPaths
 
 from .models import RegionalKind, RegionalReceipt
 

@@ -4,7 +4,7 @@
   "author": "serrja",
   "category": "applications",
   "kind": "application",
-  "sdk": ">=2,<3",
+  "sdk": ">=3,<4",
   "entry_point": "setup_plugin_docker.plugin:Plugin",
   "version": "2.0.0",
   "source": "https://github.com/serrja/setupSystem",
@@ -17,6 +17,7 @@
     "native-terminal",
     "account-status"
   ],
+  "provides": [],
   "capabilities": [
     "rootless",
     "rootful",
@@ -25,6 +26,12 @@
   "dependencies": [],
   "actions": [
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "install",
       "label": "Install",
@@ -38,6 +45,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "update",
       "label": "Update",
@@ -51,6 +64,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": "program",
       "id": "uninstall",
       "label": "Uninstall",
@@ -64,6 +83,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check Docker",
@@ -75,6 +95,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "setup-mode",
       "label": "Select local daemon context",
@@ -89,6 +110,7 @@
       "description": "Select the reviewed local Docker daemon context for the current user."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "create-context",
       "label": "Create context",
@@ -102,6 +124,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "start-service",
       "label": "Start service",
@@ -115,6 +138,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "stop-service",
       "label": "Stop service",
@@ -128,6 +152,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "login",
       "label": "Registry login",
@@ -142,6 +167,7 @@
       "description": "Open the official client in a separate terminal and verify the selected sign-in."
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "logout",
       "label": "Registry logout",
@@ -153,6 +179,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "prune",
       "label": "Remove one unused image",
@@ -166,6 +193,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "start-system-service",
       "label": "Start system daemon",
@@ -179,6 +212,12 @@
       "description": ""
     },
     {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "stop-system-service",
       "label": "Stop system daemon",
@@ -192,6 +231,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": null,
       "id": "configure",
       "label": "Configure rootless daemon logs",
@@ -205,6 +245,7 @@
       "description": ""
     },
     {
+      "requires": [],
       "cleanup_phase": "local",
       "id": "remove-owned-contexts",
       "label": "Remove owned client contexts",
