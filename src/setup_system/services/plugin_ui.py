@@ -1,5 +1,6 @@
 """Load an approved, dependency-light UI module once per application process."""
 
+import ast
 import base64
 import hashlib
 import importlib.util
@@ -11,6 +12,7 @@ from types import CodeType
 
 from setup_system.services.extensions import Activation
 from setup_system_sdk import UI_GROUP
+from setup_system_sdk.enums.permissions import Permission
 from setup_system_sdk.ui import PluginPanel
 
 
@@ -25,6 +27,27 @@ class _VerifiedUI(SourceFileLoader):
         return self.source_to_code(self.source, self.path)
 
 
+def _check_ui_imports(source: bytes) -> None:
+    """Check the thin UI module's declared dependencies before loading its code."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if node.level or node.module is None:
+                raise ValueError("The UI must import its dependencies by public module name")
+            names = [node.module]
+        elif isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        else:
+            continue
+        for name in names:
+            root = name.partition(".")[0]
+            if root not in sys.stdlib_module_names and root not in {"setup_system_sdk", "textual"}:
+                raise ValueError("The UI requires a module outside the public SDK and Textual")
+            if root in {"setup_system_sdk", "textual"} and any(
+                part.startswith("_") for part in name.split(".")
+            ):
+                raise ValueError("The UI requires a private module")
+
+
 def panel_type(state: Activation, startup_digest: str | None) -> type[PluginPanel] | None:
     for distribution in distributions(path=[str(state.resources.parent)]):
         points = distribution.entry_points.select(group=UI_GROUP, name=state.manifest.id)
@@ -32,7 +55,7 @@ def panel_type(state: Activation, startup_digest: str | None) -> type[PluginPane
             continue
         if startup_digest != state.digest:
             raise ValueError("Restart setup-system to load the activated UI version")
-        if len(points) != 1 or "ui-code" not in state.manifest.permissions:
+        if len(points) != 1 or Permission.UI_CODE not in state.manifest.permissions:
             raise ValueError("The extension has no approved host UI declaration")
         point = next(iter(points))
         package = state.manifest.entry_point.partition(":")[0].partition(".")[0]
@@ -50,6 +73,7 @@ def panel_type(state: Activation, startup_digest: str | None) -> type[PluginPane
         digest = base64.urlsafe_b64encode(hashlib.sha256(source).digest()).rstrip(b"=").decode()
         if digest != file.hash.value:
             raise ValueError("UI differs from its installed wheel")
+        _check_ui_imports(source)
         name = "_setup_system_ui_" + state.manifest.id.replace("-", "_") + "_" + state.digest
         module = sys.modules.get(name)
         if module is None:

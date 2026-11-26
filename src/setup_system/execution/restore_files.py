@@ -94,9 +94,6 @@ def _holding(record: CreatedDirectory | None, target: Path) -> Path | None:
 
 
 def _status(row: FileChange, path: Path) -> RecoveryStep:
-    interrupted = _interrupted_apply(row, path)
-    if interrupted is not None:
-        return interrupted[1]
     holding = _holding(row.restore_directory, path)
     if holding is not None and (holding / "after").exists():
         if observe(holding / "after") != row.after:
@@ -115,6 +112,14 @@ def _status(row: FileChange, path: Path) -> RecoveryStep:
         return RecoveryStep.UNCHANGED if observe(path) == row.before else RecoveryStep.CONFLICT
     published = row.verified or prepared_target(row, path)
     return rollback_status(row, observe(path), published=published)
+
+
+def _inspect_entry(row: FileChange, path: Path) -> RecoveryEntry:
+    interrupted = _interrupted_apply(row, path)
+    if interrupted:
+        retained, status = interrupted
+        return RecoveryEntry(path=path, status=status, retained_path=retained)
+    return RecoveryEntry(path=path, status=_status(row, path))
 
 
 def _publish_original(path: Path, staged: Path, content: bytes, state: FileState) -> None:
@@ -139,8 +144,8 @@ def _publish_original(path: Path, staged: Path, content: bytes, state: FileState
 def _restore_file(
     row: FileChange, path: Path, content: bytes | None, operation: Operation, folder: Path
 ) -> RecoveryStep:
-    status = _status(row, path)
-    if status is RecoveryStep.CONFLICT:
+    status = _inspect_entry(row, path).status
+    if status in (RecoveryStep.CONFLICT, RecoveryStep.WOULD_RETURN_DISPLACED):
         raise ValueError(f"Rollback conflicts with a later edit: {path}")
     holding = _holding(row.restore_directory, path)
     if status is RecoveryStep.UNCHANGED and holding is None:
@@ -210,11 +215,7 @@ class LocalRecoveryFiles:
         path = target_path(row.relative, validate_file=False)
         if row.after.uid != os.getuid() or (row.before and row.before.uid != os.getuid()):
             raise ValueError("Recovery owner differs from the current user")
-        interrupted = _interrupted_apply(row, path)
-        if interrupted is not None:
-            retained, status = interrupted
-            return RecoveryEntry(path=path, status=status, retained_path=retained)
-        return RecoveryEntry(path=path, status=_status(row, path))
+        return _inspect_entry(row, path)
 
     def directories(
         self, op: Operation, paths: Collection[Path]
@@ -259,14 +260,14 @@ class LocalRecoveryFiles:
         self, target: RecoveryTarget, operation: Operation, folder: Path
     ) -> tuple[RecoveryStep, bool]:
         row, path, status = target.change, target.entry.path, target.entry.status
-        if status != _status(row, path):
+        if self.inspect(row) != target.entry:
             raise ValueError(f"File changed during restore: {path}")
         if status is RecoveryStep.WOULD_RETURN_DISPLACED:
             interrupted = _interrupted_apply(row, path)
-            if interrupted is None:
+            if interrupted is None or interrupted[1] is not RecoveryStep.WOULD_RETURN_DISPLACED:
                 raise ValueError(f"Displaced file changed before restore: {path}")
             file_publication.move_new(interrupted[0], path)
-            status = RecoveryStep.RETURNED_DISPLACED_FILE
+            status = RecoveryStep.RETURNED_DISPLACED
         else:
             status = _restore_file(row, path, target.original, operation, folder)
         _retire_stage(row, path, operation, folder)

@@ -37,7 +37,11 @@ def load_backend(plugin_id: str) -> tuple[Backend, Manifest]:
     assert entry.dist is not None
     source = entry.dist.locate_file(f"{package}/manifest.json")
     manifest = Manifest.model_validate_json(source.read_text())
-    if manifest.id != plugin_id or manifest.entry_point != entry.value:
+    if (
+        manifest.id != plugin_id
+        or manifest.entry_point != entry.value
+        or manifest.version != entry.dist.version
+    ):
         raise ContractError(
             ErrorCode.INCOMPATIBLE_PLUGIN, "Extension metadata and entry point differ."
         )
@@ -45,13 +49,16 @@ def load_backend(plugin_id: str) -> tuple[Backend, Manifest]:
     if not isinstance(implementation, type) or not issubclass(implementation, Backend):
         raise ContractError(ErrorCode.INCOMPATIBLE_PLUGIN, "The extension backend is incompatible.")
     backend = implementation()
+    commands = backend.commands()
     if (
-        manifest.environment_fields != backend.settings_model.environment_fields
+        any(key != command.id.value for key, command in commands.items())
+        or manifest.settings_version != backend.settings_model.schema_version
+        or manifest.environment_fields != backend.settings_model.environment_fields
         or manifest.settings_schema != form_schema(backend.settings_model, StorageScope.SETTINGS)
         or manifest.input_schemas
         != {
             key: form_schema(command.schema, StorageScope.ACTION)
-            for key, command in backend.commands().items()
+            for key, command in commands.items()
         }
     ):
         raise ContractError(

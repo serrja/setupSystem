@@ -41,7 +41,26 @@ class Plugin(DebianPackages):
             registry[action.value] = Command(
                 action, Selection, partial(self.preview_apps, action), self.observe_apps
             )
+        for inventory_action in (SnapAction.LIST_INSTALLED, LifecycleAction.CHECK):
+            registry[inventory_action.value] = Command(
+                inventory_action,
+                Inputs,
+                partial(self.plan, inventory_action),
+                self.observe_inventory,
+            )
         return registry
+
+    async def observe_inventory(
+        self, plan: Plan, settings: PluginSettings, inputs: Inputs
+    ) -> Result:
+        current = await self.inspect(settings)
+        if current.outcome is not Outcome.NO_CHANGES:
+            return current
+        return Result.observed(
+            outcome=Outcome.NO_CHANGES if current.resources == plan.resources else Outcome.PARTIAL,
+            message="Checked the installed Snap revision inventory.",
+            resources=current.resources,
+        )
 
     async def preview_apps(
         self, action: SnapAction, settings: PluginSettings, inputs: Inputs

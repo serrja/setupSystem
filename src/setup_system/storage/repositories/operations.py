@@ -15,7 +15,6 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import delete, select, update
-from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from setup_system.execution.user_storage import private_directory
@@ -50,7 +49,7 @@ from setup_system.storage.repositories.resources import (
     resource_key,
     save_observation,
 )
-from setup_system.storage.session import begin_write
+from setup_system.storage.session import read_session, write_session
 from setup_system_sdk.enums.lifecycle import HostAction, LifecycleAction
 from setup_system_sdk.enums.operation import (
     ActionMode,
@@ -170,27 +169,14 @@ class OperationRepository:
                 raise ValueError("This operation is active in another process") from None
             yield
 
-    @asynccontextmanager
-    async def _write(self) -> AsyncIterator[AsyncSession]:
-        try:
-            async with self.factory.begin() as db:
-                await begin_write(db)
-                yield db
-        except IntegrityError:
-            raise ValueError(
-                "An operation or resource reservation conflicts. Review current state."
-            ) from None
-        except OperationalError:
-            raise ValueError("The local database is busy or unavailable") from None
-
     async def holdings(self, plugin_id: str) -> tuple[Resource, ...]:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             rows = await holding_rows(db, plugin_id)
             observed = await observations(db, [row.observation for row in rows])
             return tuple(observed[row.observation] for row in rows)
 
     async def dependents(self, plugin_id: str) -> list[str]:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             return list(
                 await db.scalars(
                     select(Dependency.consumer)
@@ -220,7 +206,7 @@ class OperationRepository:
             raise ValueError("Extension actions cannot reserve the host keyring namespace")
         if not any(entry.id == action_id for entry in manifest.actions):
             raise ValueError("The active manifest does not declare the selected action")
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             release = await _active_release(db, manifest.id, digest)
             await self._reserve(
                 db,
@@ -251,7 +237,7 @@ class OperationRepository:
         descriptor = next((action for action in manifest.actions if action.id == action_id), None)
         if descriptor is None or descriptor.mode is ActionMode.MUTATION:
             raise ValueError("Only declared inspections and manual commands may skip reservation")
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             release = await _active_release(db, manifest.id, digest)
             op = await _start(
                 db, operation_id, release, action_id, settings_revision, inputs, settings, plan
@@ -283,7 +269,7 @@ class OperationRepository:
     async def reserve_secret(
         self, plugin_id: str, digest: str, operation_id: UUID, reference: UUID, *, remove: bool
     ) -> Resource:
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             release = await _active_release(db, plugin_id, digest)
             identity = str(reference)
             desired = Resource(
@@ -381,12 +367,12 @@ class OperationRepository:
             db.add(Reservation(resource=rid, operation=seq))
 
     async def snapshot(self, operation_id: UUID) -> StoredSnapshot:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             op, release = await _record(db, operation_id)
             return await confirmed_snapshot(db, op, release)
 
     async def pending(self, plugin_id: str) -> list[UUID]:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             return list(
                 await db.scalars(
                     select(Operation.operation_id)
@@ -397,7 +383,7 @@ class OperationRepository:
 
     async def pending_readbacks(self, plugin_id: str) -> list[UUID]:
         """Only send extension commands to the extension that originally prepared them."""
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             query = (
                 select(Operation.operation_id)
                 .join(ActiveOperation, Operation.seq == ActiveOperation.operation)
@@ -411,19 +397,19 @@ class OperationRepository:
             return list(await db.scalars(query))
 
     async def history(self, plugin_id: str | None = None) -> list[HistoryEntry]:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             return await operation_history(db, plugin_id)
 
     async def events(
         self, plugin: str | None = None, *, limit: int | None = None
     ) -> list[JournalEntry]:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             return await journal_entries(db, plugin, limit)
 
     async def record_readback(
         self, operation_id: UUID, observations: Sequence[Resource], receipt: str | None = None
     ) -> None:
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             op, _ = await _record(db, operation_id)
             if op.status not in (OperationState.RUNNING, OperationState.UNKNOWN):
                 raise ValueError("The operation is already final")
@@ -458,7 +444,7 @@ class OperationRepository:
                 change.native = await save_observation(db, change.resource, row)
 
     async def finish(self, operation_id: UUID, result: Result, *, recovered: bool = False) -> None:
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             op, release = await _record(db, operation_id)
             if op.status not in (OperationState.RUNNING, OperationState.UNKNOWN):
                 raise ValueError("The operation is already final")
@@ -541,7 +527,7 @@ class OperationRepository:
                 )
 
     async def recoveries(self, plugin_id: str) -> list[tuple[UUID, str]]:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             query = (
                 select(Operation.operation_id, Operation.receipt)
                 .join(Release)
@@ -558,11 +544,11 @@ class OperationRepository:
             ]
 
     async def reserve_restore(self, operation_id: UUID, receipt: str, identities: set[str]) -> None:
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             op, release = await _record(db, operation_id)
             await prepare_restore(db, op, release, receipt, identities)
 
     async def finish_restore(self, operation_id: UUID) -> None:
-        async with self._write() as db:
+        async with write_session(self.factory) as db:
             op, release = await _record(db, operation_id)
             await confirm_restore(db, op, release)

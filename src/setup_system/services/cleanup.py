@@ -27,7 +27,7 @@ class Step(Inputs):
     snapshot: Snapshot
 
 
-class RecoveryStep(Inputs):
+class FileRecovery(Inputs):
     operation: UUID
     plan: RecoveryPlan
 
@@ -37,7 +37,7 @@ class Cleanup(Inputs):
     plugin: Identifier
     digest: str
     steps: tuple[Step, ...]
-    recovery: tuple[RecoveryStep, ...]
+    recovery: tuple[FileRecovery, ...]
     secrets: tuple[Resource, ...]
     holdings: tuple[Resource, ...]
     generations: tuple[str, ...]
@@ -113,7 +113,7 @@ async def preview_cleanup(
         record = await asyncio.to_thread(RecoveryPlan.projected, receipt, projected)
         if any(e.status is RecoveryStep.CONFLICT for e in record.entries):
             blockers.append("Review later edits for receipt " + receipt)
-        recoveries.append(RecoveryStep(operation=operation, plan=record))
+        recoveries.append(FileRecovery(operation=operation, plan=record))
         covered.update(("file", str(entry.path)) for entry in record.entries)
     saved = await store.read(plugin)
     if not saved.revision.endswith(":absent"):

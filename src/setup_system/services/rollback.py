@@ -1,5 +1,6 @@
 """Confirm and verify a single local managed-file recovery receipt."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -63,10 +64,18 @@ class RecoveryPlan(Inputs):
             )
         restore(self.receipt, apply=True)
         verified = self.inspect(self.receipt)
-        complete = all(entry.status is RecoveryStep.ALREADY_RESTORED for entry in verified.entries)
+        complete = all(row.status is RecoveryStep.ALREADY_RESTORED for row in verified.entries)
+        complete = complete and all(
+            not os.path.lexists(row.path)
+            for row in self.entries
+            if row.status is RecoveryStep.WOULD_REMOVE_DIRECTORY
+        )
+        message = "Recovery verified" if complete else "Inspect the remaining recovery entries"
+        retained = [str(row.retained_path) for row in verified.entries if row.retained_path]
+        if retained:
+            message += f" · Receipt {self.receipt} records displaced files: " + ", ".join(retained)
         return Result(
-            outcome=Outcome.COMPLETE if complete else Outcome.PARTIAL,
-            message="Recovery verified" if complete else "Inspect the remaining recovery entries",
+            outcome=Outcome.COMPLETE if complete else Outcome.PARTIAL, message=message[:8192]
         )
 
 

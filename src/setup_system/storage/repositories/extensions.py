@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from setup_system.storage.models import ActiveOperation, Extension, Release
-from setup_system.storage.session import begin_write
+from setup_system.storage.session import read_session, write_session
 from setup_system_sdk.schemas.manifest import Manifest
 
 
@@ -15,7 +15,7 @@ class ExtensionRepository:
         self.factory = factory
 
     async def active(self, plugin_id: str) -> str | None:
-        async with self.factory() as db:
+        async with read_session(self.factory) as db:
             return (
                 await db.scalars(
                     select(Release.digest).where(Release.plugin_id == plugin_id, Release.active)
@@ -25,8 +25,7 @@ class ExtensionRepository:
     async def activate(self, manifest: Manifest, digest: str) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Invalid verified release digest")
-        async with self.factory.begin() as db:
-            await begin_write(db)
+        async with write_session(self.factory) as db:
             release = await db.scalar(
                 select(Release).where(Release.plugin_id == manifest.id, Release.digest == digest)
             )
@@ -65,16 +64,14 @@ class ExtensionRepository:
             raise ValueError("An unfinished operation requires this extension")
 
     async def disable(self, plugin_id: str) -> None:
-        async with self.factory.begin() as db:
-            await begin_write(db)
+        async with write_session(self.factory) as db:
             await self._idle(db, plugin_id)
             await db.execute(
                 update(Release).where(Release.plugin_id == plugin_id).values(active=False)
             )
 
     async def remove(self, plugin_id: str) -> None:
-        async with self.factory.begin() as db:
-            await begin_write(db)
+        async with write_session(self.factory) as db:
             await self._idle(db, plugin_id)
             await db.execute(
                 update(Release)
