@@ -1,5 +1,1 @@
-from enum import StrEnum
-
-
-class ToolAction(StrEnum):
-    REMOVE = "remove-tools"
+from setup_system_toolchain.tools import ToolAction as ToolAction

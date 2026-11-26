@@ -34,6 +34,9 @@ label = "Grant sudo access"
 target = "grant-sudo"
 permissions = ["root", "su"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "verify-sudo"
@@ -42,3 +45,6 @@ target = "verify-sudo"
 permissions = ["root", "su"]
 mode = "authenticated_check"
 description = "Authenticate and verify the selected account’s effective Debian sudo policy."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"

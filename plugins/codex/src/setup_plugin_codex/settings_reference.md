@@ -1,8 +1,8 @@
-# Codex CLI settings reference
+# ⚙️ Codex CLI settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
@@ -12,49 +12,49 @@ Generated from the plugin's Pydantic settings and action inputs.
 | `effort` | Select a reasoning effort supported by the active model. | `null` | `—` |
 | `instructions` | Include the selected, digest-verified engineering instructions. | `false` | `—` |
 
-## Check Codex
+## 🧩 Check Codex
 
 This operation has no editable parameters.
 
-## Install official CLI
+## 🧩 Install official CLI
 
 This operation has no editable parameters.
 
-## Update official CLI
+## 🧩 Update official CLI
 
 This operation has no editable parameters.
 
-## Configure client
+## 🧩 Configure client
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `project` | Leave empty for the current user's config. | `null` | `—` |
 
-## Sign in
+## 🧩 Sign in
 
 This operation has no editable parameters.
 
-## Account status
+## 🧩 Account status
 
 This operation has no editable parameters.
 
-## Sign out
+## 🧩 Sign out
 
 This operation has no editable parameters.
 
-## Manage MCP servers
+## 🧩 Manage MCP servers
 
 This operation has no editable parameters.
 
-## Manage skills
+## 🧩 Manage skills
 
 This operation has no editable parameters.
 
-## Uninstall managed CLI
+## 🧩 Uninstall managed CLI
 
 This operation has no editable parameters.
 
-## Register a reviewed HTTPS MCP server
+## 🧩 Register a reviewed HTTPS MCP server
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |

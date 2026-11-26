@@ -4,7 +4,6 @@ import os
 import sys
 from dataclasses import replace
 from importlib import metadata
-from typing import Literal
 from uuid import uuid4
 
 import anyio
@@ -13,10 +12,23 @@ from pydantic import ValidationError
 from setup_system_sdk import PLUGIN_GROUP, ActionEvent, StepPlan
 from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.errors import ErrorCode
-from setup_system_sdk.enums.operation import EventPhase, WorkerMethod
+from setup_system_sdk.enums.operation import (
+    CancellationPolicy,
+    EventPhase,
+    ProviderMethod,
+    WorkerMethod,
+    WorkerMode,
+)
 from setup_system_sdk.enums.ui import StorageScope
+from setup_system_sdk.environment import declare_session_fields
 from setup_system_sdk.operations import Receipt
 from setup_system_sdk.plugin import Backend, PluginSettings, ownership_context
+from setup_system_sdk.processes import (
+    ExecutionProcesses,
+    ProcessRunner,
+    current_processes,
+    execution_processes,
+)
 from setup_system_sdk.protocol import (
     MESSAGES,
     CancelMessage,
@@ -151,12 +163,12 @@ async def check_choices(
                 )
 
 
-async def dispatch(request: Request, mode: str, context: PluginContext) -> Reply:
-    if mode not in {"query", "execute"} or (mode == "execute") != (
-        request.method == WorkerMethod.EXECUTE
-    ):
+async def dispatch(request: Request, mode: WorkerMode, context: PluginContext) -> Reply:
+    mode = WorkerMode(mode)
+    if (mode is WorkerMode.EXECUTE) != (request.method == WorkerMethod.EXECUTE):
         raise ContractError(ErrorCode.INVALID_REQUEST, "Invalid dispatch mode")
     backend, manifest = load_backend(request.plugin_id)
+    declare_session_fields(manifest.session_fields)
     if request.executor != context.executor or (manifest.id, manifest.version) != (
         context.executor.plugin_id,
         context.executor.version,
@@ -213,10 +225,17 @@ async def dispatch(request: Request, mode: str, context: PluginContext) -> Reply
             backend.providers[step.capability].request_model.model_validate(step.payload)
         elif snapshot.executor != step.executor or step.handler not in backend.commands():
             raise ContractError(ErrorCode.UNKNOWN_ACTION, "Unknown local step handler")
-        context = replace(context, provider_call=None)
+        if step.capability or request.method is WorkerMethod.EXECUTE:
+            context = replace(context, provider_call=None)
         with ownership_context(snapshot.holdings):
             if request.method == WorkerMethod.EXECUTE:
-                receipt = await handler.execute(step, context)
+                service = replace(
+                    context.processes or current_processes(),
+                    native_terminal=request.action_id == snapshot.action_id
+                    and snapshot.grants_terminal(context.executor, step, manifest),
+                )
+                with execution_processes(service):
+                    receipt = await handler.execute(step, replace(context, processes=service))
                 receipt.validate_for(snapshot.operation_id, step)
                 return Reply(receipt=receipt)
             if request.receipt:
@@ -279,8 +298,9 @@ async def dispatch(request: Request, mode: str, context: PluginContext) -> Reply
         raise ContractError(ErrorCode.INVALID_REQUEST, "The action request is incomplete.")
 
 
-async def serve(mode: str, output: int, native_fd: int | None = None) -> None:
+async def serve(mode: WorkerMode, output: int, native_fd: int | None = None) -> None:
     """Keep stdout reserved for bounded protocol frames even when a backend prints."""
+    mode = WorkerMode(mode)
     pending = bytearray()
 
     async def line() -> bytes:
@@ -320,7 +340,7 @@ async def serve(mode: str, output: int, native_fd: int | None = None) -> None:
         await send(EventMessage(request_id=first.request_id, payload=event))
 
     async def native() -> Receipt:
-        if native_fd is None or mode != "execute":
+        if native_fd is None or mode is not WorkerMode.EXECUTE:
             raise ValueError("Missing native execution grant")
         await emit(ActionEvent(phase=EventPhase.PREPARED, message_code="authorize"))
         data = bytearray()
@@ -334,20 +354,47 @@ async def serve(mode: str, output: int, native_fd: int | None = None) -> None:
 
     outgoing, incoming = anyio.create_memory_object_stream[ProviderReplyMessage](1)
 
+    step = (
+        next(
+            (s for s in request.snapshot.plan.steps if s.step_key == request.step_key),
+            None,
+        )
+        if request.snapshot
+        else None
+    )
+    mutating = mode is WorkerMode.EXECUTE and request.method is WorkerMethod.EXECUTE
+    policy = step.cancellation if mutating and step else CancellationPolicy.TERMINATE
+    scope = anyio.CancelScope()
+    os.environ.pop("SETUP_SYSTEM_NATIVE_TERMINAL", None)
+    processes = ExecutionProcesses(
+        ProcessRunner(),
+        query_timeout=float(os.environ.pop("SETUP_SYSTEM_WORKER_QUERY_TIMEOUT", "180")),
+        terminal_timeout=float(os.environ.pop("SETUP_SYSTEM_WORKER_TERMINAL_TIMEOUT", "900")),
+        grace=float(os.environ.pop("SETUP_SYSTEM_WORKER_GRACE", "5")),
+        cancelled=cancelled,
+        mutating=mutating,
+        cancellation=policy,
+    )
+
+    def stop() -> None:
+        cancelled.set()
+        if policy is CancellationPolicy.TERMINATE:
+            scope.cancel()
+
     async def receive() -> None:
         try:
             while True:
                 message = exchange.decode(await line())
                 if isinstance(message, CancelMessage):
-                    cancelled.set()
+                    stop()
                 elif isinstance(message, ProviderReplyMessage):
                     await outgoing.send(message)
                 else:
                     raise ValueError("Unexpected worker message")
         except EOFError:
-            cancelled.set()
+            stop()
 
-    async def call(method: Literal["inspect", "plan"], cap: CapabilityRequest) -> Values | StepPlan:
+    async def call(method: ProviderMethod, cap: CapabilityRequest) -> Values | StepPlan:
         async with lock:
             identifier = uuid4()
             await send(
@@ -360,7 +407,7 @@ async def serve(mode: str, output: int, native_fd: int | None = None) -> None:
             response = await incoming.receive()
             if response.call_id != identifier:
                 raise ValueError("Invalid provider reply")
-            if method == "plan":
+            if method is ProviderMethod.PLAN:
                 return StepPlan.model_validate(response.payload)
             if isinstance(response.payload, StepPlan):
                 raise ValueError("Expected provider facts")
@@ -378,8 +425,15 @@ async def serve(mode: str, output: int, native_fd: int | None = None) -> None:
                 emit,
                 call,
                 native_call=native if native_fd is not None else None,
+                processes=processes,
             )
-            reply = await dispatch(request, mode, context)
+            with execution_processes(processes), scope:
+                reply = await dispatch(request, mode, context)
+            if scope.cancel_called:
+                raise ContractError(
+                    ErrorCode.UNKNOWN_OUTCOME,
+                    "Execution stopped. Inspect the operation before retrying.",
+                )
         except ContractError as exc:
             reply = Reply(
                 error=Error(
@@ -402,14 +456,16 @@ async def serve(mode: str, output: int, native_fd: int | None = None) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) not in {2, 3} or sys.argv[1] not in {"query", "execute"} or os.geteuid() == 0:
+    if len(sys.argv) not in {2, 3} or sys.argv[1] not in set(WorkerMode) or os.geteuid() == 0:
         return 2
-    native_fd = int(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == "execute" else None
+    native_fd = (
+        int(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == WorkerMode.EXECUTE else None
+    )
     output = os.dup(1)
     os.dup2(2, 1)
     os.set_blocking(output, False)
     try:
-        anyio.run(serve, sys.argv[1], output, native_fd, backend="asyncio")
+        anyio.run(serve, WorkerMode(sys.argv[1]), output, native_fd, backend="asyncio")
     finally:
         os.close(output)
     return 0

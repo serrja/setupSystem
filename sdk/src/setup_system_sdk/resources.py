@@ -19,6 +19,23 @@ class Resource(Inputs):
     permissions: int | None = Field(default=None, ge=0, le=0o7777)
     consumers: tuple[Identifier, ...] = ()
 
+    def validate_observation(self, observed: "Resource") -> None:
+        """Allow a native observation to fill only fields left open by this resource."""
+        expected = self.model_copy(
+            update={
+                "verified": observed.verified,
+                "after": observed.after
+                if self.after is None and self.effect is ResourceEffect.ENSURE
+                else self.after,
+                "remote_id": observed.remote_id if self.remote_id is None else self.remote_id,
+                "permissions": observed.permissions
+                if self.permissions is None
+                else self.permissions,
+            }
+        )
+        if observed != expected:
+            raise ValueError("Observation differs from the approved resource or execution receipt")
+
     def description(self) -> str:
         """Show exact approved versions, remote objects and permissions in consent."""
         values = [f"{self.effect} {self.kind} · {self.identity} · {self.ownership}"]

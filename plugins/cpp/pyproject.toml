@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-plugin-cpp"
+version = "2.0.0"
+requires-python = ">=3.12"
+description = "C++ tools workstation tools"
+license = "MIT"
+dependencies = ["setup-system-sdk>=3,<4", "pyyaml>=6,<7"]
+
+[project.entry-points."setup_system.plugins"]
+cpp = "setup_plugin_cpp:Plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_plugin_cpp"]
+
+[tool.setup-system.manifest]
+name = "C++ tools"
+author = "serrja"
+category = "development"
+kind = "application"
+sdk = ">=3,<4"
+source = "https://github.com/serrja/setupSystem"
+permissions = ["root", "user-files"]
+capabilities = ["toolchain", "native-editor-tools"]
+dependencies = []
+pages = ["overview", "settings", "actions", "resources", "history", "help"]
+
+[[tool.setup-system.manifest.actions]]
+id = "check"
+label = "Check tool availability"
+page = "actions"
+mode = "read_only"
+
+[[tool.setup-system.manifest.actions]]
+id = "install"
+label = "Install Debian prerequisites"
+target = "install"
+permissions = ["root"]
+page = "actions"
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "update"
+label = "Update Debian prerequisites"
+target = "update"
+permissions = ["root"]
+page = "actions"
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
+
+[[tool.setup-system.manifest.actions]]
+id = "configure"
+label = "Configure user tools"
+target = "configure"
+permissions = ["user-files"]
+page = "actions"
+mode = "mutation"
+
+[[tool.setup-system.manifest.actions]]
+id = "uninstall"
+label = "Remove owned Debian packages"
+target = "uninstall"
+cleanup_phase = "program"
+permissions = ["root"]
+page = "actions"
+mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"

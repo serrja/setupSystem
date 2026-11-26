@@ -18,6 +18,7 @@ from packaging.markers import Environment
 from packaging.requirements import Requirement
 from packaging.tags import Tag, sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import Version
 from setup_system_sdk.downloads import DownloadClient, DownloadPolicy
 from setup_system_sdk.manifests import Manifest
 
@@ -38,6 +39,15 @@ async def generate(
 ) -> dict[str, object]:
     projects = {p["name"]: p for p in tomllib.loads(lock.read_text())["package"]}
     local = {parse_wheel_filename(p.name)[0]: p for p in (primary, sdk)}
+    for name, project in projects.items():
+        if name not in local and "editable" in project.get("source", {}):
+            matches = [
+                p
+                for p in sdk.parent.glob("*.whl")
+                if parse_wheel_filename(p.name)[:2] == (name, Version(project["version"]))
+            ]
+            if len(matches) == 1:
+                local[name] = matches[0]
     out.mkdir(parents=True, exist_ok=True)
     ranks = {tag: index for index, tag in enumerate(target_tags or sys_tags())}
     pending = deque([(parse_wheel_filename(primary.name)[0], frozenset([""]))])
@@ -58,7 +68,7 @@ async def generate(
                     publish(path, source.read_bytes(), expected)
                 else:
                     compatible = []
-                    for wheel in projects[name]["wheels"]:
+                    for wheel in projects[name].get("wheels", []):
                         filename = unquote(Path(urlsplit(wheel["url"]).path).name)
                         wheel_name, version, _, tags = parse_wheel_filename(filename)
                         if str(version) != projects[name]["version"] or wheel_name != name:

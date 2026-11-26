@@ -1,4 +1,6 @@
-# Hyprland
+# 🧩 Hyprland
+
+Hyprland desktop configuration.
 
 ## ⚙️ Configure Hyprland
 

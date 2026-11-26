@@ -33,7 +33,7 @@ class Settings(PluginSettings):
         default=None,
         max_length=64,
         title="Reasoning effort",
-        json_schema_extra={"ui": {"choice_provider": "efforts"}},
+        json_schema_extra={"ui": {"choice_provider": "efforts", "depends_on": ["model"]}},
     )
     instructions: bool = Field(
         description="Include the selected, digest-verified engineering instructions.",

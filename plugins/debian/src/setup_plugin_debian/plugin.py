@@ -10,6 +10,7 @@ from setup_plugin_debian.actions import PluginActions
 from setup_plugin_debian.adapters.recovery import RecoveryProvider
 from setup_plugin_debian.cleanup_provider import CleanupProvider
 from setup_plugin_debian.models import Settings
+from setup_plugin_debian.platform_provider import PlatformProvider
 from setup_plugin_debian.providers import PackageProvider
 
 
@@ -18,5 +19,6 @@ class Plugin(PluginActions):
     providers: ClassVar[dict[str, Provider]] = {
         "system.package-cleanup": CleanupProvider(),
         "system.packages": PackageProvider(),
+        "system.platform": PlatformProvider(),
         "operation.recovery": RecoveryProvider(),
     }

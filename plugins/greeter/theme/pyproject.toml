@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "setup-system-desktop-theme"
+version = "1.0.0"
+description = "Shared appearance data for workstation login, lock and desktop clients"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.10,<3", "jinja2>=3.1,<4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/setup_system_desktop_theme"]

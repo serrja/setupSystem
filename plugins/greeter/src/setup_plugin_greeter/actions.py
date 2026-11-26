@@ -17,7 +17,8 @@ from setup_system_sdk.files.assets import desktop_directories
 from setup_system_sdk.files.backend import NativeBackend
 from setup_system_sdk.files.identity import resolve_target, user_environment
 from setup_system_sdk.plugin import PluginSettings
-from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.providers import CapabilityRequest
+from setup_system_sdk.schemas.common import Inputs, Values
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
 from setup_plugin_greeter.adapters.native import (
@@ -25,6 +26,7 @@ from setup_plugin_greeter.adapters.native import (
     current_target,
     run_native_play,
 )
+from setup_plugin_greeter.adapters.system_facts import SystemSnapshot
 from setup_plugin_greeter.enums import PluginAction
 from setup_plugin_greeter.models import Confirmation
 
@@ -34,25 +36,42 @@ from .models import DesktopPlan
 FOLDER = Path(str(package_files("setup_plugin_greeter").joinpath("resources")))
 
 
-def facts(user: TargetUser, roots: dict[str, Path]) -> DesktopPlan:
-    if not current_target()[1]:
+async def platform_facts(context: PluginContext | None, detail: str = "target") -> Values:
+    if context is None:
+        raise ValueError("The action requires a selected platform provider")
+    return await context.inspect_provider(
+        CapabilityRequest(
+            capability="system.platform", step_key="platform", payload={"detail": detail}
+        )
+    )
+
+
+def facts(
+    user: TargetUser, roots: dict[str, Path], session: SystemSnapshot | None = None
+) -> DesktopPlan:
+    if session is None and not current_target()[1]:
         raise ValueError("Graphical login activation requires Debian 13.")
     return DesktopSystem(Path(str(files("setup_plugin_greeter") / "resources"))).plan(
-        user, user_environment(user, roots)
+        user, user_environment(user, roots), snapshot=session
     )
 
 
-def snapshot() -> tuple[DesktopPlan, Confirmation]:
+def snapshot(
+    session: SystemSnapshot | None = None, boot: str | None = None
+) -> tuple[DesktopPlan, Confirmation]:
     user = resolve_target(None)
     roots = desktop_directories()
-    native = facts(user, roots)
+    native = facts(user, roots, session)
     return native, Confirmation(
-        user=user.name, roots=roots, boot=current_boot_identity(), consent=native.consent
+        user=user.name,
+        roots=roots,
+        boot=boot if boot is not None else current_boot_identity(),
+        consent=native.consent,
     )
 
 
-def activate_plan() -> Plan:
-    native, confirmation = snapshot()
+def activate_plan(session: SystemSnapshot | None = None, boot: str | None = None) -> Plan:
+    native, confirmation = snapshot(session, boot)
     rows = [
         Resource(
             kind="file",
@@ -112,6 +131,27 @@ class PluginActions(NativeBackend):
 
     package_folder = FOLDER
 
+    async def login_plan(self, context: PluginContext | None) -> Plan:
+        facts = await platform_facts(context, "session")
+        boot = facts.get("boot")
+        if facts.get("supported") is not True or not isinstance(boot, str):
+            return Plan(
+                summary="Graphical login requires a supported Debian target.",
+                outcome=Outcome.BLOCKED,
+            )
+        return await run_sync(activate_plan, SystemSnapshot.model_validate(facts["session"]), boot)
+
+    async def plan(
+        self,
+        action_id: str,
+        settings: PluginSettings,
+        inputs: Inputs,
+        context: PluginContext | None = None,
+    ) -> Plan:
+        if action_id == PluginAction.ACTIVATE_LOGIN:
+            return await self.login_plan(context)
+        return await super().plan(action_id, settings, inputs, context)
+
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
         if action_id == LifecycleAction.UNINSTALL:
             from .login_boot import manager_enabled
@@ -134,7 +174,7 @@ class PluginActions(NativeBackend):
         context: PluginContext | None = None,
     ) -> Result:
         if plan.resources and plan.resources[0].kind == "file":
-            observed = await run_sync(activate_plan)
+            observed = await self.login_plan(context)
             return Result.observed(
                 outcome=Outcome.CHANGED
                 if observed.outcome == Outcome.NO_CHANGES

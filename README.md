@@ -1,17 +1,26 @@
-# setupSystem
+# 🧩 setupSystem
 
-setupSystem is a normal-user Textual application for configuring independently packaged plugins. Each action can inspect settings, preview a plan and verify its changes. The host starts with an empty catalog.
+setupSystem is a Textual application for reviewing and applying workstation changes as a normal user. Install or activate the plugins you need. Each plugin owns its settings, actions and offline Help.
 
-## Run the host
+## 🚀 Quick start
 
-From a checkout with Python 3.12 or later and uv, run the following commands.
+From the checkout with uv and Python 3.12 or later, start the host.
 
 ```sh
-uv sync --locked --package setup-system
-uv run --locked setup-system --version
-uv run --locked setup-system
+make prepare
+make run
 ```
 
-Open a plugin to edit settings or preview an action. Apply asks you to confirm the reviewed plan. History shows recorded operations. Select a compatible provider when several active plugins implement a required capability.
+Select a plugin, preview its plan, then confirm the executor, permissions and resource changes. An empty catalog can be populated with a reviewed release descriptor. [Configuration](docs/configuration.md) · [Using the configurator](docs/textual_workflow.md) · [Debian installation](plugins/debian/docs/install.md)
 
-See [configuration](docs/configuration.md), [database upgrades](docs/database.md) and [plugin authoring](docs/plugin_authoring.md). Platform installation and recovery are documented by their owners, including the [Debian integration](plugins/debian/docs/install.md).
+## 🎯 Scope
+
+The host manages confirmations, worker generations and the SQLite ledger. Recovery depends on retained receipts and the availability of the corresponding executor. Machine and boot acceptance require a disposable target. [Architecture](docs/architecture.md) · [Database](docs/database.md) · [Recovery](docs/recovery.md)
+
+## 🧩 Plugins
+
+Browse the [application catalog](docs/applications.md) or [write a plugin](docs/plugin_authoring.md). Development commands and the test infrastructure policy are in the [contributor guide](CONTRIBUTING.md).
+
+## 📄 License
+
+The project uses the [MIT license](LICENSE.md). See the [third-party notices](THIRD_PARTY_NOTICES.md).

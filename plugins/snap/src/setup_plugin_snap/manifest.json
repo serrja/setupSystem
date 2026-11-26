@@ -124,6 +124,10 @@
         {
           "id": "system.packages",
           "version": ">=1,<2"
+        },
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
         }
       ],
       "cleanup_phase": null,
@@ -143,6 +147,10 @@
         {
           "id": "system.packages",
           "version": ">=1,<2"
+        },
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
         }
       ],
       "cleanup_phase": null,
@@ -158,7 +166,12 @@
       "description": "Refresh selected installed applications to reviewed stable revisions."
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "remove-apps",
       "label": "Remove applications",
@@ -172,7 +185,12 @@
       "description": "Save and verify data snapshots before removing the selected snaps."
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "check-apps",
       "label": "Check applications",
@@ -184,6 +202,7 @@
       "description": "Inspect the signed installed revision of each selection."
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

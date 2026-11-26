@@ -34,7 +34,7 @@ jobs:
         run: |
           uv python install 3.14.7
           uv sync --locked --package setup-system --python 3.14.7
-      - name: Static gates, schema migration and installed package integrity
+      - name: Static checks, test environment and distribution build
         run: make check build
       - name: Check installed host and SDK distributions
         run: make check-installed
@@ -183,6 +183,7 @@ jobs:
           uv export --locked --no-dev --no-emit-workspace --output-file "$RUNNER_TEMP/installed-requirements.txt"
           uv venv --python 3.14.7 "$RUNNER_TEMP/h02-installed"
           uv pip sync --require-hashes --python "$RUNNER_TEMP/h02-installed/bin/python" "$RUNNER_TEMP/installed-requirements.txt"
+          uv build --package setup-system-desktop-theme --wheel --out-dir "$RUNNER_TEMP/sdk-dist"
           uv build --package setup-system-sdk --wheel --out-dir "$RUNNER_TEMP/sdk-dist"
           uv pip install --no-deps --no-index --python "$RUNNER_TEMP/h02-installed/bin/python" "$RUNNER_TEMP/sdk-dist/"*.whl
           uv pip install --no-deps --no-index --python "$RUNNER_TEMP/h02-installed/bin/python" "$RUNNER_TEMP/h02-dist/"*.whl

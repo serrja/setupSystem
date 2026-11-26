@@ -8,13 +8,16 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Python tools workstation tools"
 license = "MIT"
-dependencies = ["setup-system-sdk>=3,<4"]
+dependencies = ["setup-system-sdk>=3,<4", "setup-system-toolchain>=1,<2"]
 
 [project.entry-points."setup_system.plugins"]
 python = "setup_plugin_python.plugin:Plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/setup_plugin_python"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/toolchain"]
 
 [tool.setup-system.manifest]
 name = "Python tools"
@@ -23,7 +26,7 @@ category = "development"
 kind = "application"
 sdk = ">=3,<4"
 source = "https://github.com/serrja/setupSystem"
-permissions = ["sudo", "user-files"]
+permissions = ["root", "user-files"]
 capabilities = ["toolchain", "native-editor-tools"]
 dependencies = []
 pages = ["overview", "settings", "actions", "resources", "history", "help"]
@@ -37,15 +40,21 @@ mode = "read_only"
 id = "install"
 label = "Install Debian prerequisites"
 target = "install"
-permissions = ["sudo"]
+permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "update"
 label = "Update Debian prerequisites"
 target = "update"
-permissions = ["sudo"]
+permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "configure"
@@ -59,8 +68,11 @@ cleanup_phase = "program"
 id = "uninstall"
 label = "Remove owned Debian packages"
 target = "uninstall"
-permissions = ["sudo"]
+permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.packages"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 cleanup_phase = "local"

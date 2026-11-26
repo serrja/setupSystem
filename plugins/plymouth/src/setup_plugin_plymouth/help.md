@@ -1,4 +1,6 @@
-# Plymouth
+# 🧩 Plymouth
+
+Plymouth graphical prompt with recovery.
 
 ## 🔐 Graphical disk password prompt
 

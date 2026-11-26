@@ -1,4 +1,6 @@
-# Waybar
+# 🧩 Waybar
+
+Waybar desktop configuration.
 
 ## ⚙️ Configure Waybar
 

@@ -8,7 +8,7 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Plymouth graphical prompt with recovery"
 license = "MIT"
-dependencies = ["setup-system-sdk>=3,<4"]
+dependencies = ["setup-system-desktop-theme>=1,<2", "setup-system-sdk>=3,<4"]
 
 [project.entry-points."setup_system.plugins"]
 plymouth = "setup_plugin_plymouth.plugin:Plugin"
@@ -32,6 +32,9 @@ pages = []
 id = "check"
 label = "Check"
 mode = "read_only"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "install"
@@ -41,6 +44,9 @@ permissions = ["root"]
 mode = "mutation"
 [[tool.setup-system.manifest.actions.requires]]
 id = "system.packages"
+version = ">=1,<2"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
 version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
@@ -52,6 +58,9 @@ mode = "mutation"
 [[tool.setup-system.manifest.actions.requires]]
 id = "system.packages"
 version = ">=1,<2"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "configure"
@@ -59,3 +68,6 @@ label = "Configure"
 target = "configure"
 permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"

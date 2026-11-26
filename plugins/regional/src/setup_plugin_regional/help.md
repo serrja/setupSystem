@@ -1,4 +1,6 @@
-# Regional settings
+# 🧩 Regional settings
+
+Independent Debian regional settings.
 
 ## ⚙️ Configure Debian regional settings
 

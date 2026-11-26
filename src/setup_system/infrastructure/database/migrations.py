@@ -25,7 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from setup_system.infrastructure.database.engine import prepare_file
 
 BASELINE = "1200cafe0001"
-HEAD = "1200cafe0002"
+STEPS = "1200cafe0002"
+HEAD = "1200cafe0003"
 V10 = "1000a10c0001"
 
 
@@ -131,13 +132,13 @@ def current(connection: Connection) -> str | None:
     ).first():
         return None
     rows = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalars().all()
-    if len(rows) != 1 or rows[0] not in {BASELINE, HEAD}:
+    if len(rows) != 1 or rows[0] not in {BASELINE, STEPS, HEAD}:
         raise ValueError("Unrecognized database revision")
     return str(rows[0])
 
 
-def validate_head(connection: Connection) -> None:
-    expected = reference(HEAD)
+def validate_head(connection: Connection, revision: str = HEAD) -> None:
+    expected = reference(revision)
     actual = schema(connection)
     if any(actual.get(name) != ddl for name, ddl in expected.items()):
         raise ValueError("The database differs from its recorded revision")
@@ -166,6 +167,8 @@ def _upgrade(connection: Connection, path: Path, *, initialize: bool) -> Path | 
             expected = {k: v for k, v in objects.items() if k != "alembic_version"}
             if expected != reference(BASELINE):
                 raise ValueError("The ledger differs from its recorded baseline")
+        elif revision == STEPS:
+            validate_head(connection, STEPS)
         elif "setup_system_v10_revision" in objects:
             v10 = objects == reference(V10) and connection.exec_driver_sql(
                 "SELECT version_num FROM setup_system_v10_revision"
@@ -189,6 +192,10 @@ def _upgrade(connection: Connection, path: Path, *, initialize: bool) -> Path | 
         from setup_system.infrastructure.database.v10 import transfer
 
         transfer(connection)
+    elif revision == STEPS and "v10_operations" in objects:
+        from setup_system.infrastructure.database.v10 import review_converted
+
+        review_converted(connection)
     if connection.exec_driver_sql("PRAGMA foreign_key_check").first():
         raise ValueError("Database migration violated referential integrity")
     return saved

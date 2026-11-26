@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 from setup_system_sdk.enums.lifecycle import LifecycleAction, PackageAction, ServiceAction
+from setup_system_sdk.files.manifest_types import Digest
 from setup_system_sdk.resources import Resource
 from setup_system_sdk.schemas.common import Identifier, Inputs, Values
 from setup_system_sdk.settings import PluginSettings
@@ -32,9 +33,11 @@ class TerminalOptions(Inputs):
 class RecoveryQuery(Inputs):
     owner: Identifier
     receipt: str | None = None
-    release_digest: str
+    release_digest: Digest
     operation: str
     snapshot: Values
+    approved: tuple[Resource, ...] = ()
+    native: tuple[Resource, ...] = ()
 
 
 Settings = PluginSettings

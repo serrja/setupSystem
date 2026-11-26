@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 from uuid import UUID
 
 from packaging.version import Version
 from pydantic import Field, field_validator, model_validator
 
-from setup_system_sdk.enums.operation import EventLevel, EventPhase, Outcome
+from setup_system_sdk.enums.operation import CancellationPolicy, EventLevel, EventPhase, Outcome
 from setup_system_sdk.enums.permissions import Permission
-from setup_system_sdk.enums.resources import ResourceEffect
+from setup_system_sdk.enums.resources import ResourceEffect as ResourceEffect
 from setup_system_sdk.files.manifest_types import Digest
 from setup_system_sdk.resources import Resource
 from setup_system_sdk.schemas.common import ActionId, Identifier, Inputs, Values
+
+if TYPE_CHECKING:
+    from setup_system_sdk.manifests import Manifest
 
 
 class Executor(Inputs):
@@ -42,7 +45,7 @@ class StepPlan(Inputs):
     resources: tuple[Resource, ...] = Field(default=(), max_length=4096)
     permissions: frozenset[Permission] = frozenset()
     lock_keys: tuple[ActionId, ...] = Field(default=(), max_length=128)
-    cancellation: Literal["terminate", "safe_boundary"] = "terminate"
+    cancellation: CancellationPolicy = CancellationPolicy.TERMINATE
 
 
 class Plan(Inputs):
@@ -124,6 +127,22 @@ class Snapshot(Inputs):
     dependencies: tuple[Identifier, ...] = ()
     holdings: tuple[Resource, ...] = ()
 
+    def grants_terminal(self, executor: Executor, step: StepPlan, manifest: Manifest) -> bool:
+        """Bind local terminal access to this confirmed action and executor."""
+        return (
+            self.rollback_of is None
+            and step in self.plan.steps
+            and self.executor == step.executor == executor
+            and (manifest.id, manifest.version) == (executor.plugin_id, executor.version)
+            and step.capability is None
+            and step.handler == self.action_id
+            and Permission.NATIVE_TERMINAL in step.permissions
+            and any(
+                a.id == self.action_id and Permission.NATIVE_TERMINAL in a.permissions
+                for a in manifest.actions
+            )
+        )
+
     @model_validator(mode="after")
     def validate_execution(self) -> Self:
         if self.plan.resources and not self.plan.steps:
@@ -152,20 +171,5 @@ class Receipt(Inputs):
             approved = expected.get(key)
             if approved is None or key in seen:
                 raise ValueError("Receipt exceeds the approved resources")
-            observed = resource.model_copy(update={"verified": approved.verified})
-            comparison = approved.model_copy(
-                update={
-                    "after": observed.after
-                    if approved.after is None and approved.effect != ResourceEffect.REMOVE
-                    else approved.after,
-                    "permissions": observed.permissions
-                    if approved.permissions is None
-                    else approved.permissions,
-                    "remote_id": observed.remote_id
-                    if approved.remote_id is None
-                    else approved.remote_id,
-                }
-            )
-            if observed != comparison:
-                raise ValueError("Receipt changed the approved resource")
+            approved.validate_observation(resource)
             seen.add(key)

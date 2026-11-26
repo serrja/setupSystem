@@ -1,8 +1,8 @@
-# Neovim settings reference
+# ⚙️ Neovim settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
@@ -10,38 +10,38 @@ Generated from the plugin's Pydantic settings and action inputs.
 | `clipboard` | Use the desktop clipboard when a Wayland session is available. | `true` | `—` |
 | `primary_editor` | Set Neovim as the editor for subsequent login sessions. | `true` | `—` |
 
-## Install
+## 🧩 Install
 
 This operation has no editable parameters.
 
-## Update
+## 🧩 Update
 
 This operation has no editable parameters.
 
-## Uninstall
+## 🧩 Uninstall
 
 This operation has no editable parameters.
 
-## Check Neovim
+## 🧩 Check Neovim
 
 This operation has no editable parameters.
 
-## Apply editor settings
+## 🧩 Apply editor settings
 
 This operation has no editable parameters.
 
-## Install editor plugins
+## 🧩 Install editor plugins
 
 This operation has no editable parameters.
 
-## Install selected parsers
+## 🧩 Install selected parsers
 
 This operation has no editable parameters.
 
-## Verify language services
+## 🧩 Verify language services
 
 This operation has no editable parameters.
 
-## Remove managed parsers
+## 🧩 Remove managed parsers
 
 This operation has no editable parameters.

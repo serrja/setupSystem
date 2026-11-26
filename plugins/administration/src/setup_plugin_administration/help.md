@@ -1,4 +1,6 @@
-# Administration
+# 🧩 Administration
+
+Grant sudo access to an existing local login.
 
 ## 🔐 Grant sudo access
 

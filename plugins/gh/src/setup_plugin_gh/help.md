@@ -1,4 +1,6 @@
-# GitHub CLI
+# 🧩 GitHub CLI
+
+GitHub CLI workstation plugin.
 
 ## 📦 Install the client
 

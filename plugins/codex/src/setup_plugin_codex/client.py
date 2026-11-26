@@ -1,11 +1,14 @@
 """Read the current account's picker-visible models over the official stdio API."""
 
-import asyncio
 import json
-import os
+import subprocess
 from pathlib import Path
 
+import anyio
+from anyio.streams.buffered import BufferedByteReceiveStream
 from pydantic import BaseModel, Field
+from setup_system_sdk.environment import session_environment
+from setup_system_sdk.processes import ProcessSpec, current_processes
 
 
 class Effort(BaseModel):
@@ -22,34 +25,20 @@ class Page(BaseModel):
 
 
 async def models(executable: Path) -> dict[str, list[str]]:
-    process = await asyncio.create_subprocess_exec(
-        str(executable),
-        "app-server",
-        "--listen",
-        "stdio://",
-        cwd="/",
-        env={
-            "HOME": str(Path.home()),
-            "PATH": "/usr/bin:/bin",
-            **(
-                {"XDG_DATA_HOME": os.environ["XDG_DATA_HOME"]}
-                if "XDG_DATA_HOME" in os.environ
-                else {}
-            ),
-        },
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-        limit=262144,
+    service = current_processes()
+    spec = ProcessSpec(
+        (str(executable), "app-server", "--listen", "stdio://"),
+        cwd=Path("/"),
+        env=session_environment(),
+        stdin=subprocess.PIPE,
+        discard_stderr=True,
+        timeout=service.timeout(10),
+        grace=service.grace,
     )
-    assert process.stdin is not None and process.stdout is not None
-    reader = process.stdout
 
-    async def reply(number: int) -> dict[str, list[str]]:
+    async def reply(reader: BufferedByteReceiveStream, number: int) -> dict[str, list[str]]:
         for _ in range(64):
-            line = await reader.readline()
-            if not line:
-                break
+            line = await reader.receive_until(b"\n", 262144)
             data = json.loads(line)
             if data.get("id") == number:
                 if "error" in data:
@@ -60,22 +49,18 @@ async def models(executable: Path) -> dict[str, list[str]]:
                 return {m.model: [e.reasoning_effort for e in m.efforts] for m in page.data}
         raise ValueError("Incomplete Codex capability reply")
 
-    try:
-        async with asyncio.timeout(10):
-            process.stdin.write(
-                b'{"id":1,"method":"initialize","params":{"clientInfo":{"name":"setup-system","version":"1"}}}\n'
-            )
-            await process.stdin.drain()
-            await reply(1)
-            process.stdin.write(
-                b'{"method":"initialized","params":{}}\n{"id":2,"method":"model/list","params":{"limit":100,"includeHidden":false}}\n'
-            )
-            await process.stdin.drain()
-            return await reply(2)
-    finally:
-        process.stdin.close()
-        try:
-            await asyncio.wait_for(process.wait(), 1)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
+    async with service.runner.open(spec) as process:
+        assert process.stdin is not None and process.stdout is not None
+        reader = BufferedByteReceiveStream(process.stdout)
+        await process.stdin.send(
+            b'{"id":1,"method":"initialize","params":{"clientInfo":{"name":"setup-system","version":"1"}}}\n'
+        )
+        await reply(reader, 1)
+        await process.stdin.send(
+            b'{"method":"initialized","params":{}}\n{"id":2,"method":"model/list","params":{"limit":100,"includeHidden":false}}\n'
+        )
+        result = await reply(reader, 2)
+        await process.stdin.aclose()
+        with anyio.move_on_after(service.grace):
+            await process.process.wait()
+        return result

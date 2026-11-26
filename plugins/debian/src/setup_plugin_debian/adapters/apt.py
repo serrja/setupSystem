@@ -18,7 +18,7 @@ from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceEffect, ResourceOwnership
 from setup_system_sdk.files.system_paths import protected
 from setup_system_sdk.plugin import owned_resources
-from setup_system_sdk.processes import run_command
+from setup_system_sdk.processes import CancellationPolicy, run_command
 from setup_system_sdk.releases import GithubRelease
 from setup_system_sdk.schemas.common import Identifier, Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
@@ -551,7 +551,7 @@ def privileged(approval: Approval) -> None:
         verb = SERVICE_TRANSITIONS[ServiceAction(approval.action_id)][0]
         rc = run_command(
             ["/usr/bin/systemctl", "--system", "--no-ask-password", verb, packages.service],
-            timeout=90,
+            cancellation=CancellationPolicy.SAFE_BOUNDARY,
             check=False,
             discard_output=True,
         )
