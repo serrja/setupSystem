@@ -310,7 +310,7 @@ def test_trust_closure_paths_and_unavailable_backend(tmp_path):
     with pytest.raises(ValueError, match="Unsafe wheel"):
         wheel_manifest(main.name, main.read_bytes())
     absent = wheel(tmp_path, "absent", "1.0", "ext_one", "pass", manifest=descriptor("one"))
-    with pytest.raises(ValueError, match="verify"):
+    with pytest.raises(ValueError, match="loading the plugin backend"):
         activate(Release(absent.read_bytes(), direct_name=absent.name), tmp_path)
     assert active(tmp_path / "envs", "one") is None
 
