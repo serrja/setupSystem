@@ -10,7 +10,7 @@ User-visible changes and compatibility notes for setupSystem.
 - Maintain isolated pytest infrastructure under the owner’s exception to the product scenario gate.
 - Separate worker and native process admission. Supervise Linux worker descendants across process groups and bind terminal access to the confirmed action.
 - Add explicit historical package reconciliation and revision `1200cafe0003` for retained approvals. Incomplete observations keep an operation available for inspection.
-- Restore the separate C++, Dart/Flutter, LibreOffice, Telegram and TypeScript/Vue plugin identities. Desktop integrations share a versioned appearance package.
+- Consolidate approved Store applications under the Snap catalog and retire unused plugin packages.
 
 - Keep the terminal responsive during settings transactions and path completion.
   Preserve the confirmed Make operation through cancellation or a terminal error.

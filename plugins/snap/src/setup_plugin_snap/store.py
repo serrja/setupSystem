@@ -10,7 +10,7 @@ import yaml
 from pydantic import BaseModel, Field, TypeAdapter
 from setup_system_sdk.schemas.common import Inputs
 
-from setup_plugin_snap.catalog import STORE, SnapName
+from setup_plugin_snap.catalog import STORE, CatalogIdentity, Confinement, SnapName
 
 
 class Revision(Inputs):
@@ -19,6 +19,7 @@ class Revision(Inputs):
     revision: int = Field(gt=0)
     version: str = Field(min_length=1, max_length=128)
     sha3: str = Field(pattern=r"^[a-f0-9]{96}$")
+    confinement: Confinement = "strict"
 
 
 class SocketAttributes(BaseModel):
@@ -72,7 +73,7 @@ class Entry(BaseModel):
     channel: Channel
     revision: int
     version: str
-    confinement: str
+    confinement: Confinement
     download: Download
     manifest: str = Field(alias="snap-yaml", max_length=256000)
 
@@ -115,7 +116,7 @@ async def response_bytes(
 
 
 async def latest(
-    client: httpx.AsyncClient, name: SnapName, arch: str, identity: tuple[str, str] | None
+    client: httpx.AsyncClient, name: SnapName, arch: str, identity: CatalogIdentity | None
 ) -> tuple[Revision, StoreSpec]:
     TypeAdapter(SnapName).validate_python(name)
     data = await response_bytes(
@@ -126,10 +127,12 @@ async def latest(
     )
     document = Document.model_validate_json(data)
     publisher = document.snap.publisher
+    expected_validation = identity[2] if identity else "verified"
+    expected_confinement = identity[3] if identity else "strict"
     if (
         document.name != name
-        or publisher.validation != "verified"
-        or (identity and (document.snap_id, publisher.id) != identity)
+        or publisher.validation != expected_validation
+        or (identity and (document.snap_id, publisher.id) != identity[:2])
     ):
         raise ValueError("The Snap Store publisher or identity differs")
     matches = [
@@ -139,8 +142,8 @@ async def latest(
         and (row.channel.track, row.channel.risk, row.channel.name)
         == ("latest", "stable", "stable")
     ]
-    if len(matches) != 1 or matches[0].confinement != "strict":
-        raise ValueError("The Store has no unique strict latest/stable revision")
+    if len(matches) != 1 or matches[0].confinement != expected_confinement:
+        raise ValueError("The Store release has different confinement")
     entry = matches[0]
     return Revision(
         name=name,
@@ -148,4 +151,5 @@ async def latest(
         revision=entry.revision,
         version=entry.version,
         sha3=entry.download.sha3,
+        confinement=entry.confinement,
     ), StoreSpec.model_validate(yaml.safe_load(entry.manifest))

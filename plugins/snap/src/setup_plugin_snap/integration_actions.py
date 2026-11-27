@@ -19,12 +19,17 @@ from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
 from setup_plugin_snap import daemon
 from setup_plugin_snap.adapters.native import TOOL, current_target
-from setup_plugin_snap.catalog import Selection, catalog
+from setup_plugin_snap.catalog import CatalogIdentity, Selection, catalog
 from setup_plugin_snap.enums import SnapAction
 from setup_plugin_snap.store import Revision, StoreSpec, latest
 
 SYSTEM_SNAP = "snapd"
-SYSTEM_IDENTITY = ("PMrrV4ml8uWuEUDBT8dSGnKUYbevVhc4", "canonical")
+SYSTEM_IDENTITY: CatalogIdentity = (
+    "PMrrV4ml8uWuEUDBT8dSGnKUYbevVhc4",
+    "canonical",
+    "verified",
+    "strict",
+)
 FAILURES = (
     OSError,
     ValueError,
@@ -55,10 +60,15 @@ async def platform_facts(context: PluginContext | None, detail: str = "target") 
     )
 
 
-def expected_identity(name: str) -> tuple[str, str] | None:
+def expected_identity(name: str) -> CatalogIdentity | None:
     entry = catalog().get(name)
     if entry:
-        return entry.snap_id, entry.publisher_id
+        return (
+            entry.snap_id,
+            entry.publisher_id,
+            entry.publisher_validation,
+            entry.confinement,
+        )
     return SYSTEM_IDENTITY if name == SYSTEM_SNAP else None
 
 
@@ -66,7 +76,12 @@ async def observation(item: daemon.Native) -> Revision:
     identity = expected_identity(item.name)
     if identity and item.id != identity[0]:
         raise ValueError("The installed application has a different Store identity")
-    return await daemon.actual(item, identity[1] if identity else None)
+    return await daemon.actual(
+        item,
+        identity[1] if identity else None,
+        identity[2] if identity else "verified",
+        identity[3] if identity else "strict",
+    )
 
 
 async def inventory(local: httpx.AsyncClient) -> tuple[dict[str, daemon.Native], set[str]]:
@@ -138,19 +153,28 @@ async def plan_selection(
                 if action is SnapAction.UPDATE_APPS:
                     raise ValueError("Install the selected application before updating it")
                 if context is not None:
+                    package_names = entries[name].debian_packages
                     facts = await context.inspect_provider(
                         CapabilityRequest(
                             capability="system.packages",
                             step_key="inventory",
-                            payload={"action": "install", "consumer": "snap", "inventory": [name]},
+                            payload={
+                                "action": "install",
+                                "consumer": "snap",
+                                "inventory": list(package_names),
+                            },
                         )
                     )
                     versions = facts.get("installed")
-                    if not isinstance(versions, dict) or name not in versions:
+                    if not isinstance(versions, dict) or set(versions) != set(package_names):
                         raise ValueError("Incomplete package inventory")
-                    version = versions[name]
+                    version = next((value for value in versions.values() if value), None)
                 elif os.geteuid() == 0:
-                    version = await run_sync(query, TOOL, "installed", name)
+                    version = None
+                    for package_name in entries[name].debian_packages:
+                        version = await run_sync(query, TOOL, "installed", package_name)
+                        if version:
+                            break
                 else:
                     raise ValueError("A verified package inventory is required")
                 if version:
@@ -289,16 +313,16 @@ async def apply(approval: Approval) -> None:
                 if row.after is None:
                     raise ValueError("The confirmed Store revision is missing")
                 desired = Revision.model_validate_json(row.after)
-                change = (
-                    await daemon.checked_tool(
-                        "refresh" if current else "install",
-                        "--no-wait",
-                        "--channel=latest/stable",
-                        f"--revision={desired.revision}",
-                        desired.name,
-                        transaction=True,
-                    )
-                ).strip()
+                command = [
+                    "refresh" if current else "install",
+                    "--no-wait",
+                    "--channel=latest/stable",
+                    f"--revision={desired.revision}",
+                ]
+                if current is None and desired.confinement == "classic":
+                    command.append("--classic")
+                command.append(desired.name)
+                change = (await daemon.checked_tool(*command, transaction=True)).strip()
                 if not re.fullmatch(r"[1-9][0-9]*", change):
                     raise ValueError("Snapd returned an unknown change identity")
                 await daemon.checked_tool("watch", change, transaction=True)

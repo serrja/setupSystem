@@ -10,6 +10,10 @@ from setup_system_sdk.schemas.common import Inputs
 
 SnapName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
 StoreID = Annotated[str, Field(pattern=r"^[0-9A-Za-z]{32}$")]
+DebianPackageName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9+.-]{0,127}$")]
+PublisherValidation = Literal["verified", "unproven"]
+Confinement = Literal["strict", "classic"]
+CatalogIdentity = tuple[str, str, PublisherValidation, Confinement]
 STORE = "https://api.snapcraft.io/v2/snaps/info/"
 
 
@@ -20,9 +24,11 @@ class Entry(Inputs):
     snap_id: StoreID
     publisher_id: StoreID
     publisher: str = Field(min_length=1, max_length=100)
+    publisher_validation: PublisherValidation
     channel: Literal["latest/stable"]
-    confinement: Literal["strict"]
+    confinement: Confinement
     platforms: tuple[Literal["amd64", "arm64"], ...] = Field(min_length=1, max_length=2)
+    debian_packages: tuple[DebianPackageName, ...] = Field(min_length=1, max_length=8)
     removal: str = Field(min_length=1, max_length=1000)
 
 

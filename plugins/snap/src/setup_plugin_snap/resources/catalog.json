@@ -1,17 +1,97 @@
 [
   {
-    "id": "telegram-desktop",
-    "title": "Telegram Desktop",
+    "id": "firefox",
+    "title": "Firefox",
     "source": "https://api.snapcraft.io/v2/snaps/info/",
-    "snap_id": "jpdoHqMd90M39DdH2JSZbeQxipqHtwLo",
-    "publisher_id": "EXRxowJU0BSPUYQhLXu58z3mwKY33Hcp",
-    "publisher": "Telegram FZ-LLC",
+    "snap_id": "3wdHCAVyZEmYsCMFDE9qt92UV8rC8Wdk",
+    "publisher_id": "OgeoZuqQpVvSr9eGKJzNCrFGSaKXpkey",
+    "publisher": "Mozilla",
+    "publisher_validation": "verified",
     "channel": "latest/stable",
     "confinement": "strict",
     "platforms": [
       "amd64",
       "arm64"
     ],
-    "removal": "Close Telegram before removal. Snap saves and verifies a snapshot of all users’ application data. Sign in, manage sessions and configure notifications inside Telegram Desktop."
+    "debian_packages": [
+      "firefox-esr",
+      "firefox"
+    ],
+    "removal": "Close Firefox before removal. Snap saves and verifies a snapshot of all users' application data. Export any browser data that is not synchronized."
+  },
+  {
+    "id": "nvim",
+    "title": "Neovim",
+    "source": "https://api.snapcraft.io/v2/snaps/info/",
+    "snap_id": "iCEzvDZMvRrIWd5XLxgff6Tc6Zx20aeO",
+    "publisher_id": "xVaaHob1vGNKkY1LxdpSIcoPnp7KpWxg",
+    "publisher": "neovim-snap",
+    "publisher_validation": "unproven",
+    "channel": "latest/stable",
+    "confinement": "classic",
+    "platforms": [
+      "amd64",
+      "arm64"
+    ],
+    "debian_packages": [
+      "neovim"
+    ],
+    "removal": "Close Neovim before removal. Snap saves and verifies a snapshot of all users' application data. User configuration outside Snap data remains under user control."
+  },
+  {
+    "id": "obsidian",
+    "title": "Obsidian",
+    "source": "https://api.snapcraft.io/v2/snaps/info/",
+    "snap_id": "XSpRD8poWONFIT1z9TleS4XrS1u0MlfG",
+    "publisher_id": "WfRJPqOpcF44N2eXtz8wK4LhCx7r7eHu",
+    "publisher": "Obsidian",
+    "publisher_validation": "unproven",
+    "channel": "latest/stable",
+    "confinement": "classic",
+    "platforms": [
+      "amd64"
+    ],
+    "debian_packages": [
+      "obsidian"
+    ],
+    "removal": "Close Obsidian before removal. Snap saves and verifies a snapshot of all users' application data. Vaults outside Snap data remain under user control."
+  },
+  {
+    "id": "spotify",
+    "title": "Spotify",
+    "source": "https://api.snapcraft.io/v2/snaps/info/",
+    "snap_id": "pOBIoZ2LrCB3rDohMxoYGnbN14EHOgD7",
+    "publisher_id": "Z7emHVerQzTDQrOcaLJ8wO1ir1NPl3fG",
+    "publisher": "Spotify",
+    "publisher_validation": "verified",
+    "channel": "latest/stable",
+    "confinement": "strict",
+    "platforms": [
+      "amd64"
+    ],
+    "debian_packages": [
+      "spotify-client",
+      "spotify"
+    ],
+    "removal": "Close Spotify before removal. Snap saves and verifies a snapshot of all users' application data. Account data remains managed by Spotify."
+  },
+  {
+    "id": "telegram-desktop",
+    "title": "Telegram Desktop",
+    "source": "https://api.snapcraft.io/v2/snaps/info/",
+    "snap_id": "jpdoHqMd90M39DdH2JSZbeQxipqHtwLo",
+    "publisher_id": "EXRxowJU0BSPUYQhLXu58z3mwKY33Hcp",
+    "publisher": "Telegram FZ-LLC",
+    "publisher_validation": "verified",
+    "channel": "latest/stable",
+    "confinement": "strict",
+    "platforms": [
+      "amd64",
+      "arm64"
+    ],
+    "debian_packages": [
+      "telegram-desktop"
+    ],
+    "removal": "Close Telegram before removal. Snap saves and verifies a snapshot of all users' application data. Sign in, manage sessions and configure notifications inside Telegram Desktop."
   }
 ]
