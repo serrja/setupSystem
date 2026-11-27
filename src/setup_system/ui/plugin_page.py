@@ -26,7 +26,10 @@ from setup_system.ui.schema_fields import SchemaForm
 
 class PluginPage(VerticalScroll):
     def __init__(
-        self, runtime: Runtime, entry: CatalogEntry, reload: Callable[[], Awaitable[None]]
+        self,
+        runtime: Runtime,
+        entry: CatalogEntry,
+        reload: Callable[[str | None], Awaitable[CatalogEntry | None]],
     ) -> None:
         super().__init__()
         if entry.manifest is None:
@@ -109,6 +112,10 @@ class PluginPage(VerticalScroll):
         if self.operation:
             self.state = OperationState.RUNNING
             self.watch_operation(self.operation)
+        await self.load_active()
+
+    async def load_active(self) -> None:
+        """Populate controls for the currently activated catalog entry."""
         self.update_controls()
         if self.entry.disabled or self.entry.release:
             return
@@ -189,10 +196,22 @@ class PluginPage(VerticalScroll):
                         Prompt("Independently verified release SHA-256 (blank: latest available)")
                     )
                     if digest is not None:
+
+                        async def progress(message: str) -> None:
+                            display.update(message)
+
                         await self.services.plugins.activate(
-                            release, digest or release.digest, self.entry.source.parent
+                            release,
+                            digest or release.digest,
+                            self.entry.source.parent,
+                            progress,
                         )
-                        await self.reload_catalog()
+                        entry = await self.reload_catalog(plugin)
+                        if entry is not None and entry.manifest is not None:
+                            self.entry = entry
+                            self.manifest = entry.manifest
+                            await self.recompose()
+                            await self.load_active()
             elif button == "inspect":
                 reply = await self.services.plugins.query(
                     Request(plugin_id=plugin, method=WorkerMethod.INSPECT)
@@ -208,13 +227,13 @@ class PluginPage(VerticalScroll):
                 display.update("Settings saved.")
             elif button == "toggle":
                 await self.services.plugins.enable(plugin, self.entry.disabled)
-                await self.reload_catalog()
+                await self.reload_catalog(None)
                 await self.remove()
             elif button == "remove-extension":
                 files = await self.services.plugins.removal_files(plugin)
                 if await self.app.push_screen_wait(Confirm("\n".join(files), "Remove extension")):
                     await self.services.plugins.remove(plugin, files)
-                    await self.reload_catalog()
+                    await self.reload_catalog(None)
                     await self.remove()
             elif button == "cancel-operation" and self.operation:
                 self.services.operations.cancel(self.operation)
@@ -242,7 +261,9 @@ class PluginPage(VerticalScroll):
             display.update(error.detail.message)
             for editor in self.query(SchemaForm):
                 editor.show_error(error.detail.field, error.detail.message)
-        except (RuntimeError, OSError, ValueError):
+        except ValueError as error:
+            display.update(str(error))
+        except (RuntimeError, OSError):
             display.update("Operation incomplete. Review the release, settings and history.")
 
     async def review_action(self, plugin: str, display: Static) -> None:
