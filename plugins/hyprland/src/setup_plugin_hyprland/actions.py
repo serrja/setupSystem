@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
-from importlib.resources import files
 from importlib.resources import files as package_files
 from pathlib import Path
 
+from setup_system_desktop_theme.rendering import desktop_context, render_desktop
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.lifecycle import LifecycleAction
@@ -15,11 +14,10 @@ from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceOwnership
 from setup_system_sdk.files.assets import (
     PublishedAssets,
-    desktop_context,
     desktop_directories,
-    render_desktop,
 )
 from setup_system_sdk.plugin import PluginSettings
+from setup_system_sdk.processes import run_command
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
@@ -54,7 +52,7 @@ class PluginActions(PublishedAssets):
             raise ValueError("Expected Hyprland settings.")
         paths = desktop_directories()
         directory = paths["config"] / "hypr/setup-system"
-        context = desktop_context(Path(str(files("setup_plugin_hyprland") / "resources")))
+        context = desktop_context(paths)
         if action_id == PluginAction.SAVE_MONITOR:
             if not isinstance(inputs, Display):
                 raise ValueError("Expected a reviewed monitor layout.")
@@ -121,11 +119,10 @@ class PluginActions(PublishedAssets):
     ) -> Result:
         if action_id != PluginAction.TEST_MONITOR:
             return super().mutate(action_id, settings, inputs, plan)
-        subprocess.run(
+        run_command(
             [sys.executable, "-I", "-B", "-m", "setup_plugin_hyprland.displays"],
-            input=inputs.model_dump_json().encode(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            input=inputs.model_dump_json(),
+            discard_output=True,
             check=True,
         )
         return Result(

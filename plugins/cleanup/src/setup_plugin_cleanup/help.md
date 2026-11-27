@@ -1,4 +1,6 @@
-# Cleanup
+# 🧩 Cleanup
+
+Remove reviewed Debian packages safely.
 
 ## 🧹 Remove selected optional packages
 

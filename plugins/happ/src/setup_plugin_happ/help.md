@@ -1,4 +1,6 @@
-# Happ
+# 🧩 Happ
+
+Happ workstation plugin.
 
 ## 🔐 Subscriptions
 

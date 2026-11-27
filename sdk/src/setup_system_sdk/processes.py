@@ -6,23 +6,21 @@ import math
 import os
 import signal
 import subprocess
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
-from enum import StrEnum
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from typing import Literal, TypedDict, Unpack, overload
 
 import anyio
 from anyio.abc import ByteReceiveStream, Process
+from anyio.lowlevel import RunVar
+
+from setup_system_sdk.enums.operation import CancellationPolicy as CancellationPolicy
 
 MAX_OUTPUT = 1024 * 1024
-
-
-class CancellationPolicy(StrEnum):
-    TERMINATE = "terminate"
-    SAFE_BOUNDARY = "safe_boundary"
 
 
 @dataclass(frozen=True)
@@ -32,7 +30,7 @@ class ProcessSpec:
     env: Mapping[str, str] | None = None
     stdin: int | None = subprocess.DEVNULL
     pass_fds: tuple[int, ...] = ()
-    timeout: float = 180
+    timeout: float | None = 180
     stdout_limit: int = MAX_OUTPUT
     stderr_limit: int = MAX_OUTPUT
     discard_stdout: bool = False
@@ -44,7 +42,7 @@ class ProcessSpec:
     def __post_init__(self) -> None:
         if not self.argv or not self.argv[0]:
             raise ValueError("A process requires an executable")
-        if not math.isfinite(self.timeout) or self.timeout <= 0:
+        if self.timeout is not None and (not math.isfinite(self.timeout) or self.timeout <= 0):
             raise ValueError("A process requires a finite positive timeout")
         if min(self.stdout_limit, self.stderr_limit, self.grace) < 0 or not math.isfinite(
             self.grace
@@ -53,7 +51,7 @@ class ProcessSpec:
         if (self.cancellation is CancellationPolicy.SAFE_BOUNDARY) != (
             self.safe_boundary is not None
         ):
-            raise ValueError("A mutating process requires its cancellation handler")
+            raise ValueError("A safe boundary requires its cancellation handler")
 
 
 @dataclass(frozen=True)
@@ -149,24 +147,94 @@ class ProcessRunner:
                 await cancel.wait()
                 await managed.cancel()
 
+            done = anyio.Event()
+
+            async def communicate() -> None:
+                # Keep draining pipes while a transaction acknowledges its safe boundary.
+                with anyio.CancelScope(shield=spec.safe_boundary is not None):
+                    try:
+                        async with anyio.create_task_group() as group:
+                            if managed.stdout:
+                                group.start_soon(drain, managed.stdout, 0, spec.stdout_limit)
+                            if managed.stderr:
+                                group.start_soon(drain, managed.stderr, 1, spec.stderr_limit)
+                            if managed.stdin:
+                                with suppress(anyio.BrokenResourceError):
+                                    if input_data is not None:
+                                        await managed.stdin.send(input_data)
+                                    await managed.stdin.aclose()
+                        await managed.process.wait()
+                    finally:
+                        done.set()
+
             async with anyio.create_task_group() as monitor:
+                monitor.start_soon(communicate)
                 if cancel is not None:
                     monitor.start_soon(stop)
-                async with anyio.create_task_group() as group:
-                    if managed.stdout:
-                        group.start_soon(drain, managed.stdout, 0, spec.stdout_limit)
-                    if managed.stderr:
-                        group.start_soon(drain, managed.stderr, 1, spec.stderr_limit)
-                    if managed.stdin:
-                        with suppress(anyio.BrokenResourceError):
-                            if input_data is not None:
-                                await managed.stdin.send(input_data)
-                            await managed.stdin.aclose()
-                status = await managed.process.wait()
-                monitor.cancel_scope.cancel()
+                try:
+                    await done.wait()
+                except BaseException:
+                    await managed.cancel()
+                    raise
+                finally:
+                    monitor.cancel_scope.cancel()
+            status = await managed.process.wait()
         if oversized:
             raise subprocess.SubprocessError("Process output exceeds its limit")
         return ProcessResult(status, bytes(outputs[0]), bytes(outputs[1]))
+
+
+@dataclass(frozen=True)
+class ExecutionProcesses:
+    """The process budget and cancellation grant for one worker request."""
+
+    runner: ProcessRunner
+    query_timeout: float = 180
+    terminal_timeout: float = 900
+    grace: float = 5
+    cancelled: anyio.Event | None = None
+    mutating: bool = False
+    cancellation: CancellationPolicy = CancellationPolicy.TERMINATE
+    native_terminal: bool = False
+
+    def timeout(self, requested: float | None) -> float | None:
+        if self.mutating:
+            return requested
+        return min(requested, self.query_timeout) if requested is not None else self.query_timeout
+
+
+_processes: ContextVar[ExecutionProcesses | None] = ContextVar("execution_processes", default=None)
+
+
+@contextmanager
+def execution_processes(service: ExecutionProcesses) -> Iterator[None]:
+    token = _processes.set(service)
+    try:
+        yield
+    finally:
+        _processes.reset(token)
+
+
+_standalone: RunVar[ExecutionProcesses] = RunVar("standalone_processes")
+
+
+def current_processes() -> ExecutionProcesses:
+    service = _processes.get()
+    if service is not None:
+        return service
+    # Async callers outside a worker share a limiter for the duration of their event loop.
+    standalone = _standalone.get(None)
+    if standalone is None:
+        standalone = ExecutionProcesses(ProcessRunner())
+        _standalone.set(standalone)
+    return standalone
+
+
+def native_terminal_timeout() -> float:
+    service = _processes.get()
+    if service is None or not service.native_terminal:
+        raise ValueError("Native terminal access requires a confirmed execute grant")
+    return service.terminal_timeout
 
 
 def _text(data: bytes) -> str:
@@ -175,8 +243,9 @@ def _text(data: bytes) -> str:
 
 
 class _RunOptions(TypedDict, total=False):
-    timeout: int
-    termination_grace: int
+    timeout: float | None
+    termination_grace: float | None
+    cancellation: CancellationPolicy | None
     check: bool
     input: str | None
     env: Mapping[str, str] | None
@@ -202,8 +271,9 @@ def run_command(
 def run_command(
     argv: list[str],
     *,
-    timeout: int = 180,
-    termination_grace: int = 5,
+    timeout: float | None = None,
+    termination_grace: float | None = None,
+    cancellation: CancellationPolicy | None = None,
     check: bool = True,
     input: str | None = None,
     env: Mapping[str, str] | None = None,
@@ -217,21 +287,48 @@ def run_command(
     """Run a synchronous plugin tool in a worker thread or standalone process."""
     if input is not None and stdin is not None:
         raise ValueError("Select one input source")
-    spec = ProcessSpec(
-        tuple(argv),
-        cwd=Path(cwd) if cwd else None,
-        env=env,
-        stdin=subprocess.PIPE if input is not None else stdin,
-        timeout=timeout,
-        grace=termination_grace,
-        discard_stdout=discard_output,
-        discard_stderr=discard_output or discard_stderr,
-        stdout_limit=MAX_OUTPUT if max_output_bytes is None else max_output_bytes,
-        stderr_limit=MAX_OUTPUT if max_output_bytes is None else max_output_bytes,
-    )
+
+    if input is None and stdin is None and _processes.get() is not None:
+        # A worker reserves its own stdin for control frames.
+        stdin = subprocess.DEVNULL
+
+    effective_timeout = timeout
 
     async def execute() -> ProcessResult:
-        return await ProcessRunner().run(spec, input.encode() if input is not None else None)
+        nonlocal effective_timeout
+        service = current_processes()
+        stop = service.cancelled
+        if stop is not None and stop.is_set():
+            raise RuntimeError("The operation has been cancelled")
+
+        async def finish_transaction(process: Process) -> None:
+            await process.wait()
+
+        guarded = service.cancellation is CancellationPolicy.SAFE_BOUNDARY
+        if cancellation is CancellationPolicy.SAFE_BOUNDARY and not guarded:
+            if _processes.get() is not None:
+                raise ValueError("The step must confirm safe-boundary execution")
+            guarded = True
+        effective_timeout = None if guarded else service.timeout(timeout)
+        spec = ProcessSpec(
+            tuple(argv),
+            cwd=Path(cwd) if cwd else None,
+            env=env,
+            stdin=subprocess.PIPE if input is not None else stdin,
+            timeout=effective_timeout,
+            grace=service.grace if termination_grace is None else termination_grace,
+            cancellation=CancellationPolicy.SAFE_BOUNDARY
+            if guarded
+            else CancellationPolicy.TERMINATE,
+            safe_boundary=finish_transaction if guarded else None,
+            discard_stdout=discard_output,
+            discard_stderr=discard_output or discard_stderr,
+            stdout_limit=MAX_OUTPUT if max_output_bytes is None else max_output_bytes,
+            stderr_limit=MAX_OUTPUT if max_output_bytes is None else max_output_bytes,
+        )
+        return await service.runner.run(
+            spec, input.encode() if input is not None else None, cancel=stop
+        )
 
     try:
         try:
@@ -241,7 +338,7 @@ def run_command(
         else:
             response = anyio.from_thread.run(execute)
     except TimeoutError:
-        raise subprocess.TimeoutExpired(argv, timeout) from None
+        raise subprocess.TimeoutExpired(argv, effective_timeout or 0) from None
     result: subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]
     if text:
         result = subprocess.CompletedProcess(

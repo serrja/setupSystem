@@ -13,12 +13,11 @@ import stat
 import subprocess
 import tempfile
 from collections.abc import Callable
-from importlib.resources import files
 from importlib.resources import files as package_files
 from pathlib import Path
 
 from pydantic import TypeAdapter
-from setup_system_sdk.files.palette import palette
+from setup_system_desktop_theme.palette import palette
 from setup_system_sdk.files.system_paths import protected
 from setup_system_sdk.files.templates import render_asset
 from setup_system_sdk.processes import run_command
@@ -213,7 +212,7 @@ def inspect_unlock() -> UnlockPlan:
 def _theme(root: Path | None = None) -> bytes:
     return render_asset(
         Path(str(package_files("setup_plugin_plymouth").joinpath("resources"))) / "mocha.plymouth",
-        palette(root or Path(str(files("setup_plugin_plymouth") / "resources"))),
+        palette(root),
     )
 
 

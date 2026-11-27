@@ -1,4 +1,4 @@
-# Project templates
+# 📁 Project templates
 
 Open **Projects and templates** and choose a catalog template, such as Python, Typer, FastAPI or service. Choose the release explicitly or leave it empty to resolve the current stable release. Template creation asks for the destination and project name. The Python template also accepts a library, service or native profile. Review the selected source, version and commit before applying.
 

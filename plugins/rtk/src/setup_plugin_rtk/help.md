@@ -1,4 +1,4 @@
-# RTK
+# 🧩 RTK
 
 Verify and install the official RTK binary in the current account.
 

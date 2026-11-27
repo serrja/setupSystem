@@ -92,6 +92,9 @@ description = "Install selected strict Store revisions."
 [[tool.setup-system.manifest.actions.requires]]
 id = "system.packages"
 version = ">=1,<2"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "update-apps"
@@ -104,6 +107,9 @@ description = "Refresh selected installed applications to reviewed stable revisi
 [[tool.setup-system.manifest.actions.requires]]
 id = "system.packages"
 version = ">=1,<2"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "remove-apps"
@@ -112,9 +118,15 @@ target = "remove-apps"
 permissions = ["root"]
 mode = "mutation"
 description = "Save and verify data snapshots before removing the selected snaps."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "check-apps"
 label = "Check applications"
 mode = "read_only"
 description = "Inspect the signed installed revision of each selection."
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"

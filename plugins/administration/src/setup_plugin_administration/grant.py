@@ -25,9 +25,10 @@ from .models import ADMIN_REQUEST_BYTES, AdminAccount, AdminIntent, GrantConfirm
 RELATIVE = "plugins/administration/setup_plugin_administration"
 
 
-def fingerprint(account: AdminAccount) -> str:
+def fingerprint(account: AdminAccount, boot: str | None = None) -> str:
     return hashlib.sha256(
-        current_boot_identity().encode("ascii") + account.model_dump_json().encode()
+        (boot if boot is not None else current_boot_identity()).encode("ascii")
+        + account.model_dump_json().encode()
     ).hexdigest()
 
 

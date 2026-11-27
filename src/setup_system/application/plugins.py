@@ -5,14 +5,18 @@ from pathlib import Path
 from uuid import uuid4
 
 import anyio
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.downloads import DownloadClient
 from setup_system_sdk.enums.operation import WorkerMethod
 from setup_system_sdk.files.generations import bounded_file
+from setup_system_sdk.manifests import Manifest
 from setup_system_sdk.schemas.common import Values
 from setup_system_sdk.schemas.wire import Reply, Request
 
 from setup_system.application.providers import ProviderBroker
+from setup_system.application.recovery import retained_for_recovery
 from setup_system.configuration.profiles import SavedValues, SettingsStore
 from setup_system.infrastructure.database.uow import UnitOfWork
 from setup_system.infrastructure.locks import acquire
@@ -31,6 +35,37 @@ from setup_system.infrastructure.plugins.environments import Activation, install
 from setup_system.infrastructure.plugins.lifecycle import removable, retire, toggle
 from setup_system.infrastructure.plugins.registry import PluginRegistry
 from setup_system.infrastructure.plugins.workers import WorkerClient
+
+
+def accepts_previous_requests(previous: Values, candidate: Values) -> bool:
+    """Accept unchanged validation rules and optional additions to a closed request model."""
+
+    def rules(schema: Values) -> Values:
+        return {k: v for k, v in schema.items() if k not in {"title", "description", "examples"}}
+
+    old, new = rules(previous), rules(candidate)
+    old_fields, new_fields = old.pop("properties", {}), new.pop("properties", {})
+    required, now_required = old.pop("required", []), new.pop("required", [])
+    if (
+        old != new
+        or not isinstance(old_fields, dict)
+        or not isinstance(new_fields, dict)
+        or not isinstance(required, list)
+        or not isinstance(now_required, list)
+        or any(k not in required for k in now_required)
+    ):
+        return False
+    if old.get("additionalProperties") is not False and new_fields.keys() - old_fields.keys():
+        return False
+    for name, field in old_fields.items():
+        updated = new_fields.get(name)
+        if (
+            not isinstance(field, dict)
+            or not isinstance(updated, dict)
+            or rules(field) != rules(updated)
+        ):
+            return False
+    return True
 
 
 class PluginService:
@@ -85,12 +120,45 @@ class PluginService:
             return release
         return await preview_link(url, self.policy, self.client)
 
-    async def _require_idle(self, plugin: str) -> None:
+    async def _require_idle(self, plugin: str, *, removing: bool = False) -> set[str]:
         async with self.uow.read() as repos:
-            if await repos.operations.history(
-                plugin, unfinished=True
-            ) or await repos.dependencies.dependents(plugin):
-                raise ValueError("Resolve unfinished operations and active dependents first")
+            if await repos.operations.history(plugin, unfinished=True) or (
+                await repos.dependencies.pending_dependents(plugin)
+            ):
+                raise ValueError("Resolve unfinished operations using this plugin first")
+            dependents = await repos.dependencies.dependents(plugin)
+            if removing and dependents:
+                raise ValueError("Installed consumers still require this plugin")
+            return dependents
+
+    def _check_contracts(self, candidate: Manifest, dependents: set[str]) -> None:
+        if not dependents:
+            return
+        previous = self.registry.resolve(candidate.id).manifest
+        contracts = {c.id: c for c in previous.provides}
+        offered = {c.id: c for c in candidate.provides}
+        installed_consumers = {
+            item.manifest.id: item.manifest
+            for item in installed(self.registry.root)
+            if item.manifest and not item.reason
+        }
+        for consumer in dependents:
+            manifest = installed_consumers.get(consumer)
+            if not manifest:
+                raise ValueError(f"Restore the manifest of dependent {consumer} before updating")
+            for action in manifest.actions:
+                for req in action.requires:
+                    if req.id not in contracts:
+                        continue
+                    contract = offered.get(req.id)
+                    if (
+                        contract is None
+                        or Version(contract.version) not in SpecifierSet(req.version)
+                        or not accepts_previous_requests(
+                            contracts[req.id].request_schema, contract.request_schema
+                        )
+                    ):
+                        raise ValueError(f"{consumer} requires a compatible {req.id} provider")
 
     async def activate(
         self, release: Release, approved_digest: str, wheelhouse: Path | None = None
@@ -107,7 +175,8 @@ class PluginService:
             )
 
         async with acquire(self.locks, ["plugin/" + plugin], wait=False):
-            await self._require_idle(plugin)
+            dependents = await self._require_idle(plugin)
+            await run_sync(self._check_contracts, release.manifest, dependents)
             state = await install_release(
                 release,
                 policy=self.policy.model_copy(
@@ -147,7 +216,7 @@ class PluginService:
 
     async def enable(self, plugin: str, enabled: bool) -> None:
         async with acquire(self.locks, ["plugin/" + plugin], wait=False):
-            await self._require_idle(plugin)
+            await self._require_idle(plugin, removing=not enabled)
             await anyio.to_thread.run_sync(
                 partial(toggle, self.registry.root, plugin, enable=enabled)
             )
@@ -157,7 +226,9 @@ class PluginService:
 
     async def remove(self, plugin: str, files: tuple[str, ...]) -> None:
         async with acquire(self.locks, ["plugin/" + plugin], wait=False):
-            await self._require_idle(plugin)
+            await self._require_idle(plugin, removing=True)
+            if await retained_for_recovery(self.uow, plugin, self.registry):
+                raise ValueError("An operation still requires this plugin for recovery")
             await anyio.to_thread.run_sync(retire, self.registry.root, plugin, files)
 
     async def query(self, request: Request) -> Reply:

@@ -13,7 +13,8 @@ from setup_system_sdk.enums.lifecycle import LifecycleAction
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceOwnership
 from setup_system_sdk.plugin import Backend, PluginSettings
-from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.providers import CapabilityRequest
+from setup_system_sdk.schemas.common import Inputs, Values
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
 from setup_plugin_regional.adapters import xkb
@@ -31,6 +32,16 @@ from .models import RegionalKind
 FOLDER = Path(str(package_files("setup_plugin_regional").joinpath("resources")))
 
 SETTINGS = ("locale", "keyboard", "timezone")
+
+
+async def platform_facts(context: PluginContext | None, detail: str = "target") -> Values:
+    if context is None:
+        raise ValueError("The action requires a selected platform provider")
+    return await context.inspect_provider(
+        CapabilityRequest(
+            capability="system.platform", step_key="platform", payload={"detail": detail}
+        )
+    )
 
 
 def choices(provider: str) -> list[str]:
@@ -54,7 +65,7 @@ def choices(provider: str) -> list[str]:
     return []
 
 
-def change(action_id: str, inputs: Inputs) -> Confirmation:
+def change(action_id: str, inputs: Inputs, boot: str) -> Confirmation:
     setting: RegionalKind
     if action_id == PluginAction.TIMEZONE and isinstance(inputs, Timezone):
         setting, values = "timezone", [inputs.value]
@@ -64,18 +75,14 @@ def change(action_id: str, inputs: Inputs) -> Confirmation:
         setting, values = "keyboard", inputs.layouts
     else:
         raise ValueError("Select an independent regional setting.")
-    if not current_target()[1]:
-        raise ValueError("Regional changes require Debian 13.")
     value = regional.validate(setting, ",".join(values))
     if len(set(values)) != len(values) or not set(values).issubset(choices(setting)):
         raise ValueError("Selected value is no longer available.")
-    return Confirmation(
-        setting=setting, value=value, before=regional.actual(setting), boot=current_boot_identity()
-    )
+    return Confirmation(setting=setting, value=value, before=regional.actual(setting), boot=boot)
 
 
-def prepare(action_id: str, inputs: Inputs) -> Plan:
-    request = change(action_id, inputs)
+def prepare(action_id: str, inputs: Inputs, boot: str) -> Plan:
+    request = change(action_id, inputs, boot)
     return Plan(
         summary=f"Set {request.setting} to {request.value}.",
         resources=[
@@ -130,7 +137,11 @@ class PluginActions(Backend):
             if context is None:
                 raise ValueError("Package planning requires a provider")
             return await self.delegated_plan(action_id, inputs, context)
-        return await run_sync(prepare, action_id, inputs)
+        facts = await platform_facts(context)
+        boot = facts.get("boot")
+        if facts.get("supported") is not True or not isinstance(boot, str):
+            return Plan(outcome=Outcome.BLOCKED, summary="Regional changes require Debian 13.")
+        return await run_sync(prepare, action_id, inputs, boot)
 
     async def verify(
         self,
@@ -144,7 +155,7 @@ class PluginActions(Backend):
         verified = (
             len(plan.resources) == 2
             and plan.resources[1].kind == "boot"
-            and plan.resources[1].identity == await run_sync(current_boot_identity)
+            and plan.resources[1].identity == (await platform_facts(context)).get("boot")
             and row.after is not None
             and regional.equivalent(row.identity, value, row.after)
         )
@@ -156,7 +167,9 @@ class PluginActions(Backend):
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:
-    request = change(action_id, inputs)
+    if not current_target()[1]:
+        raise ValueError("Regional changes require Debian 13.")
+    request = change(action_id, inputs, current_boot_identity())
     if request.before != plan.resources[0].before or request.boot != plan.resources[1].identity:
         raise ValueError("The regional setting or boot identity changed.")
     run_native_play("regional", "configure.yml", request.model_dump(mode="json"), "sudo")

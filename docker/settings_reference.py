@@ -58,6 +58,8 @@ def reference(root: Path) -> str:
     config = root / "src/setup_system/configuration"
     defaults = tomllib.loads((config / "application.toml").read_text())
     defaults.update(
+        profile=Settings.model_fields["profile"].default,
+        catalogs=[],
         providers={},
         database_url=default_database_url(Path("/<XDG_STATE_HOME>")).get_secret_value(),
         database_busy_timeout_ms=Settings.model_fields["database_busy_timeout_ms"].default,
@@ -67,6 +69,8 @@ def reference(root: Path) -> str:
         "",
         "The launcher reads packaged settings and explicit environment overrides.",
         "Each plugin ships a generated `settings_reference.md` beside its manifest and Help.",
+        "",
+        "## ⚙️ Configuration",
         "",
         *table(Settings, defaults, ENV_PREFIX),
         "",

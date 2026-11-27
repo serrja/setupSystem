@@ -6,7 +6,7 @@ from typing import ClassVar
 import anyio
 from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.lifecycle import LifecycleAction, PackageAction
-from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.operation import CancellationPolicy, Outcome
 from setup_system_sdk.enums.permissions import Permission
 from setup_system_sdk.operations import Plan, Receipt, Result, StepPlan
 from setup_system_sdk.providers import CapabilityRequest
@@ -120,7 +120,7 @@ class PackageProvider:
             preconditions={"proposal": reviewed.model_dump(mode="json")},
             resources=tuple(reviewed.resources),
             permissions=frozenset({Permission.ROOT}),
-            cancellation="safe_boundary",
+            cancellation=CancellationPolicy.SAFE_BOUNDARY,
             lock_keys=("system.packages",),
         )
 

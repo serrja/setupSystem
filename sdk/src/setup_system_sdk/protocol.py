@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import Field, TypeAdapter
 
+from setup_system_sdk.enums.operation import ProviderMethod
 from setup_system_sdk.operations import ActionEvent, StepPlan
 from setup_system_sdk.providers import CapabilityRequest
 from setup_system_sdk.schemas.common import Inputs, Values
@@ -30,7 +31,7 @@ class ReplyMessage(Envelope):
 
 
 class ProviderPayload(Inputs):
-    method: Literal["inspect", "plan"]
+    method: ProviderMethod
     request: CapabilityRequest
 
 

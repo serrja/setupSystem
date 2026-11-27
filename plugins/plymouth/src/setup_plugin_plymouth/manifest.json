@@ -20,7 +20,12 @@
   ],
   "actions": [
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "check",
       "label": "Check",
@@ -35,6 +40,10 @@
       "requires": [
         {
           "id": "system.packages",
+          "version": ">=1,<2"
+        },
+        {
+          "id": "system.platform",
           "version": ">=1,<2"
         }
       ],
@@ -55,6 +64,10 @@
         {
           "id": "system.packages",
           "version": ">=1,<2"
+        },
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
         }
       ],
       "cleanup_phase": null,
@@ -70,7 +83,12 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "configure",
       "label": "Configure",
@@ -84,6 +102,7 @@
       "description": ""
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

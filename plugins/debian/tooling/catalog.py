@@ -1,20 +1,22 @@
 """Build the offline catalog for CPython on the supported workstation architectures."""
 
 import argparse
+from importlib.metadata import distributions
 from pathlib import Path
 
 import anyio
 from packaging.markers import default_environment
 from packaging.tags import compatible_tags, cpython_tags
-from packaging.utils import parse_wheel_filename
 from plugin_artifacts import descriptor, generate
+from setup_system_sdk import PLUGIN_GROUP
 from setup_system_sdk.manifests import Manifest
 
 
 async def assemble(wheels: Path, output: Path, lock: Path) -> None:
     (sdk,) = wheels.glob("setup_system_sdk-*.whl")
     for primary in sorted(wheels.glob("*.whl")):
-        if parse_wheel_filename(primary.name)[0] in {"setup-system", "setup-system-sdk"}:
+        (distribution,) = distributions(path=[str(primary)])
+        if not distribution.entry_points.select(group=PLUGIN_GROUP):
             continue
         records = []
         for arch in ("x86_64", "aarch64"):

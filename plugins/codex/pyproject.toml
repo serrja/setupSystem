@@ -17,6 +17,7 @@ codex = "setup_plugin_codex.plugin:Plugin"
 packages = ["src/setup_plugin_codex"]
 
 [tool.setup-system.manifest]
+session_fields = ["CODEX_HOME"]
 name = "Codex CLI"
 author = "serrja"
 category = "applications"

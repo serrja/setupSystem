@@ -49,7 +49,14 @@ def verify_installation(root: Path) -> None:
     if len(metadata) != 1 or set(parent.glob("setup_system-*.dist-info")) != set(metadata):
         raise ValueError("Python distribution metadata differs from the Debian package inventory")
     sdk = parent / "setup_system_sdk"
-    for tree in (root, PYTHON_PACKAGE, sdk, parent / "setup_plugin_debian", *metadata):
+    for tree in (
+        root,
+        PYTHON_PACKAGE,
+        sdk,
+        parent / "setup_plugin_debian",
+        parent / "setup_system_desktop_theme",
+        *metadata,
+    ):
         protected(tree)
         expected = {p for p in owned if p.is_relative_to(tree)}
         actual = {tree, *tree.rglob("*")}

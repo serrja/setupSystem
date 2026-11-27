@@ -1,4 +1,4 @@
-# Naming policy
+# 📝 Naming policy
 
 Use PEP 8 for project-owned Python. Write modules, functions, methods, parameters, variables and internal fields in `snake_case`, classes in `CapWords` and constants in `UPPER_SNAKE_CASE`. New Python code uses Ruff's formatter and targeted naming checks. Public docstrings explain contracts consistently with PEP 257. Existing code is migrated with its callers and tests, not by changing a published protocol in isolation.
 

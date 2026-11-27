@@ -12,6 +12,7 @@ import sys
 import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from email.parser import BytesParser
 from enum import StrEnum
@@ -32,7 +33,7 @@ from setup_system_sdk.files import retirement_checkpoint as checkpoint
 from setup_system_sdk.files.generations import bounded_file as _local_file
 from setup_system_sdk.files.generations import private_storage as _private
 from setup_system_sdk.operations import Executor
-from setup_system_sdk.processes import ProcessRunner, ProcessSpec
+from setup_system_sdk.processes import ProcessSpec, current_processes
 from setup_system_sdk.schemas.common import Identifier, Inputs
 from setup_system_sdk.schemas.manifest import Manifest
 
@@ -148,6 +149,29 @@ def active(env_root: Path, plugin_id: str) -> Activation | None:
     return _state(env_root, plugin_id, disabled=False)
 
 
+def retained(env_root: Path, identity: Executor) -> Activation:
+    """Resolve an executor against a stored release receipt, including retired pointers."""
+    root = _directory(env_root, identity.plugin_id)
+    _private(env_root)
+    _private(root)
+    if checkpoint.pending(root) or os.path.lexists(root / ".retiring.json"):
+        raise ValueError("Plugin retirement is in progress")
+    for name in ("active.json", "disabled.json", identity.generation + ".json"):
+        try:
+            pointer = _Pointer.model_validate_json(_local_file(root / name, 4096))
+        except FileNotFoundError:
+            continue
+        if (pointer.plugin_id, pointer.generation, pointer.digest) == (
+            identity.plugin_id,
+            identity.generation,
+            identity.release_digest,
+        ):
+            state = _read_generation(root, pointer)
+            if state.executor == identity:
+                return state
+    raise ValueError("No matching retained release receipt")
+
+
 def installed(env_root: Path) -> tuple[CatalogEntry, ...]:
     """Report active environments independently, retaining errors for broken workers."""
     if not env_root.exists():
@@ -189,7 +213,7 @@ class EnvironmentStep(StrEnum):
 
 
 async def _run(argv: list[str], cwd: Path, step: EnvironmentStep) -> None:
-    result = await ProcessRunner().run(
+    result = await current_processes().runner.run(
         ProcessSpec(
             tuple(argv),
             cwd=cwd,
@@ -306,16 +330,29 @@ def _activate(root: Path, prior: bytes | None, pointer: _Pointer) -> None:
             or any(os.path.lexists(root / name) for name in ("disabled.json", ".retiring.json"))
         ):
             raise ValueError("Plugin activation changed during staging")
-        with tempfile.NamedTemporaryFile(dir=root, delete=False) as staged:
-            temporary = Path(staged.name)
-            try:
-                staged.write(pointer.model_dump_json().encode())
-                staged.flush()
-                os.fsync(staged.fileno())
-                os.replace(temporary, root / "active.json")
+        with ExitStack() as leases:
+            if prior is not None:
+                from setup_system.infrastructure.plugins.lifecycle import generation_lock
+
+                previous = _Pointer.model_validate_json(prior)
+                leases.enter_context(generation_lock(root / previous.generation, exclusive=True))
+                receipt = root / (previous.generation + ".json")
+                try:
+                    os.link(root / "active.json", receipt, follow_symlinks=False)
+                except FileExistsError:
+                    if _local_file(receipt, 4096) != prior:
+                        raise ValueError("Conflicting historical release receipt") from None
                 os.fsync(fd)
-            finally:
-                temporary.unlink(missing_ok=True)
+            with tempfile.NamedTemporaryFile(dir=root, delete=False) as staged:
+                temporary = Path(staged.name)
+                try:
+                    staged.write(pointer.model_dump_json().encode())
+                    staged.flush()
+                    os.fsync(staged.fileno())
+                    os.replace(temporary, root / "active.json")
+                    os.fsync(fd)
+                finally:
+                    temporary.unlink(missing_ok=True)
     finally:
         os.close(fd)
 

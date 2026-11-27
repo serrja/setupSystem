@@ -48,14 +48,7 @@ def command(*argv: str, capture: bool = False) -> tuple[int, str]:
         if name in os.environ:
             env[name] = os.environ[name]
     if os.geteuid() != 0:
-        session = session_environment()
-        env.update(
-            {
-                name: session[name]
-                for name in ("DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "DISPLAY", "CODEX_HOME")
-                if name in session
-            }
-        )
+        env.update(session_environment())
     result = run_command(
         list(argv),
         timeout=20,

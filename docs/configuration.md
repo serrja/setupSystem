@@ -1,6 +1,6 @@
 # ⚙️ Settings
 
-Host timing, completion limits and SQLite settings belong to `setup_system.settings.Settings`. The process reads installed defaults and accepts named environment overrides. [Host settings](settings_map.md)
+Host timing, completion limits and SQLite settings belong to `setup_system.configuration.settings.Settings`. The process reads installed defaults and accepts named environment overrides. [Host settings](settings_map.md)
 
 Each extension declares its own Pydantic settings and action inputs. The worker resolves defaults, saved values, declared environment overrides and the values confirmed for this operation. A plugin declares eligible environment fields under its `SETUP_PLUGIN_<ID>_` namespace. Secret fields reference entries in Secret Service.
 

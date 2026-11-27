@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import stat
 from importlib.resources import files as package_files
 from pathlib import Path
 from uuid import UUID
 
+from pydantic import TypeAdapter
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.lifecycle import LifecycleAction
-from setup_system_sdk.enums.operation import Outcome
+from setup_system_sdk.enums.operation import CancellationPolicy, Outcome
 from setup_system_sdk.enums.permissions import Permission
 from setup_system_sdk.enums.resources import ResourceOwnership
 from setup_system_sdk.files.system_files import write_system
@@ -20,10 +20,10 @@ from setup_system_sdk.files.system_paths import protected
 from setup_system_sdk.operations import Receipt, Snapshot, StepPlan
 from setup_system_sdk.plugin import Backend, PluginSettings
 from setup_system_sdk.providers import CapabilityRequest
-from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.schemas.common import Inputs, Values
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
-from setup_plugin_plymouth.adapters.native import current_target, observations, run_native_play
+from setup_plugin_plymouth.adapters.native import current_target, run_native_play
 from setup_plugin_plymouth.models import Confirmation
 
 from . import boot
@@ -32,7 +32,17 @@ from .recovery import BootRecovery
 FOLDER = Path(str(package_files("setup_plugin_plymouth").joinpath("resources")))
 
 
-def prepare(action: str, packages: Plan | None = None) -> Plan:
+async def platform_facts(context: PluginContext | None, detail: str = "target") -> Values:
+    if context is None:
+        raise ValueError("The action requires a selected platform provider")
+    return await context.inspect_provider(
+        CapabilityRequest(
+            capability="system.platform", step_key="platform", payload={"detail": detail}
+        )
+    )
+
+
+def prepare(action: str, packages: Plan | None = None, supported: bool | None = None) -> Plan:
     if action not in {
         LifecycleAction.INSTALL,
         LifecycleAction.UPDATE,
@@ -40,7 +50,7 @@ def prepare(action: str, packages: Plan | None = None) -> Plan:
         LifecycleAction.CHECK,
     }:
         raise ValueError("Unsupported Plymouth action.")
-    if not current_target()[1]:
+    if not (current_target()[1] if supported is None else supported):
         return Plan(summary="Plymouth requires Debian 13.", outcome=Outcome.BLOCKED)
     facts = boot.inspect_unlock()
     if facts.blockers or not facts.identity:
@@ -116,10 +126,12 @@ class PluginActions(Backend):
     async def inspect(
         self, settings: PluginSettings, context: PluginContext | None = None
     ) -> Result:
-        plan, facts = await asyncio.gather(
-            run_sync(prepare, "check"), run_sync(observations, Path.home())
+        facts = await platform_facts(context, "observations")
+        plan = await run_sync(
+            prepare, LifecycleAction.CHECK, supported=facts.get("supported") is True
         )
-        return Result(outcome=plan.outcome, message="\n".join((plan.summary, *facts)))
+        observations = TypeAdapter(list[str]).validate_python(facts.get("observations", []))
+        return Result(outcome=plan.outcome, message="\n".join((plan.summary, *observations)))
 
     async def plan(
         self,
@@ -128,8 +140,11 @@ class PluginActions(Backend):
         inputs: Inputs,
         context: PluginContext | None = None,
     ) -> Plan:
-        if context is None or action_id == LifecycleAction.CHECK:
-            return await run_sync(prepare, action_id)
+        if context is None:
+            raise ValueError("Plymouth requires a selected platform provider")
+        supported = (await platform_facts(context)).get("supported") is True
+        if not supported or action_id == LifecycleAction.CHECK:
+            return await run_sync(prepare, action_id, supported=supported)
         request = CapabilityRequest(
             capability=self.package_capability,
             step_key="packages",
@@ -138,7 +153,7 @@ class PluginActions(Backend):
         packages = None
         if action_id in {LifecycleAction.INSTALL, LifecycleAction.UPDATE}:
             packages = Plan.model_validate((await context.inspect_provider(request))["proposal"])
-        config = await run_sync(prepare, action_id, packages)
+        config = await run_sync(prepare, action_id, packages, supported)
         if config.outcome not in {Outcome.READY, Outcome.NO_CHANGES}:
             return config
         steps = []
@@ -151,7 +166,7 @@ class PluginActions(Backend):
                 contract_version="1",
                 permissions=frozenset({Permission.ROOT}),
                 lock_keys=("boot.config",),
-                cancellation="safe_boundary",
+                cancellation=CancellationPolicy.SAFE_BOUNDARY,
                 preconditions={"proposal": proposal.model_dump(mode="json")},
                 resources=tuple(proposal.resources),
             )

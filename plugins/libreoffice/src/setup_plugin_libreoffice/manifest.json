@@ -1,0 +1,239 @@
+{
+  "id": "libreoffice",
+  "name": "LibreOffice",
+  "author": "serrja",
+  "category": "applications",
+  "kind": "application",
+  "sdk": ">=3,<4",
+  "entry_point": "setup_plugin_libreoffice:Plugin",
+  "version": "2.0.0",
+  "source": "https://github.com/serrja/setupSystem",
+  "permissions": [
+    "root",
+    "user-files"
+  ],
+  "provides": [],
+  "capabilities": [
+    "debian-package"
+  ],
+  "dependencies": [],
+  "actions": [
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "install",
+      "label": "Install",
+      "page": "actions",
+      "target": "install",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": null,
+      "id": "update",
+      "label": "Update",
+      "page": "actions",
+      "target": "update",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [
+        {
+          "id": "system.packages",
+          "version": ">=1,<2"
+        }
+      ],
+      "cleanup_phase": "program",
+      "id": "uninstall",
+      "label": "Uninstall",
+      "page": "actions",
+      "target": "uninstall",
+      "permissions": [
+        "root"
+      ],
+      "supports_rollback": false,
+      "mode": "mutation",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "check",
+      "label": "Check LibreOffice",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "read_only",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "preferences",
+      "label": "Preferences",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "recovery",
+      "label": "Recovery",
+      "page": "actions",
+      "target": null,
+      "permissions": [],
+      "supports_rollback": false,
+      "mode": "manual",
+      "description": ""
+    },
+    {
+      "requires": [],
+      "cleanup_phase": null,
+      "id": "configure-launcher",
+      "label": "Save application launcher",
+      "page": "actions",
+      "target": "configure-launcher",
+      "permissions": [
+        "user-files"
+      ],
+      "supports_rollback": true,
+      "mode": "mutation",
+      "description": ""
+    }
+  ],
+  "session_fields": [],
+  "environment_fields": {},
+  "settings_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "component": {
+        "default": "start-center",
+        "description": "Choose the LibreOffice component opened by this launcher.",
+        "enum": [
+          "start-center",
+          "writer",
+          "calc",
+          "impress"
+        ],
+        "title": "Start component",
+        "type": "string",
+        "ui": {
+          "storage": "settings",
+          "secret": false,
+          "visible_when": {},
+          "choice_provider": null
+        }
+      }
+    },
+    "title": "Settings",
+    "type": "object"
+  },
+  "input_schemas": {
+    "install": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "update": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "uninstall": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "check": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "configure-launcher": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "description": "Stable identifier used in the desktop entry filename.",
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Launcher profile ID",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        },
+        "name": {
+          "description": "Display name shown by the desktop application menu.",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Application menu label",
+          "type": "string",
+          "ui": {
+            "storage": "action",
+            "secret": false,
+            "visible_when": {},
+            "choice_provider": null
+          }
+        }
+      },
+      "required": [
+        "profile_id",
+        "name"
+      ],
+      "title": "LauncherProfile",
+      "type": "object"
+    },
+    "preferences": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    },
+    "recovery": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Inputs",
+      "type": "object"
+    }
+  },
+  "pages": [
+    "Overview",
+    "Settings",
+    "Actions",
+    "Managed resources",
+    "History",
+    "Help"
+  ],
+  "settings_version": 1
+}

@@ -1,29 +1,29 @@
-# Foot settings reference
+# ⚙️ Foot settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `font_size` | Set the terminal font size in points when writing the Foot configuration. | `11` | `{"maximum": 48, "minimum": 6}` |
 
-## Check program
+## 🧩 Check program
 
 This operation has no editable parameters.
 
-## Install
+## 🧩 Install
 
 This operation has no editable parameters.
 
-## Update
+## 🧩 Update
 
 This operation has no editable parameters.
 
-## Uninstall
+## 🧩 Uninstall
 
 This operation has no editable parameters.
 
-## Save configuration
+## 🧩 Save configuration
 
 This operation has no editable parameters.

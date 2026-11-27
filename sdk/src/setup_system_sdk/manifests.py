@@ -103,6 +103,7 @@ class Manifest(Inputs):
     capabilities: list[str]
     dependencies: list[Identifier]
     actions: list[Action]
+    session_fields: tuple[str, ...] = Field(default=(), max_length=8)
     environment_fields: dict[str, Identifier] = Field(default_factory=dict)
     settings_schema: Values
     input_schemas: dict[str, Values]
@@ -138,6 +139,12 @@ class Manifest(Inputs):
         if any(not s or len(s) > 4096 or not s.isprintable() for s in metadata):
             raise ValueError("Invalid plugin display metadata")
         prefix = "SETUP_PLUGIN_" + self.id.upper().replace("-", "_") + "_"
+        session_prefix = self.id.upper().replace("-", "_")
+        if any(
+            name not in {session_prefix + "_HOME", session_prefix + "_INSTANCE_SIGNATURE"}
+            for name in self.session_fields
+        ):
+            raise ValueError("Session variables must be scoped to the plugin")
         for schema in (self.settings_schema, *self.input_schemas.values()):
             _validate_ui(schema)
         properties = self.settings_schema.get("properties", {})

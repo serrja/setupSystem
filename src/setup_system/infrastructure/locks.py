@@ -11,12 +11,18 @@ from setup_system_sdk.files.user_storage import private_directory
 
 
 @asynccontextmanager
-async def acquire(root: Path, keys: Iterable[str], *, wait: bool) -> AsyncIterator[None]:
+async def acquire(
+    root: Path, keys: Iterable[str], *, wait: bool, cancelled: anyio.Event | None = None
+) -> AsyncIterator[bool]:
+    """Yield False when a cancelled waiter releases its partially acquired locks."""
     with ExitStack() as stack:
         for key in sorted(set(keys)):
             name = hashlib.sha256(key.encode()).hexdigest()
             directory = stack.enter_context(private_directory(root / name))
             while True:
+                if cancelled is not None and cancelled.is_set():
+                    yield False
+                    return
                 try:
                     fcntl.flock(directory, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
@@ -24,4 +30,4 @@ async def acquire(root: Path, keys: Iterable[str], *, wait: bool) -> AsyncIterat
                     if not wait:
                         raise ValueError("Another operation holds this lock") from None
                     await anyio.sleep(0.05)
-        yield
+        yield True

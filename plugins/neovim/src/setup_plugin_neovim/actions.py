@@ -3,18 +3,17 @@
 import json
 import os
 import tomllib
-from importlib.resources import files
 from importlib.resources import files as package_files
 from pathlib import Path
 
+from setup_system_desktop_theme.rendering import desktop_context, render_desktop
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.lifecycle import LifecycleAction
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.files.assets import (
     PublishedAssets,
-    desktop_context,
-    render_desktop,
+    desktop_directories,
 )
 from setup_system_sdk.files.user_storage import inside_home
 from setup_system_sdk.plugin import PluginSettings
@@ -107,7 +106,7 @@ class PluginActions(PublishedAssets):
         if "@{" in init:
             raise ValueError("Neovim resource contains an unresolved template field")
         desired = {root / "nvim" / "init.lua": init.encode()}
-        palette = desktop_context(Path(str(files("setup_plugin_neovim") / "resources")))
+        palette = desktop_context(desktop_directories())
         for path in sorted((resources / "nvim").rglob("*.lua")):
             desired[root / "nvim" / path.relative_to(resources / "nvim")] = render_desktop(
                 path, palette

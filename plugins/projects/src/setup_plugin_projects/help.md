@@ -1,4 +1,6 @@
-# Projects and templates
+# 🧩 Projects and templates
+
+Canonical project catalog and Copier workflows.
 
 ## 🧩 Work with a project
 
