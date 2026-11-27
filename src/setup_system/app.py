@@ -241,11 +241,13 @@ class SetupApp(App[None]):
             if not await self.push_screen_wait(Confirm("\n".join(info), "Review activation")):
                 return
             digest = await self.push_screen_wait(
-                Prompt("Independently verified SHA-256 of this release")
+                Prompt("Independently verified SHA-256 of this release (blank: latest available)")
             )
-            if digest:
+            if digest is not None:
                 await self.services.plugins.activate(
-                    release, digest, Path(link).parent if link.startswith("/") else None
+                    release,
+                    digest or release.digest,
+                    Path(link).parent if link.startswith("/") else None,
                 )
                 await self.reload_catalog()
         except OperationError as error:
