@@ -223,7 +223,7 @@ published=$(jq -er --arg t "$native" --arg n "$file" '
         and (([$n, ($n + ".sha256"), ($n + ".sigstore.json")] - $names) == [])
         and all($names[]; . == $n or . == ($n+".sha256") or . == ($n+".sigstore.json")
           or test("^[a-z][a-z0-9_-]{0,63}\\.json$")
-          or test("^[a-zA-Z0-9_]+-[0-9][a-zA-Z0-9.+_-]*\\.whl$")))
+          or test("^[a-zA-Z0-9_.]+-[0-9][a-zA-Z0-9.+_-]*\\.whl$")))
     | .assets[] | select(.name == $n) | .digest | select(test("^sha256:[a-f0-9]{64}$"))' "$dir/release") || fail 'Invalid Debian release inventory or asset digest.'
 assets=$web/releases/download/$native
 fetch "$assets/$file" "$dir/$file" 134217728
