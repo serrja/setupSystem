@@ -1,5 +1,6 @@
 """Catalog, settings and generation lifecycle for user-selected plugins."""
 
+from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
 from uuid import uuid4
@@ -161,7 +162,11 @@ class PluginService:
                         raise ValueError(f"{consumer} requires a compatible {req.id} provider")
 
     async def activate(
-        self, release: Release, approved_digest: str, wheelhouse: Path | None = None
+        self,
+        release: Release,
+        approved_digest: str,
+        wheelhouse: Path | None = None,
+        progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> Activation:
         if release.digest != approved_digest:
             raise ValueError("Release digest differs from the independently approved digest")
@@ -175,6 +180,8 @@ class PluginService:
             )
 
         async with acquire(self.locks, ["plugin/" + plugin], wait=False):
+            if progress:
+                await progress("Checking plugin activation prerequisites.")
             dependents = await self._require_idle(plugin)
             await run_sync(self._check_contracts, release.manifest, dependents)
             state = await install_release(
@@ -186,8 +193,11 @@ class PluginService:
                 wheelhouse=wheelhouse,
                 validate_settings=validate,
                 client=self.client,
+                progress=progress,
             )
             await self._profile(state, persist=True)
+            if progress:
+                await progress(f"{state.manifest.name} {state.manifest.version} is active.")
             return state
 
     async def _profile(self, release: Activation, *, persist: bool) -> SavedValues:
