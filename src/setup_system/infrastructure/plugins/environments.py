@@ -371,9 +371,14 @@ async def install_release(
     wheelhouse: Path | None = None,
     validate_settings: Callable[[Activation], Awaitable[None]] | None = None,
     client: DownloadClient | None = None,
+    progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> Activation:
     """Activate a complete pinned closure after metadata, dependency and backend readback."""
     from setup_system.infrastructure.plugins.lifecycle import seal_generation
+
+    async def report(message: str) -> None:
+        if progress:
+            await progress(message)
 
     if await run_sync(lambda: release.digest) not in policy.digests:
         raise ValueError("Explicit trust in an independently verified release digest is required")
@@ -397,6 +402,7 @@ async def install_release(
     if prior:
         previous = await run_sync(_read_generation, root, _Pointer.model_validate_json(prior))
         if previous.digest == release.digest:
+            await report("The selected plugin release is already active.")
             return previous
         if Version(selected.manifest.version) < Version(previous.manifest.version):
             raise ValueError("A plugin update cannot downgrade the active release")
@@ -416,10 +422,12 @@ async def install_release(
             stage = Path(staging)
             fetched: dict[str, bytes] = {}
             total = 0
+            completed = 0
+            wheel_count = len(selected.wheels)
             limiter = anyio.CapacityLimiter(max(1, EXPANDED_BYTES // WHEEL_BYTES))
 
             async def fetch(index: int, wheel: Wheel) -> None:
-                nonlocal total
+                nonlocal completed, total
                 async with limiter:
                     if index == 0 and release.direct_name:
                         content = release.payload
@@ -440,11 +448,15 @@ async def install_release(
                     if total > EXPANDED_BYTES:
                         raise ValueError("Wheel closure exceeds aggregate limit")
                     fetched[wheel.name] = content
+                    completed += 1
+                    await report(f"Loading reviewed wheels: {completed}/{wheel_count}")
 
+            await report(f"Loading reviewed wheels: 0/{wheel_count}")
             async with anyio.create_task_group() as group:
                 for index, wheel in enumerate(selected.wheels):
                     group.start_soon(fetch, index, wheel)
             contents = [(wheel, fetched.pop(wheel.name)) for wheel in selected.wheels]
+            await report("Verifying wheel contents and dependency closure.")
             validation = asyncio.create_task(run_sync(_verify_layout, contents, stage, selected))
             try:
                 await asyncio.shield(validation)
@@ -453,6 +465,7 @@ async def install_release(
                 raise
             venv = generation / "venv"
             python = venv / "bin/python"
+            await report("Preparing the isolated plugin installer.")
             uv = await uv_runtime.executable(stage)
             args = [
                 uv,
@@ -465,7 +478,9 @@ async def install_release(
                 sys.executable,
                 str(venv),
             ]
+            await report("Creating the isolated plugin environment.")
             await _run(args, stage, EnvironmentStep.CREATE)
+            await report("Installing the reviewed plugin wheels.")
             await _run(
                 [
                     uv,
@@ -488,6 +503,7 @@ async def install_release(
                 stage,
                 EnvironmentStep.INSTALL,
             )
+            await report("Checking installed plugin dependencies.")
             await _run(
                 [
                     uv,
@@ -504,6 +520,7 @@ async def install_release(
             )
             (generation / "manifest.json").write_text(selected.manifest.model_dump_json())
             state = await run_sync(_read_generation, root, pointer, staging=True)
+            await report("Loading the plugin backend.")
             await _run(
                 [
                     str(state.python),
@@ -518,7 +535,9 @@ async def install_release(
                 EnvironmentStep.BACKEND,
             )
             if validate_settings:
+                await report("Validating plugin settings.")
                 await validate_settings(state)
+        await report("Publishing the verified plugin activation.")
         sealing = asyncio.create_task(run_sync(seal_generation, generation))
         try:
             await asyncio.shield(sealing)

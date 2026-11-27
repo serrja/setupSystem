@@ -78,13 +78,14 @@ class SetupApp(App[None]):
     async def on_mount(self) -> None:
         await self.reload_catalog()
 
-    async def reload_catalog(self) -> None:
+    async def reload_catalog(self, plugin: str | None = None) -> CatalogEntry | None:
         rows = await self.services.plugins.catalog()
         self.entries = {row.manifest.id: row for row in rows if row.manifest}
         self.filter_catalog()
         self.query_one("#feedback", Static).update(
             "\n".join(row.reason for row in rows if row.reason)
         )
+        return self.entries.get(plugin) if plugin is not None else None
 
     @on(Input.Changed, "#search")
     def filter_catalog(self) -> None:
@@ -244,15 +245,24 @@ class SetupApp(App[None]):
                 Prompt("Independently verified SHA-256 of this release (blank: latest available)")
             )
             if digest is not None:
-                await self.services.plugins.activate(
+                feedback = self.query_one("#feedback", Static)
+
+                async def progress(message: str) -> None:
+                    feedback.update(message)
+
+                state = await self.services.plugins.activate(
                     release,
                     digest or release.digest,
                     Path(link).parent if link.startswith("/") else None,
+                    progress,
                 )
                 await self.reload_catalog()
+                feedback.update(f"{state.manifest.name} {state.manifest.version} is active.")
         except OperationError as error:
             self.query_one("#feedback", Static).update(error.detail.message)
-        except (OSError, RuntimeError, ValueError):
+        except ValueError as error:
+            self.query_one("#feedback", Static).update(str(error))
+        except (OSError, RuntimeError):
             self.query_one("#feedback", Static).update(
                 "Activation failed. Check the origin, digest and dependencies."
             )
