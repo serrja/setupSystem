@@ -64,7 +64,7 @@ plugin_assets() {
     for member in "$work"/usr/lib/setup-system/plugin_catalog/*; do
         [[ -f "$member" && ! -L "$member" ]] || return 1
         name=${member##*/}
-        [[ "$name" =~ ^[a-z][a-z0-9_-]{0,63}\.json$ || "$name" =~ ^[a-zA-Z0-9_]+-[0-9][a-zA-Z0-9.+_-]*\.whl$ ]] || return 1
+        [[ "$name" =~ ^[a-z][a-z0-9_-]{0,63}\.json$ || "$name" =~ ^[a-zA-Z0-9_.]+-[0-9][a-zA-Z0-9.+_-]*\.whl$ ]] || return 1
         cp -- "$member" "$artifacts/$name"
         expected+=("$name")
     done
