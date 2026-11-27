@@ -8,7 +8,12 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Manage the Debian Snap runtime and inspect installed revisions"
 license = "MIT"
-dependencies = ["setup-system-sdk>=3,<4", "httpx>=0.27,<1", "pydantic>=2.10,<3"]
+dependencies = [
+    "setup-system-sdk>=3,<4",
+    "httpx>=0.27,<1",
+    "pydantic>=2.10,<3",
+    "pyyaml>=6,<7",
+]
 
 [project.entry-points."setup_system.plugins"]
 snap = "setup_plugin_snap.plugin:Plugin"

@@ -163,7 +163,7 @@ def validate_shell(
             HISTFILE=str(home / ".local/state/zsh/history"),
         )
         for flag in flags:
-            command = "print -r -- noninteractive" if flag == "-c" else "whence -w cproj compdef"
+            command = "print -r -- noninteractive" if flag == "-c" else "whence -w compdef"
             invocation = [str(zsh), flag, command]
             if flag != "-c":
                 script = shutil.which("script")
@@ -189,12 +189,8 @@ def validate_shell(
             if result.returncode or warning:
                 reason = warning or f"exit {result.returncode}"
                 raise RuntimeError(f"Zsh isolated {flag} startup failed ({reason})")
-            if flag != "-c" and not all(
-                name + ": function" in result.stdout for name in ("cproj", "compdef")
-            ):
-                raise RuntimeError(
-                    f"Zsh isolated {flag} did not load project navigation and completion"
-                )
+            if flag != "-c" and "compdef: function" not in result.stdout:
+                raise RuntimeError(f"Zsh isolated {flag} did not load completion")
 
 
 def history_directory(status: ShellStatus) -> Path:

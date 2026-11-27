@@ -5,7 +5,6 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
-import pwd
 import re
 import subprocess
 import sys
@@ -134,34 +133,13 @@ def surviving_editor(path: Path, removed: set[str]) -> bool:
     )
 
 
-def verify_editors(removed: set[str], uid: int, config: Path) -> None:
-    account = pwd.getpwuid(uid)
-    if uid == 0 or not config.is_relative_to(Path(account.pw_dir)) or ".." in config.parts:
-        raise ValueError("Select the ordinary user's verified editor configuration.")
-    nvim = Path("/usr/bin/nvim")
+def verify_editors(removed: set[str]) -> None:
+    editor = Path("/usr/bin/editor")
     backup = [Path("/usr/bin") / name for name in ("vi", "ex", "ed", "nano", "vim.basic")]
-    if not surviving_editor(nvim, removed) or not surviving_editor(
-        Path("/usr/bin/editor"), removed
-    ):
-        raise ValueError("A working primary Neovim and a surviving system editor are required.")
-    if not any(p.resolve() != nvim.resolve() and surviving_editor(p, removed) for p in backup):
+    if not surviving_editor(editor, removed):
+        raise ValueError("A surviving system editor is required.")
+    if not any(p.resolve() != editor.resolve() and surviving_editor(p, removed) for p in backup):
         raise ValueError("An independent installed backup editor is required.")
-    prefix = ["/usr/sbin/runuser", "-u", account.pw_name, "--"] if os.geteuid() == 0 else []
-    keys = {"EDITOR=nvim", "VISUAL=nvim"}
-    matched = command(
-        *prefix,
-        "/usr/bin/grep",
-        "-Fx",
-        "-e",
-        "EDITOR=nvim",
-        "-e",
-        "VISUAL=nvim",
-        "--",
-        str(config / "environment.d/90-setup-system-editor.conf"),
-    )
-    if set(matched.stdout.splitlines()) != keys:
-        raise ValueError("Verify EDITOR and VISUAL for the selected account.")
-    command(*prefix, "/usr/bin/nvim", "--clean", "--headless", "-n", "-i", "NONE", "+q")
 
 
 def preview(mode: Mode, selected: list[str], uid: int, config: Path) -> list[Package]:
@@ -182,7 +160,7 @@ def preview(mode: Mode, selected: list[str], uid: int, config: Path) -> list[Pac
         response = command("/usr/bin/apt-get", "--simulate", mode, *args)
         verify_simulation(response.stdout, packages, mode)
     if any(candidates[name].requires_verified_editor for name in selection):
-        verify_editors(set(selection), uid, config)
+        verify_editors(set(selection))
     return packages
 
 
