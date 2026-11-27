@@ -255,6 +255,10 @@
           "description": "Select one or more approved applications from the Snap Store catalog.",
           "items": {
             "enum": [
+              "firefox",
+              "nvim",
+              "obsidian",
+              "spotify",
               "telegram-desktop"
             ],
             "pattern": "^[a-z][a-z0-9-]{0,39}$",
@@ -286,6 +290,10 @@
           "description": "Select one or more approved applications from the Snap Store catalog.",
           "items": {
             "enum": [
+              "firefox",
+              "nvim",
+              "obsidian",
+              "spotify",
               "telegram-desktop"
             ],
             "pattern": "^[a-z][a-z0-9-]{0,39}$",
@@ -317,6 +325,10 @@
           "description": "Select one or more approved applications from the Snap Store catalog.",
           "items": {
             "enum": [
+              "firefox",
+              "nvim",
+              "obsidian",
+              "spotify",
               "telegram-desktop"
             ],
             "pattern": "^[a-z][a-z0-9-]{0,39}$",
@@ -348,6 +360,10 @@
           "description": "Select one or more approved applications from the Snap Store catalog.",
           "items": {
             "enum": [
+              "firefox",
+              "nvim",
+              "obsidian",
+              "spotify",
               "telegram-desktop"
             ],
             "pattern": "^[a-z][a-z0-9-]{0,39}$",
