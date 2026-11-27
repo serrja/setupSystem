@@ -20,6 +20,7 @@ from setup_system_sdk.downloads import (
     DownloadPolicy,
     download_https,
 )
+from setup_system_sdk.files.system_paths import protected
 
 VERSION = "0.12.15"
 ARCHIVES = {
@@ -47,11 +48,17 @@ def _unpack(payload: bytes, name: str, digest: str, stage: Path) -> str:
 
 
 async def executable(stage: Path) -> str:
-    existing = shutil.which("uv") or shutil.which(
-        "uv", path=os.pathsep.join((str(Path.home() / ".local/bin"), "/usr/local/bin"))
-    )
-    if existing:
-        return existing
+    managed = os.environ.get("SETUP_SYSTEM_UV")
+    if managed:
+        binary = Path(managed)
+        protected(binary, directory=False)
+        receipt = binary.with_name("uv.sha256")
+        protected(receipt, directory=False)
+        with binary.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if receipt.read_text() != f"{actual}  uv\n":
+            raise ValueError("The package-managed uv executable differs from its digest")
+        return str(binary)
     arch = platform.machine()
     if platform.system() != "Linux" or arch not in ARCHIVES:
         raise ValueError("Install uv for this platform before activating an extension")

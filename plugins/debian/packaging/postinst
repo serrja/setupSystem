@@ -1,0 +1,78 @@
+#!/bin/sh
+# Prepare package-owned locked Python runtimes before publishing the active generation.
+set -eu
+[ "${1:-}" = configure ] || exit 0
+umask 022
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+package=/usr/lib/setup-system/runtime
+state=/var/lib/setup-system
+generations=$state/runtimes
+source=$(cat "$package/source")
+case "$source" in
+    *[!0123456789abcdef]*|'') echo 'Error [integrity_mismatch]: Invalid package source.' >&2; exit 1 ;;
+esac
+[ "${#source}" -eq 40 ] || { echo 'Error [integrity_mismatch]: Invalid package source.' >&2; exit 1; }
+case "$(dpkg --print-architecture)" in
+    amd64|arm64) arch=$(dpkg --print-architecture) ;;
+    *) echo 'Error [integrity_mismatch]: Unsupported package architecture.' >&2; exit 1 ;;
+esac
+uv=$package/uv/$arch/uv
+[ -f "$uv" ] && [ ! -L "$uv" ] || {
+    echo 'Error [dependency_missing]: Bundled uv is unavailable.' >&2
+    exit 1
+}
+(cd "$package/uv/$arch" && sha256sum -c uv.sha256) >/dev/null || {
+    echo 'Error [integrity_mismatch]: Bundled uv differs from its package digest.' >&2
+    exit 1
+}
+for directory in "$state" "$generations"; do
+    if [ ! -e "$directory" ]; then mkdir -m 0755 "$directory"; fi
+    [ -d "$directory" ] && [ ! -L "$directory" ] &&
+        [ "$(stat -c '%u:%g:%a' "$directory")" = 0:0:755 ] || {
+        echo 'Error [integrity_mismatch]: Unsafe runtime directory.' >&2
+        exit 1
+    }
+done
+generation=$generations/$source
+if [ -e "$generation" ] && { [ ! -d "$generation" ] || [ -L "$generation" ]; }; then
+    echo 'Error [integrity_mismatch]: Unsafe runtime generation.' >&2
+    exit 1
+fi
+mkdir -p "$generation"
+if [ -f "$generation/ready" ] && [ "$(cat "$generation/ready")" != "$source" ]; then
+    echo 'Error [integrity_mismatch]: Existing runtime receipt differs from package source.' >&2
+    exit 1
+fi
+if [ ! -f "$generation/ready" ]; then
+    echo 'Preparing the bundled uv runtime.'
+    for role in host native; do
+        echo "Preparing the $role Python runtime."
+        environment=$generation/$role
+        requirements=$package/$role-$arch.txt
+        [ -f "$requirements" ] || {
+            echo 'Error [dependency_missing]: Locked runtime requirements are unavailable.' >&2
+            exit 1
+        }
+        /usr/bin/env -i HOME=/root PATH="$PATH" UV_PYTHON_DOWNLOADS=never UV_NO_CONFIG=1 \
+            "$uv" venv --clear --no-project --no-python-downloads --offline --python /usr/bin/python3 \
+            "$environment"
+        /usr/bin/env -i HOME=/root PATH="$PATH" UV_PYTHON_DOWNLOADS=never UV_NO_CONFIG=1 \
+            "$uv" pip sync "$requirements" --python "$environment/bin/python" \
+            --offline --no-index --no-build --require-hashes --no-cache \
+            --find-links "$package/wheelhouse/$arch"
+    done
+fi
+for role in host native; do
+    /usr/bin/env -i HOME=/root PATH="$PATH" UV_PYTHON_DOWNLOADS=never UV_NO_CONFIG=1 \
+        "$uv" pip check --python "$generation/$role/bin/python" --offline
+done
+"$generation/host/bin/python" -I -B -c 'import setup_system, setup_system_sdk, sqlalchemy, alembic'
+"$generation/native/bin/python" -I -B -c 'import ansible, pexpect, setup_plugin_debian'
+if [ ! -f "$generation/ready" ]; then printf '%s\n' "$source" > "$generation/ready"; fi
+candidate=$state/.active.$$
+trap 'rm -f -- "$candidate"' EXIT HUP INT TERM
+ln -s "$generation" "$candidate"
+mv -Tf -- "$candidate" "$state/active"
+trap - EXIT HUP INT TERM
+echo 'setup-system Python runtimes are ready. Start setup-system separately.'

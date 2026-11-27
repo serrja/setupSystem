@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pexpect
 
+from setup_plugin_debian.adapters.layout import NATIVE_PYTHON
+
 
 def authorize(raw: bytes, response: bytes) -> None:
     if not response or len(response) > 1024 or any(b < 32 or b == 127 for b in response):
@@ -31,7 +33,7 @@ def authorize(raw: bytes, response: bytes) -> None:
         if stopped:
             raise ValueError("Authorization cancelled before the executor started")
         child = pexpect.spawn(
-            "/usr/bin/python3",
+            str(NATIVE_PYTHON),
             [
                 "-I",
                 "-B",

@@ -18,6 +18,18 @@ setup-system
 
 For prerequisites, root-password authentication, updates and the bootstrap trust model, see the [Debian installation guide](plugins/debian/docs/install.md).
 
+The verified Debian package bundles uv and locked Python wheels. uv prepares the app and bundled plugins; APT installs only system prerequisites and the verified `.deb`. Activation of a bundled plugin does not download uv again.
+
+## 🔄 Update
+
+As a normal user, download the current verified loader and update to the latest stable release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o install.sh && sh install.sh update
+```
+
+Open the application separately with `setup-system` after the update.
+
 ## 🚀 Quick start
 
 From the checkout with uv and Python 3.12 or later, start the host.

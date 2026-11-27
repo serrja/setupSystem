@@ -1,4 +1,4 @@
-# Hyprland
+# 🧩 Hyprland
 
 Open the **Hyprland** extension. **Install** resolves signed Debian packages. **Save configuration** prepares the normal user's session files. The portal configuration prefers the Hyprland backend and routes the file chooser to GTK. The launcher requests PipeWire, PipeWire Pulse and WirePlumber from the user service manager. Configure the companion **Foot**, **Waybar** and **Hyprlock** extensions before testing the session. [Debian target](../../debian/docs/install.md)
 

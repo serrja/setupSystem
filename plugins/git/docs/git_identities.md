@@ -1,4 +1,4 @@
-# Git author identities
+# 🔐 Git author identities
 
 ## ⚙️ Plugin actions
 

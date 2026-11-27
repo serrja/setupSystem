@@ -1,7 +1,5 @@
-#!/usr/bin/python3
 """Assemble a Debian archive from reviewed Python wheels and release descriptors."""
 
-import argparse
 import gzip
 import hashlib
 import json
@@ -15,7 +13,9 @@ import tomllib
 import zipfile
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
+from typing import Annotated
 
+import typer
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from setup_system_sdk.manifests import Manifest
 from setup_system_sdk.native_execution import NativeFactProvider, TrustedExecution
@@ -23,7 +23,6 @@ from setup_system_sdk.native_execution import NativeFactProvider, TrustedExecuti
 PACKAGE = Path(__file__).resolve().parent
 RESOURCES = PACKAGE.parent / "src/setup_plugin_debian/resources"
 RUNTIME = Path("usr/lib/setup-system")
-PYTHON = Path("usr/lib/python3/dist-packages")
 
 
 def sha(path: Path) -> str:
@@ -54,16 +53,43 @@ def unpack(wheel: Path, destination: Path) -> None:
 
 
 def stage(
-    base: Path, host: Path, sdk: Path, releases: list[Path], version: str, source: str
+    base: Path,
+    host: Path,
+    sdk: Path,
+    releases: list[Path],
+    runtime_assets: Path,
+    version: str,
+    source: str,
 ) -> None:
     runtime = base / RUNTIME
-    python = base / PYTHON
     runtime.mkdir(parents=True)
     for wheel, expected in ((host, "setup-system"), (sdk, "setup-system-sdk")):
         wheel_name, _, _, _ = parse_wheel_filename(wheel.name)
         if wheel_name != expected:
             raise ValueError(f"Expected wheel for {expected}")
-        unpack(wheel, python)
+    if not runtime_assets.is_dir():
+        raise ValueError("Missing reviewed uv runtime closure")
+    shutil.copytree(runtime_assets, runtime / "runtime")
+    (runtime / "runtime/source").write_text(source + "\n")
+    for arch in ("amd64", "arm64"):
+        uv = runtime / "runtime/uv" / arch / "uv"
+        if (uv.parent / "uv.sha256").read_text() != f"{sha(uv)}  uv\n":
+            raise ValueError("Bundled uv executable differs from its reviewed digest")
+        available = {sha(wheel) for wheel in (runtime / "runtime/wheelhouse" / arch).glob("*.whl")}
+        for role in ("host", "native"):
+            requirements = runtime / "runtime" / f"{role}-{arch}.txt"
+            if not requirements.is_file() or not requirements.read_text().strip():
+                raise ValueError("Missing locked runtime requirements")
+            for line in requirements.read_text().splitlines():
+                match = re.fullmatch(
+                    r"[a-z0-9][a-z0-9._-]*==[a-zA-Z0-9.+!-]+ --hash=sha256:([a-f0-9]{64})",
+                    line,
+                )
+                if not match:
+                    raise ValueError("Invalid locked runtime requirement")
+                digest = match.group(1)
+                if digest not in available:
+                    raise ValueError("Runtime requirement has no verified wheel")
     shutil.copytree(RESOURCES, runtime, dirs_exist_ok=True)
     catalog = runtime / "plugin_catalog"
     catalog.mkdir()
@@ -114,7 +140,6 @@ def stage(
         if manifest.id == "debian":
             if dist != canonicalize_name("setup-system-plugin-debian"):
                 raise ValueError("Unexpected Debian provider distribution")
-            unpack(primary, python)
             facts = {
                 cap.id: NativeFactProvider(
                     plugin_id=manifest.id,
@@ -125,13 +150,6 @@ def stage(
                 for cap in manifest.provides
                 if cap.id in {"system.platform", "system.packages"}
             }
-            (theme,) = {
-                catalog / d["name"]
-                for v in variants
-                for d in v["wheels"]
-                if parse_wheel_filename(d["name"])[0] == "setup-system-desktop-theme"
-            }
-            unpack(theme, python)
         (catalog / (manifest.id + ".json")).write_bytes(raw)
         handlers = grants.get(manifest.id, ())
         if handlers:
@@ -154,6 +172,14 @@ def stage(
                 for p in sorted((plugin_root / package).rglob("*"))
                 if p.is_file()
             }
+            runtime_contract = runtime / "runtime"
+            for path in (
+                runtime_contract / "source",
+                *(runtime_contract.glob("*.txt")),
+                *(runtime_contract.glob("uv/*/uv")),
+                *(runtime_contract.glob("uv/*/uv.sha256")),
+            ):
+                protected_files[Path("/") / path.relative_to(base)] = sha(path)
             trust = TrustedExecution(
                 plugin_id=manifest.id,
                 version=manifest.version,
@@ -211,13 +237,19 @@ def stage(
     for name in ("preinst", "prerm"):
         shutil.copyfile(PACKAGE / "guard.sh", control / name)
         (control / name).chmod(0o755)
+    shutil.copyfile(PACKAGE / "postinst", control / "postinst")
+    (control / "postinst").chmod(0o755)
+    shutil.copyfile(PACKAGE / "postrm", control / "postrm")
+    (control / "postrm").chmod(0o755)
     for path in base.rglob("*"):
         if path.is_dir():
             path.chmod(0o755)
         elif path.is_file() and path.parent != control:
             mode = (
                 0o755
-                if path.is_relative_to(runtime / "libexec") or path == base / "usr/bin/setup-system"
+                if path.is_relative_to(runtime / "libexec")
+                or path == base / "usr/bin/setup-system"
+                or (path.name == "uv" and path.parent.parent == runtime / "runtime/uv")
                 else 0o644
             )
             path.chmod(mode)
@@ -231,31 +263,40 @@ def stage(
                 sums.write(f"{digest}  {path.relative_to(base)}\n")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host-wheel", required=True, type=Path)
-    parser.add_argument("--sdk-wheel", required=True, type=Path)
-    parser.add_argument("--release", required=True, type=Path, action="append")
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--version", required=True)
-    parser.add_argument("--source", required=True, help="Reviewed source commit")
-    args = parser.parse_args()
-    if not re.fullmatch(r"[0-9a-f]{40}", args.source):
+def main(
+    host_wheel: Annotated[Path, typer.Option("--host-wheel")],
+    sdk_wheel: Annotated[Path, typer.Option("--sdk-wheel")],
+    release: Annotated[list[Path], typer.Option("--release")],
+    runtime_assets: Annotated[Path, typer.Option("--runtime-assets")],
+    output: Annotated[Path, typer.Option("--output")],
+    version: Annotated[str, typer.Option("--version")],
+    source: Annotated[str, typer.Option("--source", help="Reviewed source commit")],
+) -> None:
+    """Assemble the attested Debian package from verified inputs."""
+    if not re.fullmatch(r"[0-9a-f]{40}", source):
         raise ValueError("Expected a full source commit SHA")
-    if not re.fullmatch(r"[0-9][0-9A-Za-z.+~:-]*", args.version):
+    if not re.fullmatch(r"[0-9][0-9A-Za-z.+~:-]*", version):
         raise ValueError("Invalid Debian version")
-    args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=args.output) as temporary:
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output) as temporary:
         base = Path(temporary) / "root"
-        stage(base, args.host_wheel, args.sdk_wheel, args.release, args.version, args.source)
-        artifact = Path(temporary) / f"setup-system_{args.version}_all.deb"
+        stage(
+            base,
+            host_wheel,
+            sdk_wheel,
+            release,
+            runtime_assets,
+            version,
+            source,
+        )
+        artifact = Path(temporary) / f"setup-system_{version}_all.deb"
         subprocess.run(
             ["dpkg-deb", "--root-owner-group", "--build", str(base), str(artifact)], check=True
         )
-        result = args.output / artifact.name
+        result = output / artifact.name
         os.link(artifact, result)
         print(result)
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

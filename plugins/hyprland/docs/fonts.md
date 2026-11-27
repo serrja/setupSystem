@@ -1,4 +1,4 @@
-# Desktop fonts
+# 🔤 Desktop fonts
 
 The Hyprland configuration action generates `$XDG_CONFIG_HOME/fontconfig/conf.d/60-setup-system-fonts.conf`. Its signed Debian package selection includes JetBrains Mono for text and Noto Color Emoji for missing emoji glyphs. Each desktop renderer reads the shared font roles. Choose a terminal font size on the **Foot** page.
 

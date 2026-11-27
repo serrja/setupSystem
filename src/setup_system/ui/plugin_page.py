@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from pydantic import SecretBytes
-from setup_system_sdk.enums.operation import OperationState, Outcome, WorkerMethod
+from setup_system_sdk.enums.operation import ActionMode, OperationState, Outcome, WorkerMethod
 from setup_system_sdk.schemas.wire import Request
 from setup_system_sdk.secrets import store_secret
 from setup_system_sdk.ui import UIContext
@@ -16,7 +16,9 @@ from textual.widgets import Button, Select, Static
 from setup_system.application.authorization import AuthorizationRequest
 from setup_system.application.plugins import CatalogEntry
 from setup_system.bootstrap import Runtime
-from setup_system.errors import OperationError
+from setup_system.errors import OperationError, normalize_failure
+from setup_system.ui.error_presenter import ErrorPanel
+from setup_system.ui.features import Feature, declared_features
 from setup_system.ui.help import Help
 from setup_system.ui.operation_state import availability
 from setup_system.ui.panels import panel_type
@@ -37,6 +39,8 @@ class PluginPage(VerticalScroll):
         self.services = runtime
         self.entry = entry
         self.manifest = entry.manifest
+        self.view = declared_features(self.manifest, entry.source)
+        self.blocked_actions: dict[str, str] = {}
         self.reload_catalog = reload
         self.revision = ""
         self.operation: UUID | None = None
@@ -47,38 +51,62 @@ class PluginPage(VerticalScroll):
         yield Static(f"{self.manifest.name} {self.manifest.version}", markup=False)
         if self.entry.release:
             yield Button("Review activation", id="activate")
-            yield Static("", id="result", markup=False)
+            yield Static("Available · activation required", markup=False)
+            yield ErrorPanel("", id="result", markup=False)
             return
-        yield Button("Help", id="plugin-help", disabled=True)
+        if self.view.features[Feature.HELP].supported:
+            yield Button("Help", id="plugin-help", disabled=True)
         yield Vertical(id="custom-panel")
-        yield Button("Inspect", id="inspect", disabled=True)
+        if self.view.features[Feature.PROVIDER_STATUS].supported:
+            yield Static(
+                "Capabilities: " + ", ".join(cap.id for cap in self.manifest.provides),
+                markup=False,
+            )
+            yield Static("Checking provider status…", id="provider-status", markup=False)
+        if (
+            self.view.features[Feature.ACTIONS].supported
+            or self.view.features[Feature.ACCOUNTS].supported
+        ):
+            yield Button("Inspect", id="inspect", disabled=True)
         yield Button("Enable" if self.entry.disabled else "Disable", id="toggle")
         yield Button("Remove extension", id="remove-extension")
-        yield Static("Settings")
-        yield Vertical(id="settings-form", classes="forms")
-        yield Button("Save settings", id="save", disabled=True)
-        yield Select(
-            [(a.label, a.id) for a in self.manifest.actions], id="action", prompt="Choose an action"
-        )
-        yield Vertical(id="input-form", classes="forms")
-        yield Button("Preview", id="preview", disabled=True)
-        yield Button("Cancel operation", id="cancel-operation", disabled=True)
-        yield Static("", id="result", markup=False)
+        if self.view.features[Feature.SETTINGS].supported:
+            yield Static("Settings")
+            yield Vertical(id="settings-form", classes="forms")
+        if self.view.features[Feature.SAVE_SETTINGS].supported:
+            yield Button("Save settings", id="save", disabled=True)
+        if self.view.actions:
+            yield Select(
+                [(a.label, a.id) for a in self.manifest.actions],
+                id="action",
+                prompt="Choose an action",
+            )
+            yield Static("", id="requirements", markup=False)
+            yield Vertical(id="input-form", classes="forms")
+            yield Button("Preview", id="preview", disabled=True)
+            yield Button("Cancel operation", id="cancel-operation", disabled=True)
+        yield ErrorPanel("", id="result", markup=False)
 
     @on(Button.Pressed, "#plugin-help")
     async def help_page(self) -> None:
-        release = await self.services.plugins.active_release(self.manifest.id)
-        await self.app.push_screen(Help(release.resources))
+        try:
+            release = await self.services.plugins.active_release(self.manifest.id)
+            await self.app.push_screen(Help(release.resources))
+        except Exception as failure:
+            await self._show_failure(failure, stage="help")
 
     async def choices(self, provider: str, query: str) -> list[str]:
+        settings = self.query("#settings-form SchemaForm")
         reply = await self.services.plugins.query(
             Request(
                 plugin_id=self.manifest.id,
                 method=WorkerMethod.CHOICES,
                 provider=provider,
                 query=query,
-                overrides=self.query_one("#settings-form SchemaForm", SchemaForm).values(
-                    explicit=True
+                overrides=(
+                    self.query_one("#settings-form SchemaForm", SchemaForm).values(explicit=True)
+                    if settings
+                    else {}
                 ),
             )
         )
@@ -87,15 +115,32 @@ class PluginPage(VerticalScroll):
     def update_controls(self) -> None:
         if self.entry.release or not self.is_mounted:
             return
+        for feature in self.view.features.values():
+            feature.ready = feature.supported and self.activated
+        for action_id, action in self.view.actions.items():
+            action.ready = self.activated and action_id not in self.blocked_actions
+            action.reason = self.blocked_actions.get(action_id, "")
+        action_control = self.query("#action")
+        selected = self.query_one("#action", Select).value if action_control else None
+        current_action = self.view.actions.get(selected) if isinstance(selected, str) else None
         controls = availability(
             self.state,
             activated=self.activated,
-            selected=isinstance(self.query_one("#action", Select).value, str),
+            selected=bool(current_action and current_action.ready),
         )
         for button in ("#inspect", "#save", "#plugin-help"):
-            self.query_one(button, Button).disabled = not self.activated
-        self.query_one("#preview", Button).disabled = not controls.preview
-        self.query_one("#cancel-operation", Button).disabled = not controls.stop
+            for control in self.query(button):
+                if isinstance(control, Button):
+                    control.disabled = not self.activated
+        for control in self.query("#preview"):
+            if isinstance(control, Button):
+                control.disabled = not controls.preview
+        for control in self.query("#cancel-operation"):
+            if isinstance(control, Button):
+                control.disabled = not controls.stop
+        for status in self.query("#requirements"):
+            if isinstance(status, Static):
+                status.update(current_action.reason if current_action else "")
 
     @work(exit_on_error=False)
     async def watch_operation(self, operation: UUID) -> None:
@@ -113,6 +158,14 @@ class PluginPage(VerticalScroll):
             self.state = OperationState.RUNNING
             self.watch_operation(self.operation)
         await self.load_active()
+        if self.view.actions:
+            try:
+                self.blocked_actions = await self.services.plugins.action_requirements(
+                    self.manifest
+                )
+                self.update_controls()
+            except Exception as failure:
+                await self._show_failure(failure, stage="availability")
 
     async def load_active(self) -> None:
         """Populate controls for the currently activated catalog entry."""
@@ -130,28 +183,31 @@ class PluginPage(VerticalScroll):
             if kind:
 
                 def select(key: str) -> None:
-                    self.query_one("#action", Select).value = key
+                    if self.query("#action"):
+                        self.query_one("#action", Select).value = key
 
                 await self.query_one("#custom-panel", Vertical).mount(
                     kind(UIContext(self.manifest.id, select))
                 )
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as failure:
+            await self._show_failure(failure, stage="plugin_panel")
         try:
             saved = await self.services.plugins.profile(self.manifest.id)
         except OperationError as error:
-            self.query_one("#result", Static).update(error.detail.message)
+            self.query_one("#result", ErrorPanel).set_error(error.detail)
             return
-        except ValueError:
-            self.query_one("#result", Static).update(
-                "Activate a reviewed release to open this plugin."
-            )
+        except ValueError as failure:
+            await self._show_failure(failure, stage="configuration")
             return
         self.revision = saved.revision
-        form = SchemaForm(self.manifest.settings_schema, saved.values, self.choices)
-        form.save_secret = lambda secret: store_secret(self.manifest.id, secret)
-        await self.query_one("#settings-form", Vertical).mount(form)
+        if self.view.features[Feature.SETTINGS].supported:
+            form = SchemaForm(self.manifest.settings_schema, saved.values, self.choices)
+            form.save_secret = lambda secret: store_secret(self.manifest.id, secret)
+            await self.query_one("#settings-form", Vertical).mount(form)
         self.activated = True
+        for status in self.query("#provider-status"):
+            if isinstance(status, Static):
+                status.update("Active provider")
         self.update_controls()
 
     @on(Select.Changed, "#action")
@@ -160,7 +216,16 @@ class PluginPage(VerticalScroll):
         area = self.query_one("#input-form", Vertical)
         await area.remove_children()
         if isinstance(event.value, str):
-            form = SchemaForm(self.manifest.input_schemas[event.value], {}, self.choices)
+            action = next(item for item in self.manifest.actions if item.id == event.value)
+            label = {
+                ActionMode.READ_ONLY: "Run read-only check",
+                ActionMode.MANUAL: "Open instructions",
+            }.get(action.mode, "Preview")
+            self.query_one("#preview", Button).label = label
+            schema = self.manifest.input_schemas[event.value]
+            if not schema.get("properties"):
+                return
+            form = SchemaForm(schema, {}, self.choices)
             form.save_secret = lambda secret: store_secret(self.manifest.id, secret)
             await area.mount(form)
 
@@ -172,13 +237,35 @@ class PluginPage(VerticalScroll):
         secret = await prompt.ask(self.app)
         return SecretBytes(secret.get_secret_value().encode()) if secret else None
 
+    async def _show_failure(self, failure: Exception, *, stage: str) -> None:
+        detail = normalize_failure(failure, stage=stage, component=self.manifest.id)
+        for result in self.query("#result"):
+            if isinstance(result, ErrorPanel):
+                result.set_error(detail)
+        for editor in self.query(SchemaForm):
+            editor.show_error(detail.field, detail.message)
+        try:
+            executor = (await self.services.plugins.active_release(self.manifest.id)).executor
+        except Exception:
+            executor = None
+        try:
+            await self.services.journal.emit_failure(
+                detail,
+                failure,
+                stage=stage,
+                plugin_id=self.manifest.id,
+                executor=executor,
+            )
+        except Exception:
+            pass
+
     @on(Button.Pressed)
     @work(exit_on_error=False)
     async def command(self, event: Button.Pressed) -> None:
-        button = event.button.id
-        plugin = self.manifest.id
-        display = self.query_one("#result", Static)
         try:
+            button = event.button.id
+            plugin = self.manifest.id
+            display = self.query_one("#result", ErrorPanel)
             if button == "activate" and self.entry.source and self.entry.release:
                 release = self.entry.release
                 summary = [
@@ -210,8 +297,17 @@ class PluginPage(VerticalScroll):
                         if entry is not None and entry.manifest is not None:
                             self.entry = entry
                             self.manifest = entry.manifest
+                            self.view = declared_features(self.manifest, entry.source)
                             await self.recompose()
                             await self.load_active()
+                            self.query_one("#result", ErrorPanel).update(
+                                f"{self.manifest.name} {self.manifest.version} is active."
+                            )
+                            if self.view.actions:
+                                self.blocked_actions = (
+                                    await self.services.plugins.action_requirements(self.manifest)
+                                )
+                                self.update_controls()
             elif button == "inspect":
                 reply = await self.services.plugins.query(
                     Request(plugin_id=plugin, method=WorkerMethod.INSPECT)
@@ -238,11 +334,13 @@ class PluginPage(VerticalScroll):
             elif button == "cancel-operation" and self.operation:
                 self.services.operations.cancel(self.operation)
             elif button == "preview":
+                selection = self.query_one("#action", Select).value
+                selected = self.view.actions.get(selection) if isinstance(selection, str) else None
                 if (
                     not availability(
                         self.state,
                         activated=self.activated,
-                        selected=isinstance(self.query_one("#action", Select).value, str),
+                        selected=bool(selected and selected.ready),
                     ).preview
                     or self.operation is not None
                 ):
@@ -257,14 +355,8 @@ class PluginPage(VerticalScroll):
                     if self.operation is None:
                         self.state = OperationState.IDLE
                     self.update_controls()
-        except OperationError as error:
-            display.update(error.detail.message)
-            for editor in self.query(SchemaForm):
-                editor.show_error(error.detail.field, error.detail.message)
-        except ValueError as error:
-            display.update(str(error))
-        except (RuntimeError, OSError):
-            display.update("Operation incomplete. Review the release, settings and history.")
+        except Exception as failure:
+            await self._show_failure(failure, stage="plugin_action")
 
     async def review_action(self, plugin: str, display: Static) -> None:
         action = self.query_one("#action", Select).value
@@ -273,8 +365,16 @@ class PluginPage(VerticalScroll):
         snapshot = await self.services.operations.preview(
             plugin,
             action,
-            self.query_one("#settings-form SchemaForm", SchemaForm).values(explicit=True),
-            self.query_one("#input-form SchemaForm", SchemaForm).values(visible_only=True),
+            (
+                self.query_one("#settings-form SchemaForm", SchemaForm).values(explicit=True)
+                if self.query("#settings-form SchemaForm")
+                else {}
+            ),
+            (
+                self.query_one("#input-form SchemaForm", SchemaForm).values(visible_only=True)
+                if self.query("#input-form SchemaForm")
+                else {}
+            ),
         )
         display.update(snapshot.plan.summary)
         if (

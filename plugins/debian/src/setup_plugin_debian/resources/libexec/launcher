@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /usr/bin/python3 -I -B -m setup_plugin_debian.adapters.launcher "$@"
+exec /var/lib/setup-system/active/native/bin/python -I -B -m setup_plugin_debian.adapters.launcher "$@"

@@ -1,10 +1,10 @@
 """Reap one Linux worker tree, including children which start a new session."""
 
+import argparse
 import ctypes
 import os
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 from types import FrameType
@@ -71,4 +71,14 @@ def supervise(command: list[str], grace: float, descriptor: int, host_pid: int) 
 
 
 if __name__ == "__main__":
-    sys.exit(supervise(sys.argv[4:], float(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("grace", type=float)
+    parser.add_argument("descriptor", type=int)
+    parser.add_argument("host_pid", type=int)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    arguments = parser.parse_args()
+    if not arguments.command:
+        parser.error("worker command is required")
+    raise SystemExit(
+        supervise(arguments.command, arguments.grace, arguments.descriptor, arguments.host_pid)
+    )

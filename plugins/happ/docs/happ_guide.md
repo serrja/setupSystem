@@ -1,4 +1,4 @@
-# Happ subscriptions and routing
+# 🧩 Happ subscriptions and routing
 
 ## ⚙️ Plugin actions
 
