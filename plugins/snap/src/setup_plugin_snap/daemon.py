@@ -15,6 +15,7 @@ from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.enums.operation import CancellationPolicy
 from setup_system_sdk.processes import run_command
 
+from setup_plugin_snap.catalog import Confinement, PublisherValidation
 from setup_plugin_snap.store import Publisher, Revision, SocketAttributes, response_bytes
 
 SOCKET = Path("/run/snapd.socket")
@@ -41,7 +42,7 @@ class Native(BaseModel):
     version: str
     status: str
     publisher: Publisher | None = None
-    confinement: str = ""
+    confinement: Confinement = "strict"
     devmode: bool = False
     trymode: bool = False
 
@@ -131,14 +132,19 @@ async def content(client: httpx.AsyncClient, name: str) -> set[str]:
     }
 
 
-async def actual(item: Native, publisher_id: str | None = None) -> Revision:
-    if item.publisher is None or item.publisher.validation != "verified":
-        raise ValueError("The installed publisher is not verified")
+async def actual(
+    item: Native,
+    publisher_id: str | None = None,
+    publisher_validation: PublisherValidation = "verified",
+    confinement: Confinement = "strict",
+) -> Revision:
+    if item.publisher is None or item.publisher.validation != publisher_validation:
+        raise ValueError("The installed publisher validation differs from the catalog")
     if publisher_id is not None and item.publisher.id != publisher_id:
         raise ValueError("The installed publisher differs from the approved identity")
     if (item.status, item.confinement, item.devmode, item.trymode) != (
         "active",
-        "strict",
+        confinement,
         False,
         False,
     ):
@@ -157,6 +163,7 @@ async def actual(item: Native, publisher_id: str | None = None) -> Revision:
         revision=int(item.revision),
         version=item.version,
         sha3=base64.urlsafe_b64decode(digests[0]).hex(),
+        confinement=confinement,
     )
 
 
