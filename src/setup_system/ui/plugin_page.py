@@ -186,11 +186,11 @@ class PluginPage(VerticalScroll):
                     Confirm("\n".join(summary), "Review activation")
                 ):
                     digest = await self.app.push_screen_wait(
-                        Prompt("Independently verified release SHA-256")
+                        Prompt("Independently verified release SHA-256 (blank: latest available)")
                     )
-                    if digest:
+                    if digest is not None:
                         await self.services.plugins.activate(
-                            release, digest, self.entry.source.parent
+                            release, digest or release.digest, self.entry.source.parent
                         )
                         await self.reload_catalog()
             elif button == "inspect":
