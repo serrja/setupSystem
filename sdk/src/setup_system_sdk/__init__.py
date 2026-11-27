@@ -16,7 +16,7 @@ from setup_system_sdk.resources import Resource
 from setup_system_sdk.settings import Inputs, PluginSettings
 from setup_system_sdk.version import PLUGIN_GROUP, SDK_VERSION, UI_GROUP
 
-__all__ = [
+__all__ = (
     "PLUGIN_GROUP",
     "SDK_VERSION",
     "UI_GROUP",
@@ -34,4 +34,4 @@ __all__ = [
     "Result",
     "Snapshot",
     "StepPlan",
-]
+)
