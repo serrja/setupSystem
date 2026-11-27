@@ -5,7 +5,7 @@ launcher_search_path=${PATH:-/usr/bin:/bin}
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 package_auth=sudo
-usage() { printf '%s\n' 'Usage: sh install.sh install|update [--release vX.Y.Z] [--auth sudo|su]' '       sh install.sh run'; }
+usage() { printf '%s\n' 'Usage: sh install.sh (default: install)' '       sh install.sh install|update [--release vX.Y.Z] [--auth sudo|su]' '       sh install.sh run'; }
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 check_platform() {
     [ "$(id -u)" != 0 ] || fail 'Run delivery as a normal user. Only the package transaction requires administrator authentication.'
@@ -103,6 +103,8 @@ printf 'Start it separately with: %s\n' "$launch_command"
 }
 # The development Make target sources the same, restricted package transaction.
 if [ "${0##*/}" = install-local.sh ]; then return 0; fi
+
+if [ "$#" -eq 0 ]; then set -- install; fi
 
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;

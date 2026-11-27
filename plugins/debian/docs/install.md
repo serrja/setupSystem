@@ -19,19 +19,13 @@ sudo apt update
 sudo apt install ca-certificates curl
 ```
 
-Download the delivery script as your normal user and run its `install` action. The script is the bootstrap trust anchor. For an independently reviewed revision, substitute its full commit SHA for `main` in the download URL. The loader resolves the latest stable release once and checks both canonical and companion tag identities. Before APT requests authorization, it checks the Debian package digest, the signed build's main commit, workflow and runner, and the published plugin catalog. Installation ends after APT installs the configurator and its runtime dependencies.
+Download the delivery script as your normal user. With no arguments, the script runs its `install` action. The script is the bootstrap trust anchor. For an independently reviewed revision, substitute its full commit SHA for `main` in the download URL. The loader resolves the latest stable release once and checks both canonical and companion tag identities. Before APT requests authorization, it checks the Debian package digest, the signed build's main commit, workflow and runner, and the published plugin catalog. Installation ends after APT installs the configurator and its runtime dependencies.
 
 ```sh
-( set -eu
-  delivery=$(mktemp)
-  trap 'rm -f -- "$delivery"' EXIT
-  curl -qfsSL --proto '=https' --proto-redir '=https' \
-    https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o "$delivery"
-  /bin/sh "$delivery" install
-)
+curl -fsSL https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o install.sh && sh install.sh
 ```
 
-If only the local root account can authorize installation, replace the last command inside the parentheses with `/bin/sh "$delivery" install --auth su`. Native `su` will ask for the root password. For the usual sudo path, use the installing user's sudo password. [Administrative access](../../administration/docs/administration.md)
+After downloading the script, you can also run `sh install.sh install` explicitly. If only the local root account can authorize installation, run `sh install.sh install --auth su` with the downloaded file. Native `su` will ask for the root password. For the usual sudo path, use the installing user's sudo password. [Administrative access](../../administration/docs/administration.md)
 
 The loader pins distribution-specific SHA-256 digests for the official Linux amd64 and arm64 builds of GitHub CLI and jq. It authenticates each download before unpacking or executing it as the normal user. The Sigstore verifier runs with a private HOME and a minimal environment. To refresh these tools, maintainers review the upstream release, compare the release asset digests with the published checksum files, update the pins in `install.sh` and verify a published package on the new verifier before release. [GitHub CLI 2.105.0 checksums](https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_checksums.txt) · [jq 1.8.2 checksums](https://github.com/jqlang/jq/releases/download/jq-1.8.2/sha256sum.txt)
 
