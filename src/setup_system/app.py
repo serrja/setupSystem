@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import SecretBytes
 from setup_system_sdk.enums.operation import Outcome
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Input, OptionList, Static
@@ -17,7 +17,9 @@ from setup_system.application.authorization import AuthorizationRequest
 from setup_system.application.plugins import CatalogEntry
 from setup_system.application.recovery import OperationHistoryItem, RecoveryAction
 from setup_system.bootstrap import Runtime
-from setup_system.errors import OperationError
+from setup_system.errors import normalize_failure
+from setup_system.ui.error_boundary import SafeApp
+from setup_system.ui.error_presenter import ErrorPanel
 from setup_system.ui.plugin_dialogs import Confirm, Prompt, SecretPrompt
 from setup_system.ui.plugin_page import PluginPage
 
@@ -37,7 +39,7 @@ def history_line(row: OperationHistoryItem) -> str:
     )
 
 
-class SetupApp(App[None]):
+class SetupApp(SafeApp[None]):
     TITLE = "setupSystem"
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+f", "search", "Find plugin"),
@@ -72,11 +74,27 @@ class SetupApp(App[None]):
                 yield Button("Recover operation", id="recover")
             with Vertical(id="workspace"):
                 yield Static("Select a plugin or activate a reviewed release.")
-        yield Static("", id="feedback", markup=False)
+        yield ErrorPanel("", id="feedback", markup=False)
         yield Footer()
 
     async def on_mount(self) -> None:
         await self.reload_catalog()
+        await self.refresh_recovery()
+
+    async def refresh_recovery(self) -> None:
+        rollback = await self.services.recovery.available(RecoveryAction.ROLLBACK)
+        resume = await self.services.recovery.available(RecoveryAction.RESUME)
+        reconcile = await self.services.recovery.available(RecoveryAction.RECONCILE)
+        self.query_one("#restore-files", Button).display = bool(rollback)
+        self.query_one("#recover", Button).display = bool(resume or reconcile)
+
+    async def _show_failure(self, failure: Exception, *, stage: str) -> None:
+        detail = normalize_failure(failure, stage=stage)
+        self.query_one("#feedback", ErrorPanel).set_error(detail)
+        try:
+            await self.services.journal.emit_failure(detail, failure, stage=stage)
+        except Exception:
+            pass
 
     async def reload_catalog(self, plugin: str | None = None) -> CatalogEntry | None:
         rows = await self.services.plugins.catalog()
@@ -100,14 +118,14 @@ class SetupApp(App[None]):
                         f"{manifest.name} · {manifest.category}"
                         + (" · disabled" if entry.disabled else ""),
                         id=key,
-                        disabled=bool(entry.reason),
+                        disabled=False,
                     )
                 )
 
     @on(OptionList.OptionSelected, "#catalog")
     async def open_plugin(self, event: OptionList.OptionSelected) -> None:
         key = event.option.id
-        if not key:
+        if not key or key not in self.entries:
             return
         workspace = self.query_one("#workspace", Vertical)
         await workspace.remove_children()
@@ -119,51 +137,49 @@ class SetupApp(App[None]):
     @on(Button.Pressed, "#history")
     @work(exit_on_error=False)
     async def action_history(self) -> None:
-        rows = await self.services.recovery.history()
-        await self.push_screen_wait(
-            Confirm(
-                "\n".join(history_line(row) for row in rows) or "No recorded operations.", "Close"
+        try:
+            rows = await self.services.recovery.history()
+            await self.push_screen_wait(
+                Confirm(
+                    "\n".join(history_line(row) for row in rows) or "No recorded operations.",
+                    "Close",
+                )
             )
-        )
+        except Exception as failure:
+            await self._show_failure(failure, stage="history")
 
     @on(Button.Pressed, "#restore-files")
     @work(exit_on_error=False)
     async def restore_files(self) -> None:
-        rows = await self.services.recovery.available(RecoveryAction.ROLLBACK)
-        if not rows:
-            self.query_one("#feedback", Static).update(
-                "No file operations are available for rollback."
-            )
-            return
-        value = await self.push_screen_wait(
-            Prompt("Select a completed file operation\n" + "\n".join(history_line(r) for r in rows))
-        )
-        if not value or value not in {r.operation_id for r in rows}:
-            return
         try:
+            rows = await self.services.recovery.available(RecoveryAction.ROLLBACK)
+            if not rows:
+                self.query_one("#feedback", Static).update(
+                    "No file operations are available for rollback."
+                )
+                return
+            value = await self.push_screen_wait(
+                Prompt(
+                    "Select a completed file operation\n" + "\n".join(history_line(r) for r in rows)
+                )
+            )
+            if not value or value not in {r.operation_id for r in rows}:
+                return
             plan = await self.services.recovery.rollback(UUID(value))
             detail = "\n".join([plan.plan.summary, *(r.description() for r in plan.plan.resources)])
             if await self.push_screen_wait(Confirm(detail, "Restore approved files")):
                 result = await self.services.operations.apply(plan)
                 self.query_one("#feedback", Static).update(result.message)
-        except OperationError as error:
-            self.query_one("#feedback", Static).update(error.detail.message)
-        except (ValueError, RuntimeError, OSError):
-            self.query_one("#feedback", Static).update(
-                "The original executor could not confirm this rollback."
-            )
+        except Exception as failure:
+            await self._show_failure(failure, stage="rollback")
 
     @on(Button.Pressed, "#recover")
     @work(exit_on_error=False)
     async def recover(self) -> None:
         try:
             await self.review_recovery()
-        except OperationError as error:
-            self.query_one("#feedback", Static).update(error.detail.message)
-        except (ValueError, RuntimeError, OSError):
-            self.query_one("#feedback", Static).update(
-                "Recovery is unavailable. Review the retained evidence."
-            )
+        except Exception as failure:
+            await self._show_failure(failure, stage="recovery")
 
     async def review_recovery(self) -> None:
         resumable = await self.services.recovery.available(RecoveryAction.RESUME)
@@ -223,12 +239,12 @@ class SetupApp(App[None]):
     @on(Button.Pressed, "#add")
     @work(exit_on_error=False)
     async def add(self) -> None:
-        link = await self.push_screen_wait(
-            Prompt("HTTPS release URL or absolute path to a release manifest")
-        )
-        if not link:
-            return
         try:
+            link = await self.push_screen_wait(
+                Prompt("HTTPS release URL or absolute path to a release manifest")
+            )
+            if not link:
+                return
             release = await self.services.plugins.preview_release(link)
             record = release.selected()
             info = [
@@ -258,11 +274,5 @@ class SetupApp(App[None]):
                 )
                 await self.reload_catalog()
                 feedback.update(f"{state.manifest.name} {state.manifest.version} is active.")
-        except OperationError as error:
-            self.query_one("#feedback", Static).update(error.detail.message)
-        except ValueError as error:
-            self.query_one("#feedback", Static).update(str(error))
-        except (OSError, RuntimeError):
-            self.query_one("#feedback", Static).update(
-                "Activation failed. Check the origin, digest and dependencies."
-            )
+        except Exception as failure:
+            await self._show_failure(failure, stage="activation")

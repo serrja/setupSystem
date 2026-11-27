@@ -14,7 +14,12 @@ from setup_system_sdk.plugin import PluginSettings
 from setup_system_sdk.schemas.common import Inputs
 from setup_system_sdk.schemas.operation import Plan, Result
 
-from setup_plugin_debian.adapters.layout import INSTALLED, require_installed_resource
+from setup_plugin_debian.adapters.layout import (
+    INSTALLED,
+    NATIVE_ANSIBLE,
+    NATIVE_PYTHON,
+    require_installed_resource,
+)
 
 _LIMIT = 262144
 _EXTRA = TypeAdapter(dict[str, JsonValue])
@@ -58,10 +63,10 @@ def run_native_play(
     with TemporaryDirectory(prefix="setup-system-ansible-") as stage:
         subprocess.run(
             [
-                "/usr/bin/python3",
+                str(NATIVE_PYTHON),
                 "-I",
                 "-B",
-                "/usr/bin/ansible-playbook",
+                str(NATIVE_ANSIBLE),
                 "-i",
                 "localhost,",
                 "-c",

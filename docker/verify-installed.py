@@ -1,6 +1,5 @@
 """Verify wheel identity/resources without executing host setup operations."""
 
-import argparse
 import hashlib
 import json
 import subprocess
@@ -9,6 +8,9 @@ import zipfile
 from importlib.metadata import Distribution, distribution, version
 from importlib.resources import files
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 import setup_system
 
@@ -48,11 +50,8 @@ def verify_origin(installed: Distribution, wheel: Path | None) -> None:
                 raise ValueError("Installed resource differs from its release")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--wheel", type=Path)
-    args = parser.parse_args()
-    verify_origin(distribution("setup-system"), args.wheel)
+def main(wheel: Annotated[Path | None, typer.Option("--wheel")] = None) -> None:
+    verify_origin(distribution("setup-system"), wheel)
     root = Path(setup_system.__file__).parent
     assert "site-packages" in root.parts
     assert files("setup_system").joinpath("_migrations", "env.py").is_file()
@@ -66,4 +65,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

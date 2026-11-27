@@ -1,13 +1,14 @@
 """Regenerate trusted source manifests and offline field references in the build tree."""
 
-import argparse
 import importlib
 import importlib.util
 import json
 import sys
 import tomllib
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from setup_system_sdk import PLUGIN_GROUP
 from setup_system_sdk.enums.ui import StorageScope
 from setup_system_sdk.plugin import Backend
@@ -133,18 +134,17 @@ def update(project: Path, write: bool) -> list[Path]:
     return changed
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--write", action="store_true")
-    parser.add_argument("projects", type=Path, nargs="*")
-    args = parser.parse_args()
-    paths = args.projects or sorted(
+def main(
+    projects: Annotated[list[Path] | None, typer.Argument()] = None,
+    write: Annotated[bool, typer.Option("--write")] = False,
+) -> None:
+    paths = projects or sorted(
         (Path(__file__).resolve().parents[1] / "plugins").glob("*/pyproject.toml")
     )
-    changed = [file for project in paths for file in update(project, args.write)]
-    if changed and not args.write:
+    changed = [file for project in paths for file in update(project, write)]
+    if changed and not write:
         raise SystemExit("Stale generated metadata: " + ", ".join(str(p) for p in changed))
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

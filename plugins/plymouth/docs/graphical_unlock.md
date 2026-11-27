@@ -1,4 +1,4 @@
-# Graphical disk unlock
+# 🔐 Graphical disk unlock
 
 Open the **Plymouth** extension for a Debian machine that already prompts for its LUKS root password at boot.
 

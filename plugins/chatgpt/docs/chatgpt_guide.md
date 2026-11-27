@@ -1,4 +1,4 @@
-# ChatGPT Desktop
+# 🧩 ChatGPT Desktop
 
 ## ⚙️ Plugin actions
 

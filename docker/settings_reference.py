@@ -1,11 +1,11 @@
 """Render the offline settings reference from the models and packaged resources."""
 
-import argparse
 import json
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
+import typer
 from pydantic import BaseModel
 
 from setup_system.configuration.settings import ENV_PREFIX, Settings, default_database_url
@@ -80,18 +80,16 @@ def reference(root: Path) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+def main(write: Annotated[bool, typer.Option("--write")] = False) -> None:
     root = Path(__file__).resolve().parents[1]
     target = root / "docs/settings_map.md"
     generated = reference(root)
-    if args.write:
+    if write:
         target.write_text(generated)
     elif target.read_text() != generated:
-        parser.exit(1, "Update the settings reference with --write.\n")
+        typer.echo("Update the settings reference with --write.", err=True)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

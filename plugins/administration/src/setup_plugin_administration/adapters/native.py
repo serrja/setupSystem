@@ -11,6 +11,8 @@ from setup_system_sdk.files.system_paths import protected
 TOOL = Path("/usr/lib/setup-system/libexec/platform")
 
 INSTALLED = Path("/usr/lib/setup-system")
+NATIVE_PYTHON = Path("/var/lib/setup-system/active/native/bin/python")
+NATIVE_ANSIBLE = Path("/var/lib/setup-system/active/native/bin/ansible-playbook")
 
 
 def current_boot_identity() -> str:

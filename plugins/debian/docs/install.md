@@ -1,4 +1,4 @@
-# Debian workstation target
+# 📦 Debian workstation target
 
 After installing the Debian package, choose **setupSystem** in the desktop applications menu or enter this command in any terminal or text console (TTY) as your normal user.
 
@@ -6,7 +6,7 @@ After installing the Debian package, choose **setupSystem** in the desktop appli
 setup-system
 ```
 
-Search for a plugin, activate its backend, then preview the program action you want. When uv is missing, the first explicit activation fetches the pinned Astral binary and checks its archive digest. APT owns the configurator, bundled wheels, protected resources and offline documentation. Program settings and file recovery records are stored under the invoking user's XDG directories. Open the guides with F1 or `man setup-system`. [Using the configurator](../../../docs/textual_workflow.md) · [Settings](../../../docs/configuration.md) · [Recovery](../../../docs/recovery.md)
+Search for a plugin, activate its backend, then preview the program action you want. The verified package includes a pinned uv executable and locked wheels for each supported architecture. uv prepares private Python runtimes and activates bundled plugins without downloading uv again. APT owns only system prerequisites, the verified `.deb`, protected resources and offline documentation. A remote plugin may still need its reviewed wheels downloaded. Program settings and file recovery records are stored under the invoking user's XDG directories. Open the guides with F1 or `man setup-system`. [Using the configurator](../../../docs/textual_workflow.md) · [Settings](../../../docs/configuration.md) · [Recovery](../../../docs/recovery.md)
 
 ## 📦 Install on Debian
 
@@ -19,7 +19,7 @@ sudo apt update
 sudo apt install ca-certificates curl
 ```
 
-Download the delivery script as your normal user. With no arguments, the script runs its `install` action. The script is the bootstrap trust anchor. For an independently reviewed revision, substitute its full commit SHA for `main` in the download URL. The loader resolves the latest stable release once and checks both canonical and companion tag identities. Before APT requests authorization, it checks the Debian package digest, the signed build's main commit, workflow and runner, and the published plugin catalog. Installation ends after APT installs the configurator and its runtime dependencies.
+Download the delivery script as your normal user. With no arguments, the script runs its `install` action. The script is the bootstrap trust anchor. For an independently reviewed revision, substitute its full commit SHA for `main` in the download URL. The loader resolves the latest stable release once and checks both canonical and companion tag identities. Before APT requests authorization, it checks the Debian package digest, the signed build's main commit, workflow and runner, and the published plugin catalog. The package then prepares its private host and native uv runtimes from local locked wheels. Installation stops there; open the app yourself.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o install.sh && sh install.sh
@@ -31,16 +31,10 @@ The loader pins distribution-specific SHA-256 digests for the official Linux amd
 
 ## 🔄 Update the configurator
 
-Run the same delivery script with `update` to verify and install the latest stable package. Download a fresh reviewed loader when replacing its pinned verification tools. The update ends at the APT transaction. Open the app yourself when you are ready.
+Run the same delivery script with `update` to verify and install the latest stable package. Download a fresh reviewed loader when replacing its pinned verification tools. The update ends after APT and runtime preparation. Open the app yourself when you are ready.
 
 ```sh
-( set -eu
-  delivery=$(mktemp)
-  trap 'rm -f -- "$delivery"' EXIT
-  curl -qfsSL --proto '=https' --proto-redir '=https' \
-    https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o "$delivery"
-  /bin/sh "$delivery" update
-)
+curl -fsSL https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o install.sh && sh install.sh update
 ```
 
 ## 🗑️ Remove the configurator
@@ -55,11 +49,11 @@ APT removes the configurator. The workstation applications, user settings and ba
 
 System changes require a matching distribution, release, codename and architecture. The configurator works with the existing filesystems, boot loader and account. [Linux execution boundaries](linux.md)
 
-## System packages
+## 📦 System packages
 
 Open the plugin that owns the program. For example, **Hyprland** manages the compositor session, **Waybar** manages the panel and **Greeter** manages graphical login. Preview the selected action to review its package changes before applying them. Debian package operations use signed APT metadata and recheck the approved closure and installed state. A failed transaction can leave some packages installed. Check its result and Debian's package logs before retrying. [Desktop login](../../greeter/docs/desktop_login.md) · [Recovery](../../../docs/recovery.md)
 
-## Regional settings
+## ⚙️ Regional settings
 
 Timezone, locale and keyboard each have their own field. An empty field preserves the corresponding system value. **Inspect** refreshes suggestions from installed zoneinfo, Debian's UTF-8 locale list and XKB rules. The plan compares each selection with the active system and includes any required Debian packages.
 

@@ -11,5 +11,5 @@
       ansible.builtin.raw: >-
         /usr/bin/printf %s {{ setup_system_payload }} |
         /usr/bin/base64 --decode |
-        /usr/bin/python3 -I -B /usr/lib/setup-system/plugins/greeter/setup_plugin_greeter/adapters/entrypoint.py
+        /var/lib/setup-system/active/native/bin/python -I -B /usr/lib/setup-system/plugins/greeter/setup_plugin_greeter/adapters/entrypoint.py
       changed_when: true

@@ -10,15 +10,18 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.downloads import DownloadClient
+from setup_system_sdk.enums.errors import ErrorCode
 from setup_system_sdk.enums.operation import WorkerMethod
 from setup_system_sdk.files.generations import bounded_file
 from setup_system_sdk.manifests import Manifest
 from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.errors import Error
 from setup_system_sdk.schemas.wire import Reply, Request
 
 from setup_system.application.providers import ProviderBroker
 from setup_system.application.recovery import retained_for_recovery
 from setup_system.configuration.profiles import SavedValues, SettingsStore
+from setup_system.errors import OperationError, normalize_failure
 from setup_system.infrastructure.database.uow import UnitOfWork
 from setup_system.infrastructure.locks import acquire
 from setup_system.infrastructure.plugins.discovery import (
@@ -36,6 +39,7 @@ from setup_system.infrastructure.plugins.environments import Activation, install
 from setup_system.infrastructure.plugins.lifecycle import removable, retire, toggle
 from setup_system.infrastructure.plugins.registry import PluginRegistry
 from setup_system.infrastructure.plugins.workers import WorkerClient
+from setup_system.journal import Journal
 
 
 def accepts_previous_requests(previous: Values, candidate: Values) -> bool:
@@ -81,6 +85,7 @@ class PluginService:
         client: DownloadClient,
         policy: TrustPolicy,
         catalogs: tuple[Path, ...] = (),
+        journal: Journal | None = None,
     ) -> None:
         self.registry = registry
         self.broker = broker
@@ -91,10 +96,45 @@ class PluginService:
         self.client = client
         self.policy = policy
         self.catalogs = catalogs
+        self.journal = journal
         self.startup_ui: dict[str, str] = {}
 
     async def active_release(self, plugin: str) -> Activation:
         return await anyio.to_thread.run_sync(self.registry.resolve, plugin)
+
+    async def action_requirements(self, manifest: Manifest) -> dict[str, str]:
+        """Report only capability requirements unresolved by the active provider registry."""
+        if not any(action.requires for action in manifest.actions):
+            return {}
+        candidates = await self.catalog()
+        blocked = {}
+        for action in manifest.actions:
+            missing = []
+            for requirement in action.requires:
+                try:
+                    await run_sync(self.registry.provider, requirement)
+                except ValueError:
+                    compatible = sorted(
+                        row.manifest.id
+                        for row in candidates
+                        if row.manifest
+                        and any(
+                            capability.id == requirement.id
+                            and Version(capability.version) in SpecifierSet(requirement.version)
+                            for capability in row.manifest.provides
+                        )
+                    )
+                    suggestion = (
+                        " Select one compatible provider: " + ", ".join(compatible) + "."
+                        if len(compatible) > 1
+                        else " Activate the compatible provider in the catalog."
+                        if compatible
+                        else " Add a compatible provider release."
+                    )
+                    missing.append("Requires " + requirement.id + "." + suggestion)
+            if missing:
+                blocked[action.id] = " ".join(missing)
+        return blocked
 
     async def catalog(self) -> tuple[CatalogEntry, ...]:
         releases = await run_sync(release_catalog, self.catalogs)
@@ -169,7 +209,13 @@ class PluginService:
         progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> Activation:
         if release.digest != approved_digest:
-            raise ValueError("Release digest differs from the independently approved digest")
+            raise OperationError(
+                Error(
+                    code=ErrorCode.INTEGRITY_MISMATCH,
+                    message="The selected release differs from its approved SHA-256 digest.",
+                    hint="Review the release descriptor and enter its verified digest again.",
+                )
+            )
         plugin = release.manifest.id
 
         async def validate(candidate: Activation) -> None:
@@ -179,26 +225,67 @@ class PluginService:
                 Request(method=WorkerMethod.VALIDATE, plugin_id=plugin, saved=saved.values),
             )
 
-        async with acquire(self.locks, ["plugin/" + plugin], wait=False):
-            if progress:
-                await progress("Checking plugin activation prerequisites.")
-            dependents = await self._require_idle(plugin)
-            await run_sync(self._check_contracts, release.manifest, dependents)
-            state = await install_release(
-                release,
-                policy=self.policy.model_copy(
-                    update={"digests": self.policy.digests | {approved_digest}}
-                ),
-                env_root=self.registry.root,
-                wheelhouse=wheelhouse,
-                validate_settings=validate,
-                client=self.client,
-                progress=progress,
-            )
-            await self._profile(state, persist=True)
-            if progress:
-                await progress(f"{state.manifest.name} {state.manifest.version} is active.")
-            return state
+        try:
+            async with acquire(self.locks, ["plugin/" + plugin], wait=False):
+                if progress:
+                    await progress("Checking plugin activation prerequisites.")
+                try:
+                    dependents = await self._require_idle(plugin)
+                    await run_sync(self._check_contracts, release.manifest, dependents)
+                except ValueError as failure:
+                    raise OperationError(
+                        Error(
+                            code=ErrorCode.CONFLICT,
+                            message="Operations or dependent contracts block this plugin update.",
+                            hint="Finish pending operations and review the provider compatibility.",
+                        )
+                    ) from failure
+                state = await install_release(
+                    release,
+                    policy=self.policy.model_copy(
+                        update={"digests": self.policy.digests | {approved_digest}}
+                    ),
+                    env_root=self.registry.root,
+                    wheelhouse=wheelhouse,
+                    validate_settings=validate,
+                    client=self.client,
+                    progress=progress,
+                )
+                try:
+                    await self._profile(state, persist=True)
+                except Exception as failure:
+                    try:
+                        published = await run_sync(self.registry.resolve, plugin)
+                    except (OSError, ValueError):
+                        published = None
+                    if published is None or published.executor != state.executor:
+                        raise OperationError(
+                            Error(
+                                code=ErrorCode.UNKNOWN_OUTCOME,
+                                message="Plugin publication needs a release readback.",
+                                hint="Inspect the active release before retrying activation.",
+                            )
+                        ) from failure
+                    raise OperationError(
+                        Error(
+                            code=ErrorCode.CONFIGURATION_INVALID,
+                            message="The release is active, but its saved settings are not ready.",
+                            hint="Review the plugin settings, then retry the same release.",
+                        )
+                    ) from failure
+                if progress:
+                    await progress(f"{state.manifest.name} {state.manifest.version} is active.")
+                return state
+        except Exception as failure:
+            detail = normalize_failure(failure, stage="activation", component=plugin)
+            if self.journal is not None:
+                try:
+                    await self.journal.emit_failure(
+                        detail, failure, stage="activation", plugin_id=plugin
+                    )
+                except Exception:
+                    pass
+            raise OperationError(detail) from None
 
     async def _profile(self, release: Activation, *, persist: bool) -> SavedValues:
         plugin = release.manifest.id

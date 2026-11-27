@@ -1,4 +1,4 @@
-# Catppuccin Mocha Green
+# 🎨 Catppuccin Mocha Green
 
 The package supplies the shared palette, font roles and authentication geometry under `/usr/lib/setup-system/config/shared`. Each desktop extension renders its own configuration.
 

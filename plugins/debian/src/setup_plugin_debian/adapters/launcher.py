@@ -7,7 +7,9 @@ import os
 import stat
 import sys
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from setup_system_sdk.backend import Backend, ownership_context
 from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.operation import Outcome, ProviderMethod, WorkerMethod
@@ -30,6 +32,8 @@ from setup_plugin_debian.adapters.layout import (
 from setup_plugin_debian.models import PackageRequest
 from setup_plugin_debian.platform_provider import PlatformProvider
 from setup_plugin_debian.providers import PackageProvider, proposal
+
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 
 
 def confirmed(raw: bytes) -> tuple[Snapshot, StepPlan]:
@@ -216,33 +220,44 @@ def main() -> None:
     descriptor = os.open(lock, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        dispatch()
+        cli()
     finally:
         os.close(descriptor)
 
 
-def dispatch() -> None:
-    match sys.argv[1:]:
-        case ["--authorization-fd", descriptor]:
-            with os.fdopen(int(descriptor), "rb", buffering=0) as secret:
-                response = secret.read(1025)
-            raw = sys.stdin.buffer.read(LIMIT + 1)
-            if len(raw) > LIMIT:
-                raise ValueError("Oversized native request")
-            print(launch(raw, response).model_dump_json())
-        case ["--perform", path, digest]:
-            with os.fdopen(
-                os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
-            ) as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                    raise ValueError("Invalid request file")
-                raw = stream.read(LIMIT + 1)
-            if len(raw) > LIMIT or hashlib.sha256(raw).hexdigest() != digest:
-                raise ValueError("Native request changed")
-            perform(raw)
-        case _:
-            raise ValueError("Unknown launcher invocation")
+@cli.callback(invoke_without_command=True)
+def dispatch(
+    authorization_fd: Annotated[int | None, typer.Option("--authorization-fd")] = None,
+    perform_request: Annotated[tuple[Path, str] | None, typer.Option("--perform")] = None,
+) -> None:
+    """Accept exactly one approved native execution request."""
+    if (authorization_fd is None) == (perform_request is None):
+        raise typer.BadParameter("Select exactly one native request")
+    if authorization_fd is not None:
+        with os.fdopen(authorization_fd, "rb", buffering=0) as secret:
+            response = secret.read(1025)
+        raw = sys.stdin.buffer.read(LIMIT + 1)
+        if len(raw) > LIMIT:
+            raise ValueError("Oversized native request")
+        print(launch(raw, response).model_dump_json())
+        return
+    assert perform_request is not None
+    path, digest = perform_request
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("Invalid request file")
+        raw = stream.read(LIMIT + 1)
+    if len(raw) > LIMIT or hashlib.sha256(raw).hexdigest() != digest:
+        raise ValueError("Native request changed")
+    perform(raw)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        typer.echo(
+            "Error [native_executor_unavailable]: Native execution did not complete.",
+            err=True,
+        )
+        raise SystemExit(1) from None

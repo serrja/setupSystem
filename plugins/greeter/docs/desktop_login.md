@@ -1,4 +1,4 @@
-# Graphical login
+# 🖥️ Graphical login
 
 Open **Hyprland** to prepare the ordinary user's session launcher. Install the Debian dependencies on the **Greeter** page. The **Activate graphical login** action reviews the selected login and proposed systemd changes. Greetd runs the GTK greeter under the dedicated `_greetd` account. PAM authenticates the selected user and a system-owned launcher checks the UID, HOME and XDG directories.
 
