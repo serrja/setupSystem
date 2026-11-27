@@ -12,6 +12,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, Field
 from setup_system_sdk.blocking import run_sync
+from setup_system_sdk.enums.operation import CancellationPolicy
 from setup_system_sdk.processes import run_command
 
 from setup_plugin_snap.store import Publisher, Revision, SocketAttributes, response_bytes
@@ -100,7 +101,7 @@ async def installed(client: httpx.AsyncClient, *, all_revisions: bool = False) -
     return Local.model_validate_json(await response_bytes(client, "snaps", query)).result
 
 
-async def checked_tool(*args: str, timeout: int = 20) -> str:
+async def checked_tool(*args: str, timeout: int = 20, transaction: bool = False) -> str:
     result = await run_sync(
         run_command,
         ["/usr/bin/snap", *args],
@@ -108,7 +109,10 @@ async def checked_tool(*args: str, timeout: int = 20) -> str:
         cwd="/",
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "HOME": "/"},
         discard_stderr=True,
-        timeout=timeout,
+        timeout=None if transaction else timeout,
+        cancellation=CancellationPolicy.SAFE_BOUNDARY
+        if transaction
+        else CancellationPolicy.TERMINATE,
         max_output_bytes=65536,
     )
     return result.stdout
@@ -158,7 +162,7 @@ async def actual(item: Native, publisher_id: str | None = None) -> Revision:
 
 async def preserve_data(client: httpx.AsyncClient, item: Revision) -> None:
     previous = await snapshot_sets(client, item)
-    await checked_tool("save", item.name, timeout=600)
+    await checked_tool("save", item.name, transaction=True)
     new = (await snapshot_sets(client, item)) - previous
     if len(new) != 1:
         raise ValueError("The data snapshot could not be identified")

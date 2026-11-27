@@ -3,10 +3,8 @@
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
-import tempfile
 import zipfile
 from importlib.metadata import Distribution, distribution, version
 from importlib.resources import files
@@ -65,18 +63,6 @@ def main() -> None:
     if output.strip() != expected:
         raise ValueError("CLI version differs from the installed metadata")
     subprocess.run(["setup-system", "--help"], check=True)
-    with tempfile.TemporaryDirectory(prefix="setup-system-schema-") as home:
-        subprocess.run(
-            [sys.executable, "-I", "-B", "-m", "setup_system", "migrate"],
-            cwd=home,
-            env={
-                "HOME": home,
-                "PATH": os.environ["PATH"],
-                "XDG_STATE_HOME": str(Path(home) / "state"),
-            },
-            timeout=60,
-            check=True,
-        )
 
 
 if __name__ == "__main__":

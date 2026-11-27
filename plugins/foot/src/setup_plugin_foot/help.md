@@ -1,4 +1,6 @@
-# Foot
+# 🧩 Foot
+
+Foot desktop configuration.
 
 ## ⚙️ Configure Foot
 

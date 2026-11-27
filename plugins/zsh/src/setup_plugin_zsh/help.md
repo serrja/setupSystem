@@ -1,4 +1,4 @@
-# Zsh
+# 🧩 Zsh
 
 Maintain Zsh startup fragments and preserve the existing login shell and history.
 

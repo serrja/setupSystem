@@ -8,13 +8,12 @@ import pwd
 import shlex
 import shutil
 import tempfile
-from importlib.resources import files
 from pathlib import Path
 
+from setup_system_desktop_theme.palette import palette
 from setup_system_sdk.files.file_publication import observe
 from setup_system_sdk.files.managed_files import apply_files, changed_files
 from setup_system_sdk.files.managed_text import managed_block
-from setup_system_sdk.files.palette import palette
 from setup_system_sdk.files.receipts import FileState, digest
 from setup_system_sdk.files.templates import render_asset
 from setup_system_sdk.files.user_storage import target_path
@@ -69,9 +68,7 @@ def _targets(
         raise ValueError("XDG_CONFIG_HOME outside home requires a scoped install")
     targets = {
         config_home / "zsh" / source.name: (
-            render_asset(source, palette(Path(str(files("setup_plugin_zsh") / "resources"))))
-            if source.name == "prompt.zsh"
-            else source.read_bytes()
+            render_asset(source, palette()) if source.name == "prompt.zsh" else source.read_bytes()
         )
         for source in assets.glob("*.zsh")
     }

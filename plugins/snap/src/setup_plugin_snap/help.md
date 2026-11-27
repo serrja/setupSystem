@@ -1,4 +1,4 @@
-# Snap
+# 🧩 Snap
 
 Install snapd from the reviewed Debian package and start its service if needed. **List installed revisions** reads the local daemon. Snapd removal checks every revision, saved snapshot and in-progress change.
 

@@ -45,13 +45,21 @@ async def runtime(settings: Settings | None = None) -> AsyncIterator[Runtime]:
         user_data_path("setup-system") / "v10" / "extensions", options.providers
     )
     store = SettingsStore(profile=options.profile)
-    runner = ProcessRunner()
     journal = Journal(user_state_path("setup-system") / "diagnostics")
-    workers = WorkerClient(runner, options.read_only_timeout_seconds, journal)
-    # Reserve capacity for provider calls while application workers await their replies.
-    broker = ProviderBroker(
-        registry, WorkerClient(ProcessRunner(), options.read_only_timeout_seconds, journal)
-    )
+
+    def client() -> WorkerClient:
+        return WorkerClient(
+            ProcessRunner(),
+            options.read_only_timeout_seconds,
+            journal,
+            terminal_timeout=options.terminal_timeout_seconds,
+            idle_timeout=options.idle_timeout_seconds,
+            grace=options.termination_grace_seconds,
+        )
+
+    workers = client()
+    # A provider worker may run while its consumer holds a worker permit.
+    broker = ProviderBroker(registry, client())
     try:
         async with (
             runtime_schema(engine),
@@ -83,7 +91,11 @@ async def runtime(settings: Settings | None = None) -> AsyncIterator[Runtime]:
                 plugins.profile,
                 LedgerService(uow),
                 locks,
-                NativeLauncher(TrustStore(Path("/etc/setup-system/executors")), runner),
+                NativeLauncher(
+                    TrustStore(Path("/etc/setup-system/executors")),
+                    ProcessRunner(),
+                    prompt_timeout=options.prompt_timeout_seconds,
+                ),
                 tasks,
             )
             try:

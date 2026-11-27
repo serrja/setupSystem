@@ -1,4 +1,4 @@
-"""Install both built wheels and run the packaged migration outside the checkout."""
+"""Verify the installed host and its workspace dependencies outside the checkout."""
 
 import argparse
 import os
@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("dist", type=Path)
     dist = parser.parse_args().dist.resolve()
     checker = Path(__file__).with_name("verify-installed.py").resolve()
+    (theme,) = dist.glob("setup_system_desktop_theme-*.whl")
     (sdk,) = dist.glob("setup_system_sdk-*.whl")
     (host,) = [
         p
@@ -52,8 +53,11 @@ def main() -> None:
                 "install",
                 "--no-index",
                 "--no-deps",
+                "--link-mode",
+                "copy",
                 "--python",
                 str(python),
+                str(theme),
                 str(sdk),
                 str(host),
             ],

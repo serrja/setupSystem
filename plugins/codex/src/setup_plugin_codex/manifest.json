@@ -171,6 +171,9 @@
       "description": ""
     }
   ],
+  "session_fields": [
+    "CODEX_HOME"
+  ],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
@@ -245,6 +248,9 @@
         "title": "Reasoning effort",
         "ui": {
           "choice_provider": "efforts",
+          "depends_on": [
+            "model"
+          ],
           "storage": "settings",
           "secret": false,
           "visible_when": {}

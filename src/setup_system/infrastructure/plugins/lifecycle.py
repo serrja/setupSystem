@@ -88,6 +88,10 @@ def removable(env_root: Path, plugin: str) -> tuple[str, ...]:
     for entry in sorted(root.iterdir()):
         if entry.name in pointers:
             _Pointer.model_validate_json(_local_file(entry, 4096))
+        elif entry.suffix == ".json" and _GENERATION.fullmatch(entry.stem):
+            retained = _Pointer.model_validate_json(_local_file(entry, 4096))
+            if retained.plugin_id != plugin or retained.generation != entry.stem:
+                raise ValueError("Invalid historical release receipt")
         else:
             if not _GENERATION.fullmatch(entry.name):
                 raise ValueError("Extension storage contains an unrecognized entry")

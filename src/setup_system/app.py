@@ -15,9 +15,26 @@ from textual.widgets.option_list import Option
 
 from setup_system.application.authorization import AuthorizationRequest
 from setup_system.application.plugins import CatalogEntry
+from setup_system.application.recovery import OperationHistoryItem, RecoveryAction
 from setup_system.bootstrap import Runtime
+from setup_system.errors import OperationError
 from setup_system.ui.plugin_dialogs import Confirm, Prompt, SecretPrompt
 from setup_system.ui.plugin_page import PluginPage
+
+
+def history_line(row: OperationHistoryItem) -> str:
+    return " · ".join(
+        value
+        for value in (
+            row.operation_id,
+            row.plugin_id,
+            row.action_id,
+            row.phase.value,
+            row.outcome.value if row.outcome else "",
+            row.started.isoformat(sep=" ", timespec="seconds") if row.started else "",
+        )
+        if value
+    )
 
 
 class SetupApp(App[None]):
@@ -104,21 +121,23 @@ class SetupApp(App[None]):
         rows = await self.services.recovery.history()
         await self.push_screen_wait(
             Confirm(
-                "\n".join(" · ".join(row) for row in rows) or "No recorded operations.", "Close"
+                "\n".join(history_line(row) for row in rows) or "No recorded operations.", "Close"
             )
         )
 
     @on(Button.Pressed, "#restore-files")
     @work(exit_on_error=False)
     async def restore_files(self) -> None:
-        rows = [r for r in await self.services.recovery.history() if r[3] == "verified"]
+        rows = await self.services.recovery.available(RecoveryAction.ROLLBACK)
         if not rows:
-            self.query_one("#feedback", Static).update("No completed operations.")
+            self.query_one("#feedback", Static).update(
+                "No file operations are available for rollback."
+            )
             return
         value = await self.push_screen_wait(
-            Prompt("Select a completed file operation\n" + "\n".join(" · ".join(r) for r in rows))
+            Prompt("Select a completed file operation\n" + "\n".join(history_line(r) for r in rows))
         )
-        if not value or value not in {r[0] for r in rows}:
+        if not value or value not in {r.operation_id for r in rows}:
             return
         try:
             plan = await self.services.recovery.rollback(UUID(value))
@@ -126,6 +145,8 @@ class SetupApp(App[None]):
             if await self.push_screen_wait(Confirm(detail, "Restore approved files")):
                 result = await self.services.operations.apply(plan)
                 self.query_one("#feedback", Static).update(result.message)
+        except OperationError as error:
+            self.query_one("#feedback", Static).update(error.detail.message)
         except (ValueError, RuntimeError, OSError):
             self.query_one("#feedback", Static).update(
                 "The original executor could not confirm this rollback."
@@ -134,22 +155,48 @@ class SetupApp(App[None]):
     @on(Button.Pressed, "#recover")
     @work(exit_on_error=False)
     async def recover(self) -> None:
-        rows = await self.services.recovery.history(unfinished=True)
+        try:
+            await self.review_recovery()
+        except OperationError as error:
+            self.query_one("#feedback", Static).update(error.detail.message)
+        except (ValueError, RuntimeError, OSError):
+            self.query_one("#feedback", Static).update(
+                "Recovery is unavailable. Review the retained evidence."
+            )
+
+    async def review_recovery(self) -> None:
+        resumable = await self.services.recovery.available(RecoveryAction.RESUME)
+        historical = await self.services.recovery.available(RecoveryAction.RECONCILE)
+        rows = [*resumable, *historical]
         if not rows:
             self.query_one("#feedback", Static).update("No unfinished operations.")
             return
         value = await self.push_screen_wait(
-            Prompt("Operation to inspect\n" + "\n".join(" · ".join(r) for r in rows))
+            Prompt("Operation to inspect\n" + "\n".join(history_line(r) for r in rows))
         )
-        if value in {r[0] for r in rows} and value:
+        if value and value in {r.operation_id for r in historical}:
+            plan = await self.services.recovery.preview_reconciliation(UUID(value))
+            self.query_one("#feedback", Static).update(plan.result.message)
+            if plan.result.outcome is Outcome.COMPLETE and await self.push_screen_wait(
+                Confirm(
+                    "\n".join(
+                        [plan.result.message, *(r.description() for r in plan.result.resources)]
+                    ),
+                    "Confirm historical reconciliation",
+                )
+            ):
+                result = await self.services.recovery.reconcile(plan)
+                self.query_one("#feedback", Static).update(result.message)
+            return
+        if value and value in {r.operation_id for r in resumable}:
             result = await self.services.recovery.inspect(UUID(value))
             self.query_one("#feedback", Static).update(result.message)
             if result.outcome != Outcome.NEEDS_USER_ACTION:
                 return
-            plan = await self.services.recovery.plan(UUID(value))
+            resume = await self.services.recovery.plan(UUID(value))
             lines = ["Verify and finish operation " + value]
-            for step in plan.snapshot.plan.steps:
-                if step.step_key in plan.remaining:
+            for step in resume.snapshot.plan.steps:
+                if step.step_key in resume.remaining:
                     lines.extend(
                         [
                             step.step_key
@@ -163,14 +210,13 @@ class SetupApp(App[None]):
             if await self.push_screen_wait(Confirm("\n".join(lines), "Confirm recovery")):
 
                 async def authorize(request: AuthorizationRequest) -> SecretBytes | None:
-                    response = await self.push_screen_wait(
-                        SecretPrompt(
-                            f"Authorize {request.executor.plugin_id} for {request.operation_id}"
-                        )
+                    prompt = SecretPrompt(
+                        f"Authorize {request.executor.plugin_id} for {request.operation_id}"
                     )
+                    response = await prompt.ask(self)
                     return SecretBytes(response.get_secret_value().encode()) if response else None
 
-                resumed = await self.services.recovery.apply(plan, authorize)
+                resumed = await self.services.recovery.apply(resume, authorize)
                 self.query_one("#feedback", Static).update(resumed.message)
 
     @on(Button.Pressed, "#add")
@@ -202,6 +248,8 @@ class SetupApp(App[None]):
                     release, digest, Path(link).parent if link.startswith("/") else None
                 )
                 await self.reload_catalog()
+        except OperationError as error:
+            self.query_one("#feedback", Static).update(error.detail.message)
         except (OSError, RuntimeError, ValueError):
             self.query_one("#feedback", Static).update(
                 "Activation failed. Check the origin, digest and dependencies."

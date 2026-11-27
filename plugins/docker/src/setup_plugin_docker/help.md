@@ -1,4 +1,6 @@
-# Docker
+# 🧩 Docker
+
+Docker workstation plugin.
 
 ## ⚙️ Daemons and contexts
 

@@ -9,7 +9,8 @@ from setup_system_sdk.enums.lifecycle import LifecycleAction
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.files.backend import NativeBackend
 from setup_system_sdk.plugin import PluginSettings
-from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.providers import CapabilityRequest
+from setup_system_sdk.schemas.common import Inputs, Values
 from setup_system_sdk.schemas.operation import Plan, Result
 
 from setup_plugin_firefox import policy
@@ -22,6 +23,24 @@ class PluginActions(NativeBackend):
     executable = "/usr/bin/firefox-esr"
 
     package_folder = Path(str(package_files("setup_plugin_firefox").joinpath("resources")))
+
+    async def plan(
+        self,
+        action_id: str,
+        settings: PluginSettings,
+        inputs: Inputs,
+        context: PluginContext | None = None,
+    ) -> Plan:
+        if action_id in (PolicyAction.REMOVE_POLICY, LifecycleAction.CONFIGURE):
+            facts = await platform_facts(context)
+            if facts.get("supported") is not True:
+                return Plan(
+                    summary="Firefox policy requires a supported Debian target",
+                    outcome=Outcome.BLOCKED,
+                )
+            if action_id == LifecycleAction.CONFIGURE and isinstance(settings, Settings):
+                return await run_sync(policy.preview, settings, True)
+        return await super().plan(action_id, settings, inputs, context)
 
     def prepare(self, action_id: str, settings: PluginSettings, inputs: Inputs) -> Plan:
         if action_id == PolicyAction.REMOVE_POLICY:
@@ -45,7 +64,9 @@ class PluginActions(NativeBackend):
                     message="Checked the removed Firefox policy",
                     resources=plan.resources,
                 )
-            checked = await run_sync(policy.preview, settings)
+            checked = await run_sync(
+                policy.preview, settings, (await platform_facts(context)).get("supported") is True
+            )
             ok = (
                 checked.outcome == Outcome.NO_CHANGES
                 and checked.resources[0].before == plan.resources[0].after
@@ -56,6 +77,16 @@ class PluginActions(NativeBackend):
                 resources=plan.resources,
             )
         return await super().verify(plan, settings, inputs)
+
+
+async def platform_facts(context: PluginContext | None, detail: str = "target") -> Values:
+    if context is None:
+        raise ValueError("The action requires a selected platform provider")
+    return await context.inspect_provider(
+        CapabilityRequest(
+            capability="system.platform", step_key="platform", payload={"detail": detail}
+        )
+    )
 
 
 def apply_native(action_id: str, settings: PluginSettings, inputs: Inputs, plan: Plan) -> None:

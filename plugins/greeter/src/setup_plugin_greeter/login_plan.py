@@ -13,8 +13,8 @@ from collections.abc import Callable, Mapping
 from importlib.resources import files as package_files
 from pathlib import Path
 
+from setup_system_desktop_theme.palette import desktop_style, palette
 from setup_system_sdk.files.account_identity import TargetUser
-from setup_system_sdk.files.palette import desktop_style, palette
 from setup_system_sdk.files.templates import render_asset
 
 from setup_plugin_greeter.adapters.native import inspect_system
@@ -31,7 +31,7 @@ def greeter_style(root: Path) -> bytes:
     return render_asset(
         Path(str(package_files("setup_plugin_greeter").joinpath("resources")))
         / "assets/login/greeter.css",
-        {"auth_screen": desktop_style(root).auth_screen.tokens(palette(root))},
+        {"auth_screen": desktop_style().auth_screen.tokens(palette())},
     )
 
 

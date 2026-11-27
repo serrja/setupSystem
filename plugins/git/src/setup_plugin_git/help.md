@@ -1,4 +1,6 @@
-# Git
+# 🧩 Git
+
+Git workstation plugin.
 
 ## ⚙️ Author identities
 

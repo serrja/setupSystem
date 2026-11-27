@@ -112,6 +112,7 @@
       "description": ""
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

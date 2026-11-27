@@ -8,14 +8,17 @@ import stat
 import sys
 from pathlib import Path
 
-from pydantic import Field
 from setup_system_sdk.backend import Backend, ownership_context
-from setup_system_sdk.enums.operation import Outcome, WorkerMethod
-from setup_system_sdk.files.manifest_types import Digest
+from setup_system_sdk.context import PluginContext
+from setup_system_sdk.enums.operation import Outcome, ProviderMethod, WorkerMethod
 from setup_system_sdk.files.system_paths import protected
-from setup_system_sdk.operations import Plan, Receipt, Result, Snapshot, StepPlan
-from setup_system_sdk.schemas.common import ActionId, Identifier, Inputs
-from setup_system_sdk.schemas.wire import LIMIT, Request
+from setup_system_sdk.manifests import Manifest
+from setup_system_sdk.native_execution import NativeRequest, ProviderBinding
+from setup_system_sdk.native_execution import TrustedExecution as ExecutionRecord
+from setup_system_sdk.operations import ActionEvent, Plan, Receipt, Result, Snapshot, StepPlan
+from setup_system_sdk.providers import CapabilityRequest
+from setup_system_sdk.schemas.common import Values
+from setup_system_sdk.schemas.wire import LIMIT
 
 from setup_plugin_debian.adapters import apt
 from setup_plugin_debian.adapters.authorization import authorize
@@ -25,21 +28,16 @@ from setup_plugin_debian.adapters.layout import (
     verify_installation,
 )
 from setup_plugin_debian.models import PackageRequest
-from setup_plugin_debian.providers import proposal
-
-
-class ExecutionRecord(Inputs):
-    plugin_id: Identifier
-    version: str
-    release_digest: Digest
-    launcher: Path
-    launcher_sha256: Digest
-    allowed_handlers: frozenset[ActionId]
-    resources: dict[Path, Digest] = Field(max_length=4096)
+from setup_plugin_debian.platform_provider import PlatformProvider
+from setup_plugin_debian.providers import PackageProvider, proposal
 
 
 def confirmed(raw: bytes) -> tuple[Snapshot, StepPlan]:
-    req = Request.model_validate_json(raw)
+    _, snapshot, step = validate_request(NativeRequest.model_validate_json(raw))
+    return snapshot, step
+
+
+def validate_request(req: NativeRequest) -> tuple[NativeRequest, Snapshot, StepPlan]:
     snap = req.snapshot
     if (
         req.method is not WorkerMethod.EXECUTE
@@ -59,6 +57,36 @@ def confirmed(raw: bytes) -> tuple[Snapshot, StepPlan]:
         step.executor.release_digest,
     ) or step.handler not in record.allowed_handlers:
         raise ValueError("Executor differs from its installed record")
+    if not step.capability:
+        plugin = step.executor.plugin_id
+        module = "setup_plugin_" + plugin.replace("-", "_")
+        manifest = INSTALLED / "plugins" / plugin / module / "manifest.json"
+        protected(manifest, directory=False)
+        metadata = Manifest.model_validate_json(manifest.read_bytes())
+        action = next((action for action in metadata.actions if action.id == step.handler), None)
+        if metadata.id != plugin or metadata.version != step.executor.version or action is None:
+            raise ValueError("Native action differs from the installed plugin release")
+        required = {r.id for r in action.requires}
+        if record.fact_providers is None and not req.providers:
+            retained = {
+                item.capability: ProviderBinding(
+                    executor=item.executor, contract_version=item.contract_version
+                )
+                for item in snap.plan.steps
+                if item.capability and item.capability in required
+            }
+            req = req.model_copy(update={"providers": retained})
+        record.validate_providers(step, req.providers, snap.plan.steps)
+        if required != set(req.providers):
+            raise ValueError("Native facts must match the installed action requirements")
+        for binding in req.providers.values():
+            provider = binding.executor
+            if provider.plugin_id != "debian":
+                raise ValueError("The installed native adapter requires its Debian fact provider")
+            descriptor = INSTALLED / "plugin_catalog" / (provider.plugin_id + ".json")
+            protected(descriptor, directory=False)
+            if hashlib.sha256(descriptor.read_bytes()).hexdigest() != provider.release_digest:
+                raise ValueError("Native provider release differs from its installed catalog")
     verify_installation(INSTALLED)
     for resource, expected in [
         (record.launcher, record.launcher_sha256),
@@ -70,11 +98,11 @@ def confirmed(raw: bytes) -> tuple[Snapshot, StepPlan]:
                 raise ValueError("Installed executor resource changed")
     if not step.capability and (snap.executor != step.executor or snap.action_id != step.handler):
         raise ValueError("Unexpected local native executor")
-    return snap, step
+    return req, snap, step
 
 
 def perform(raw: bytes) -> None:
-    snap, step = confirmed(raw)
+    request, snap, step = validate_request(NativeRequest.model_validate_json(raw))
     plan = Plan.model_validate(step.preconditions["proposal"])
     if step.resources != tuple(plan.resources) or plan.outcome not in {
         Outcome.READY,
@@ -136,7 +164,27 @@ def perform(raw: bytes) -> None:
             import anyio
 
             async def validate() -> None:
-                if await command.plan(settings, inputs, None) != plan:
+                async def emit(event: ActionEvent) -> None:
+                    pass
+
+                async def inspect(method: ProviderMethod, query: CapabilityRequest) -> Values:
+                    if (
+                        method is not ProviderMethod.INSPECT
+                        or query.capability not in request.providers
+                    ):
+                        raise ValueError("Native revalidation requires an approved fact provider")
+                    if query.capability == "system.platform":
+                        return await PlatformProvider().inspect(query, context)
+                    if query.capability == "system.packages" and query.payload.get("inventory"):
+                        params = PackageRequest.model_validate(query.payload)
+                        if params.consumer == plugin:
+                            return await PackageProvider().inspect(query, context)
+                    raise ValueError("Unsupported native revalidation request")
+
+                context = PluginContext(
+                    snap.operation_id, step.executor, anyio.Event(), emit, inspect
+                )
+                if await command.plan(settings, inputs, context) != plan:
                     raise ValueError("Confirmed native facts changed")
 
             anyio.run(validate, backend="asyncio")

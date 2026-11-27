@@ -1,29 +1,29 @@
-# Hyprlock settings reference
+# ⚙️ Hyprlock settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
 | `fade_on_empty` | Fade the lock-screen input while no password characters have been entered. | `false` | `—` |
 
-## Check program
+## 🧩 Check program
 
 This operation has no editable parameters.
 
-## Install
+## 🧩 Install
 
 This operation has no editable parameters.
 
-## Update
+## 🧩 Update
 
 This operation has no editable parameters.
 
-## Uninstall
+## 🧩 Uninstall
 
 This operation has no editable parameters.
 
-## Save configuration
+## 🧩 Save configuration
 
 This operation has no editable parameters.

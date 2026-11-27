@@ -134,6 +134,9 @@
       "description": "Restore the original output after twelve seconds."
     }
   ],
+  "session_fields": [
+    "HYPRLAND_INSTANCE_SIGNATURE"
+  ],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,

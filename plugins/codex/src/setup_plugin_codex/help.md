@@ -1,4 +1,6 @@
-# Codex CLI
+# 🧩 Codex CLI
+
+Codex CLI workstation plugin.
 
 ## 📦 Official installation
 

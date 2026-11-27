@@ -9,10 +9,10 @@ from setup_system_sdk.context import PluginContext
 from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.enums.resources import ResourceOwnership
 from setup_system_sdk.plugin import Backend, PluginSettings
-from setup_system_sdk.schemas.common import Inputs
+from setup_system_sdk.providers import CapabilityRequest
+from setup_system_sdk.schemas.common import Inputs, Values
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
-from setup_plugin_administration.adapters.native import current_target
 from setup_plugin_administration.enums import PluginAction
 from setup_plugin_administration.models import Login
 
@@ -21,8 +21,18 @@ from .account import read_account
 from .models import AdminIntent
 
 
-def local_logins() -> list[str]:
-    if not current_target()[1]:
+async def platform_facts(context: PluginContext | None, detail: str = "target") -> Values:
+    if context is None:
+        raise ValueError("The action requires a selected platform provider")
+    return await context.inspect_provider(
+        CapabilityRequest(
+            capability="system.platform", step_key="platform", payload={"detail": detail}
+        )
+    )
+
+
+def local_logins(supported: bool) -> list[str]:
+    if not supported:
         return []
     names = []
     for record in Path("/etc/passwd").read_text().splitlines():
@@ -35,10 +45,10 @@ def local_logins() -> list[str]:
     return sorted(names)
 
 
-def grant_plan(login: Login, *, check: bool = False) -> Plan:
-    account = native.observe(login.username)
+def grant_plan(login: Login, boot: str, *, check: bool = False) -> Plan:
+    account = read_account(AdminIntent(username=login.username))
     if check:
-        identity = native.fingerprint(account)
+        identity = native.fingerprint(account, boot)
         return Plan(
             outcome=Outcome.READY if account.member else Outcome.BLOCKED,
             summary=f"Verify the effective sudo policy for {account.username} (UID {account.uid}).",
@@ -56,8 +66,8 @@ def grant_plan(login: Login, *, check: bool = False) -> Plan:
         kind="group-membership",
         identity=f"sudo/{account.username}",
         ownership=ResourceOwnership.MODIFIED,
-        before=native.fingerprint(account),
-        after=native.fingerprint(account.validated(member=True)),
+        before=native.fingerprint(account, boot),
+        after=native.fingerprint(account.validated(member=True), boot),
     )
     return Plan(
         outcome=Outcome.NO_CHANGES if account.member else Outcome.READY,
@@ -81,12 +91,20 @@ class PluginActions(Backend):
     ) -> list[str]:
         if provider != "accounts":
             return []
-        return [n for n in await run_sync(local_logins) if query.casefold() in n.casefold()][:100]
+        return [
+            n
+            for n in await run_sync(
+                local_logins, (await platform_facts(context)).get("supported") is True
+            )
+            if query.casefold() in n.casefold()
+        ][:100]
 
     async def inspect(
         self, settings: PluginSettings, context: PluginContext | None = None
     ) -> Result:
-        accounts = await run_sync(local_logins)
+        accounts = await run_sync(
+            local_logins, (await platform_facts(context)).get("supported") is True
+        )
         return Result(
             outcome=Outcome.READY if accounts else Outcome.BLOCKED,
             message=f"{len(accounts)} eligible local logins.",
@@ -103,7 +121,14 @@ class PluginActions(Backend):
             inputs, Login
         ):
             raise ValueError("Choose an existing login for the sudo grant.")
-        return await run_sync(grant_plan, inputs, check=action_id == PluginAction.VERIFY_SUDO)
+        facts = await platform_facts(context)
+        boot = facts.get("boot")
+        if facts["supported"] is not True or not isinstance(boot, str):
+            return Plan(
+                outcome=Outcome.BLOCKED,
+                summary="Sudo onboarding requires a supported Debian target.",
+            )
+        return await run_sync(grant_plan, inputs, boot, check=action_id == PluginAction.VERIFY_SUDO)
 
     async def verify(
         self,
@@ -114,8 +139,14 @@ class PluginActions(Backend):
     ) -> Result:
         if not isinstance(inputs, Login):
             raise ValueError("Expected a confirmed login.")
-        account = await run_sync(native.observe, inputs.username)
-        if not account.member or native.fingerprint(account) != plan.resources[0].after:
+        facts = await platform_facts(context)
+        boot = facts.get("boot")
+        if facts["supported"] is not True or not isinstance(boot, str):
+            return Result(
+                outcome=Outcome.UNKNOWN_OUTCOME, message="Platform identity is unavailable."
+            )
+        account = await run_sync(read_account, AdminIntent(username=inputs.username))
+        if not account.member or native.fingerprint(account, boot) != plan.resources[0].after:
             return Result(
                 outcome=Outcome.PARTIAL,
                 message="Membership or account identity differs from the confirmation.",

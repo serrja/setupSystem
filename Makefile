@@ -6,17 +6,19 @@ help:
 	  'make check    Run host and SDK checks' 'make build    Build the host and SDK distributions' \
 	  'make plugin-types    Type-check plugin sources' 'make plugins-check    Run package-owned checks'
 prepare:
-	$(UV) sync --locked --package setup-system
+	$(UV) sync --locked --package setup-system $(if $(PLUGIN),--package setup-system-plugin-$(PLUGIN))
 run:
 	$(UV) run --locked setup-system
 migrate:
 	$(UV) run --locked setup-system migrate
 build:
+	$(UV) build --package setup-system-desktop-theme
 	$(UV) build --package setup-system-sdk
 	$(UV) build --package setup-system
 .PHONY: plugin-types
+PLUGIN_SOURCES := $(wildcard plugins/*/src plugins/*/*/src)
 plugin-types:
-	MYPYPATH=$$(printf '%s\n' plugins/*/src | paste -sd:) $(UV) run --locked --all-packages --all-groups mypy plugins/*/src
+	MYPYPATH=$$(printf '%s\n' $(PLUGIN_SOURCES) | paste -sd:) $(UV) run --locked --all-packages --all-groups mypy $(PLUGIN_SOURCES)
 plugins-check:
 	@set -e; for file in $(sort $(wildcard plugins/*/ci/Makefile)); do \
 	  $(MAKE) -C "$${file%/ci/Makefile}" -f ci/Makefile check; done

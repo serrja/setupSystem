@@ -1,4 +1,6 @@
-# Neovim
+# 🧩 Neovim
+
+Neovim workstation plugin.
 
 ## ⚙️ Editor settings
 

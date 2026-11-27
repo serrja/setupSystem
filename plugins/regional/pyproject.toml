@@ -56,6 +56,9 @@ label = "Set timezone"
 target = "timezone"
 permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "locale"
@@ -63,6 +66,9 @@ label = "Set locale"
 target = "locale"
 permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"
 
 [[tool.setup-system.manifest.actions]]
 id = "keyboard"
@@ -70,3 +76,6 @@ label = "Set keyboard"
 target = "keyboard"
 permissions = ["root"]
 mode = "mutation"
+[[tool.setup-system.manifest.actions.requires]]
+id = "system.platform"
+version = ">=1,<2"

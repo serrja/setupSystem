@@ -2,12 +2,21 @@
 
 from collections.abc import Sequence
 
+from setup_system_sdk.enums.lifecycle import LifecycleAction
+from setup_system_sdk.enums.operation import Outcome
 from setup_system_sdk.operations import Snapshot
 from setup_system_sdk.resources import Resource
 from sqlalchemy import delete, insert, select, tuple_, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from setup_system.domain.operations import (
+    UNFINISHED,
+    ChangePhase,
+    OperationPhase,
+    RollbackPhase,
+    StepPhase,
+)
 from setup_system.infrastructure.database.models import (
     Change,
     Confirmation,
@@ -41,7 +50,7 @@ class OperationRepository:
                 plugin=snapshot.executor.plugin_id,
                 action=snapshot.action_id,
                 release=snapshot.executor.release_digest,
-                phase="prepared",
+                phase=OperationPhase.PREPARED,
             )
         )
         await self.session.execute(
@@ -51,14 +60,17 @@ class OperationRepository:
             await self.session.execute(
                 insert(OperationStep),
                 [
-                    dict(operation=key, step_key=s.step_key, position=i, phase="prepared")
+                    dict(operation=key, step_key=s.step_key, position=i, phase=StepPhase.PREPARED)
                     for i, s in enumerate(snapshot.plan.steps)
                 ],
             )
         if snapshot.plan.resources:
             await self.session.execute(
                 insert(Change),
-                [{**r, "phase": "prepared"} for r in resource_rows(key, snapshot.plan.resources)],
+                [
+                    {**r, "phase": ChangePhase.PREPARED}
+                    for r in resource_rows(key, snapshot.plan.resources)
+                ],
             )
 
     async def get(self, key: str) -> Operation:
@@ -66,16 +78,17 @@ class OperationRepository:
             await self.session.execute(select(Operation).where(Operation.id == key))
         ).scalar_one()
 
-    async def legacy(self, key: str) -> tuple[str, str, str | None, str | None]:
-        result = await self.session.execute(
-            select(
-                Operation.plugin, Operation.release, Confirmation.snapshot, Confirmation.recovery
-            )
-            .outerjoin(Confirmation, Confirmation.operation == Operation.id)
-            .where(Operation.id == key)
+    async def confirmation(self, key: str) -> Confirmation | None:
+        return (
+            await self.session.execute(select(Confirmation).where(Confirmation.operation == key))
+        ).scalar_one_or_none()
+
+    async def save_reconciliation(self, key: str, decision: str) -> None:
+        await self.session.execute(
+            update(Confirmation)
+            .where(Confirmation.operation == key)
+            .values(reconciliation=decision)
         )
-        owner, digest, snapshot, recovery = result.one()
-        return owner, digest, snapshot, recovery
 
     async def snapshot(self, key: str) -> str:
         return (
@@ -109,8 +122,8 @@ class OperationRepository:
         self,
         key: str,
         step_key: str,
-        previous: tuple[str, ...],
-        phase: str,
+        previous: tuple[StepPhase, ...],
+        phase: StepPhase,
         receipt: str | None = None,
     ) -> None:
         statement = (
@@ -127,17 +140,20 @@ class OperationRepository:
         result = await self.session.execute(statement.returning(OperationStep.step_key))
         result.scalar_one()
 
-    async def set_outcome(self, key: str, phase: str, outcome: str | None) -> None:
+    async def set_outcome(self, key: str, phase: OperationPhase, outcome: Outcome | None) -> None:
         await self.session.execute(
             update(Operation).where(Operation.id == key).values(phase=phase, outcome=outcome)
         )
 
-    async def change_phase(self, key: str, resources: Sequence[Resource], phase: str) -> None:
+    async def change_phase(
+        self, key: str, resources: Sequence[Resource], phase: ChangePhase
+    ) -> None:
         if resources:
             await self.session.execute(
                 update(Change)
                 .where(
                     Change.operation == key,
+                    Change.phase != ChangePhase.VERIFIED,
                     tuple_(Change.kind, Change.identity).in_(
                         [(r.kind, r.identity) for r in resources]
                     ),
@@ -147,14 +163,7 @@ class OperationRepository:
 
     async def record_evidence(self, key: str, resources: Sequence[Resource]) -> None:
         if resources:
-            statement = sqlite_insert(NativeReadback)
-            await self.session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=["operation", "kind", "identity"],
-                    set_={"resource": statement.excluded.resource},
-                ),
-                resource_rows(key, resources),
-            )
+            await self.session.execute(insert(NativeReadback), resource_rows(key, resources))
 
     async def evidence(self, key: str) -> list[Resource]:
         rows = await self.session.execute(
@@ -169,24 +178,41 @@ class OperationRepository:
         if plugin:
             statement = statement.where(Operation.plugin == plugin)
         if unfinished:
-            statement = statement.where(Operation.phase.in_(("prepared", "applied", "unresolved")))
+            statement = statement.where(Operation.phase.in_(UNFINISHED))
         return (
             (await self.session.execute(statement.order_by(Operation.started.desc(), Operation.id)))
             .scalars()
             .all()
         )
 
-    async def set_rollback(self, key: str, phase: str) -> None:
-        if phase == "prepared":
-            await self.session.execute(insert(Rollback).values(operation=key, phase=phase))
-        else:
-            result = await self.session.execute(
-                update(Rollback)
-                .where(Rollback.operation == key, Rollback.phase.in_(("prepared", "unresolved")))
-                .values(phase=phase)
-                .returning(Rollback.operation)
+    async def changes(self, key: str) -> Sequence[Change]:
+        return (
+            await self.session.scalars(
+                select(Change).where(Change.operation == key).order_by(Change.kind, Change.identity)
             )
-            result.scalar_one()
+        ).all()
+
+    async def rollback_phase(self, key: str) -> RollbackPhase | None:
+        return (
+            await self.session.execute(select(Rollback.phase).where(Rollback.operation == key))
+        ).scalar_one_or_none()
+
+    async def reserve_rollback(self, key: str) -> None:
+        await self.session.execute(
+            insert(Rollback).values(operation=key, phase=RollbackPhase.PREPARED)
+        )
+
+    async def finish_rollback(self, key: str, phase: RollbackPhase | None) -> None:
+        match = (
+            Rollback.operation == key,
+            Rollback.phase.in_((RollbackPhase.PREPARED, RollbackPhase.UNRESOLVED)),
+        )
+        statement = (
+            update(Rollback).where(*match).values(phase=phase).returning(Rollback.operation)
+            if phase is not None
+            else delete(Rollback).where(*match).returning(Rollback.operation)
+        )
+        (await self.session.execute(statement)).scalar_one()
 
 
 class ResourceRepository:
@@ -217,6 +243,14 @@ class ResourceRepository:
                 Resource.model_validate_json(item.resource)
             )
         return result
+
+    async def reservations(self, resources: Sequence[Resource]) -> dict[tuple[str, str], str]:
+        statement = select(Reservation).where(
+            tuple_(Reservation.kind, Reservation.identity).in_(
+                [(r.kind, r.identity) for r in resources]
+            )
+        )
+        return {(r.kind, r.identity): r.operation for r in await self.session.scalars(statement)}
 
     async def reserve_many(self, key: str, resources: Sequence[Resource]) -> None:
         if resources:
@@ -281,9 +315,15 @@ class DependencyRepository:
         rows = await self.session.execute(
             select(Operation.plugin).where(
                 Operation.plugin.in_(providers),
-                Operation.action == "uninstall",
-                Operation.phase.in_(("prepared", "applied", "unresolved")),
+                Operation.action == LifecycleAction.UNINSTALL,
+                Operation.phase.in_(UNFINISHED),
             )
+        )
+        return set(rows.scalars())
+
+    async def pending_dependents(self, plugin: str) -> set[str]:
+        rows = await self.session.execute(
+            select(PlannedRequirement.consumer).where(PlannedRequirement.provider == plugin)
         )
         return set(rows.scalars())
 

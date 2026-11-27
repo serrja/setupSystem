@@ -1,8 +1,8 @@
-# Firefox ESR settings reference
+# ⚙️ Firefox ESR settings reference
 
 Generated from the plugin's Pydantic settings and action inputs.
 
-## Settings
+## ⚙️ Settings
 
 | Field | Description | Default | Constraints |
 | --- | --- | --- | --- |
@@ -10,26 +10,26 @@ Generated from the plugin's Pydantic settings and action inputs.
 | `https_only` | Require secure connections when Firefox can upgrade a request to HTTPS. | `true` | `—` |
 | `install_ublock` | Allow the Firefox enterprise policy to install uBlock Origin. | `false` | `—` |
 
-## Install
+## 🧩 Install
 
 This operation has no editable parameters.
 
-## Update
+## 🧩 Update
 
 This operation has no editable parameters.
 
-## Uninstall
+## 🧩 Uninstall
 
 This operation has no editable parameters.
 
-## Check Firefox
+## 🧩 Check Firefox
 
 This operation has no editable parameters.
 
-## Configure privacy policy
+## 🧩 Configure privacy policy
 
 This operation has no editable parameters.
 
-## Remove generated policy
+## 🧩 Remove generated policy
 
 This operation has no editable parameters.

@@ -8,6 +8,14 @@ from setup_system_sdk.operations import Receipt, Result
 from setup_system_sdk.schemas.common import Inputs
 
 
+class OperationPhase(StrEnum):
+    PLANNED = "planned"
+    PREPARED = "prepared"
+    APPLIED = "applied"
+    VERIFIED = "verified"
+    UNRESOLVED = "unresolved"
+
+
 class StepPhase(StrEnum):
     PREPARED = "prepared"
     RUNNING = "running"
@@ -16,7 +24,27 @@ class StepPhase(StrEnum):
     UNRESOLVED = "unresolved"
 
 
+class ChangePhase(StrEnum):
+    PREPARED = "prepared"
+    APPLIED = "applied"
+    VERIFIED = "verified"
+
+
+class RollbackPhase(StrEnum):
+    PREPARED = "prepared"
+    VERIFIED = "verified"
+    UNRESOLVED = "unresolved"
+
+
+UNFINISHED = frozenset(OperationPhase) - {OperationPhase.VERIFIED}
 SUCCESS = frozenset({Outcome.CHANGED, Outcome.NO_CHANGES, Outcome.COMPLETE, Outcome.NEEDS_REBOOT})
+
+STEP_PREDECESSORS = {
+    StepPhase.RUNNING: (StepPhase.PREPARED,),
+    StepPhase.APPLIED: (StepPhase.RUNNING,),
+    StepPhase.VERIFIED: (StepPhase.RUNNING, StepPhase.APPLIED, StepPhase.UNRESOLVED),
+    StepPhase.UNRESOLVED: (StepPhase.RUNNING, StepPhase.APPLIED, StepPhase.UNRESOLVED),
+}
 
 
 def interrupted(*, changed: bool, uncertain: bool) -> Outcome:
@@ -38,21 +66,20 @@ class StepEvidence(Inputs):
         except ValidationError:
             return cls(applied=Receipt.model_validate_json(raw))
 
-    def effect(self, phase: str) -> bool | None:
-        if phase == StepPhase.PREPARED:
+    def effect(self, phase: StepPhase) -> bool | None:
+        if phase is StepPhase.PREPARED:
             return False
         observed = self.readback
-        if phase != StepPhase.VERIFIED or observed is None:
+        if phase is not StepPhase.VERIFIED or observed is None or self.applied is None:
             return None
-        if observed.outcome is Outcome.NO_CHANGES:
-            return False if all(r.before == r.after for r in observed.resources) else None
-        if self.applied and self.applied.result.outcome is Outcome.NO_CHANGES:
-            if all(r.before == r.after for r in observed.resources):
-                return False
-        if observed.outcome is Outcome.CHANGED or (
-            self.applied and self.applied.result.outcome is Outcome.CHANGED
-        ):
+        if self.applied.result.outcome is Outcome.CHANGED:
             return True
-        if any(r.before != r.after for r in observed.resources):
+        if self.applied.result.outcome is Outcome.NO_CHANGES and all(
+            r.before == r.after for r in observed.resources
+        ):
+            return False
+        if observed.outcome is Outcome.CHANGED or any(
+            r.before != r.after for r in observed.resources
+        ):
             return True
         return None

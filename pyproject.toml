@@ -50,10 +50,12 @@ dev = [
 ]
 
 [tool.uv.workspace]
-members = ["sdk", "plugins/*"]
+members = ["sdk", "plugins/*", "plugins/greeter/theme", "plugins/python/toolchain"]
 
 [tool.uv.sources]
 setup-system-sdk = { workspace = true }
+setup-system-desktop-theme = { workspace = true }
+setup-system-toolchain = { workspace = true }
 
 [tool.hatch.build]
 exclude = [".aws", ".aws/**", ".serena", ".serena/**", ".agents", ".agents/**", ".codex", ".codex/**", ".local", ".local/**", "backups", "backups/**", ".env", ".env.*", "/core.[0-9]*", "/.coverage", "/.coverage.*", ".vscode", ".vscode/**"]
@@ -69,8 +71,6 @@ packages = ["src/setup_system"]
 "migrations" = "setup_system/_migrations"
 
 [tool.uv]
-# pytest-subprocess intercepts the asyncio subprocess API used by AnyIO 4.9.
-constraint-dependencies = ["anyio==4.9.0"]
 # Pin the isolated build backend and its full dependency closure to uv.lock versions.
 build-constraint-dependencies = [
     "hatchling==1.33.0",
@@ -99,10 +99,17 @@ python_version = "3.12"
 strict = true
 mypy_path = ["src", "sdk/src"]
 explicit_package_bases = true
-files = ["src", "sdk/src", "migrations", "tests"]
+files = ["src", "sdk/src", "migrations", "conftest.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config --import-mode=importlib"
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+markers = [
+    "unit: isolated component",
+    "contract: public interface or serialized contract",
+    "integration: interaction between components",
+    "e2e: end-to-end workflow",
+]

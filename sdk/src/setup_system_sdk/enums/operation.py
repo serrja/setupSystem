@@ -1,6 +1,21 @@
 from enum import StrEnum
 
 
+class CancellationPolicy(StrEnum):
+    TERMINATE = "terminate"
+    SAFE_BOUNDARY = "safe_boundary"
+
+
+class WorkerMode(StrEnum):
+    QUERY = "query"
+    EXECUTE = "execute"
+
+
+class ProviderMethod(StrEnum):
+    INSPECT = "inspect"
+    PLAN = "plan"
+
+
 class WorkerMethod(StrEnum):
     EXECUTE = "execute"
     RESTORE_PLAN = "restore_plan"

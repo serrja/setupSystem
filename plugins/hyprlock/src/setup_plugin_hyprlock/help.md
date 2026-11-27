@@ -1,4 +1,6 @@
-# Hyprlock
+# 🧩 Hyprlock
+
+Hyprlock desktop configuration.
 
 ## ⚙️ Configure Hyprlock
 

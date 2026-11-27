@@ -89,7 +89,12 @@
       "description": ""
     },
     {
-      "requires": [],
+      "requires": [
+        {
+          "id": "system.platform",
+          "version": ">=1,<2"
+        }
+      ],
       "cleanup_phase": null,
       "id": "activate-login",
       "label": "Activate graphical login",
@@ -103,6 +108,7 @@
       "description": ""
     }
   ],
+  "session_fields": [],
   "environment_fields": {},
   "settings_schema": {
     "additionalProperties": false,
