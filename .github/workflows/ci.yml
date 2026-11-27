@@ -97,9 +97,9 @@ jobs:
     permissions:
       contents: write
       actions: read
-    uses: pokerlost/.github/.github/workflows/python-allocate.yml@e5cac33af228224af9deaef308e39c1b9f788033
+    uses: pokerlost/.github/.github/workflows/python-allocate.yml@3b732e1e77db9cc78a0bd97eb24c1bff9db35169
     with:
-      provider-ref: e5cac33af228224af9deaef308e39c1b9f788033
+      provider-ref: 3b732e1e77db9cc78a0bd97eb24c1bff9db35169
       schema-version: h02-python/v1
       source-workflow: .github/workflows/ci.yml
       preflight-gate: required
@@ -134,7 +134,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: pokerlost/.github
-          ref: e5cac33af228224af9deaef308e39c1b9f788033
+          ref: 3b732e1e77db9cc78a0bd97eb24c1bff9db35169
           persist-credentials: false
           path: provider
       - name: Keep the native environment and dependency cache outside source
@@ -163,7 +163,7 @@ jobs:
           cp -- pyproject.toml "$RUNNER_TEMP/source-pyproject.toml"
           "$UV_PROJECT_ENVIRONMENT/bin/python" docker/python_release.py build \
             --allocation "$RUNNER_TEMP/allocation.json" --allocation-sha256 "$ALLOCATION_SHA256" \
-            --provider-ref e5cac33af228224af9deaef308e39c1b9f788033 \
+            --provider-ref 3b732e1e77db9cc78a0bd97eb24c1bff9db35169 \
             --destination "$RUNNER_TEMP/h02-source" --output "$RUNNER_TEMP/h02-dist" \
             --evidence "$RUNNER_TEMP/build-tool.json" --source-pyproject "$RUNNER_TEMP/source-pyproject.toml"
       - name: Independently inspect native archive metadata
@@ -228,9 +228,9 @@ jobs:
       contents: write
       actions: read
       attestations: read
-    uses: pokerlost/.github/.github/workflows/python-publish.yml@e5cac33af228224af9deaef308e39c1b9f788033
+    uses: pokerlost/.github/.github/workflows/python-publish.yml@3b732e1e77db9cc78a0bd97eb24c1bff9db35169
     with:
-      provider-ref: e5cac33af228224af9deaef308e39c1b9f788033
+      provider-ref: 3b732e1e77db9cc78a0bd97eb24c1bff9db35169
       schema-version: h02-python/v1
       source-workflow: .github/workflows/ci.yml
       preflight-gate: required
