@@ -2,6 +2,22 @@
 
 setupSystem is a Textual application for reviewing and applying workstation changes as a normal user. Install or activate the plugins you need. Each plugin owns its settings, actions and offline Help.
 
+## 📦 Install the Debian integration
+
+On Debian 13 (trixie), amd64 or arm64, download [install.sh](https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh) and install the latest verified stable release as a normal user:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/serrja/setupSystem/main/plugins/debian/packaging/install.sh -o install.sh && sh install.sh
+```
+
+Start the application separately:
+
+```sh
+setup-system
+```
+
+For prerequisites, root-password authentication, updates and the bootstrap trust model, see the [Debian installation guide](plugins/debian/docs/install.md).
+
 ## 🚀 Quick start
 
 From the checkout with uv and Python 3.12 or later, start the host.
