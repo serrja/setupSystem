@@ -1,7 +1,7 @@
 """Execute one bounded, versioned command in the activated extension interpreter."""
 
+import argparse
 import os
-import sys
 from dataclasses import replace
 from importlib import metadata
 from uuid import uuid4
@@ -456,16 +456,22 @@ async def serve(mode: WorkerMode, output: int, native_fd: int | None = None) -> 
 
 
 def main() -> int:
-    if len(sys.argv) not in {2, 3} or sys.argv[1] not in set(WorkerMode) or os.geteuid() == 0:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=tuple(WorkerMode))
+    parser.add_argument("native_fd", nargs="?")
+    arguments = parser.parse_args()
+    if os.geteuid() == 0:
         return 2
     native_fd = (
-        int(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == WorkerMode.EXECUTE else None
+        int(arguments.native_fd)
+        if arguments.native_fd is not None and arguments.mode == WorkerMode.EXECUTE
+        else None
     )
     output = os.dup(1)
     os.dup2(2, 1)
     os.set_blocking(output, False)
     try:
-        anyio.run(serve, WorkerMode(sys.argv[1]), output, native_fd, backend="asyncio")
+        anyio.run(serve, WorkerMode(arguments.mode), output, native_fd, backend="asyncio")
     finally:
         os.close(output)
     return 0

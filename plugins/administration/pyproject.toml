@@ -8,7 +8,10 @@ version = "2.0.0"
 requires-python = ">=3.12"
 description = "Grant sudo access to an existing local login"
 license = "MIT"
-dependencies = ["setup-system-sdk>=3,<4"]
+dependencies = [
+    "setup-system-sdk>=3,<4",
+    "typer>=0.15.2,<1",
+]
 
 [project.entry-points."setup_system.plugins"]
 administration = "setup_plugin_administration.plugin:Plugin"

@@ -8,8 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import typer
+from pydantic import ValidationError
+from setup_system_sdk.enums.errors import ErrorCode
+
 from setup_plugin_administration.adapters.native import (
     INSTALLED,
+    NATIVE_ANSIBLE,
+    NATIVE_PYTHON,
     current_boot_identity,
     current_target,
     require_installed_resource,
@@ -23,6 +29,7 @@ from .account import (
 from .models import ADMIN_REQUEST_BYTES, AdminAccount, AdminIntent, GrantConfirmation
 
 RELATIVE = "plugins/administration/setup_plugin_administration"
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 
 
 def fingerprint(account: AdminAccount, boot: str | None = None) -> str:
@@ -64,10 +71,10 @@ def append(username: str, before: str, after: str) -> None:
             "--property=InaccessiblePaths=/usr/sbin/useradd -/usr/sbin/adduser -/usr/sbin/luseradd",
             "--property=WorkingDirectory=/",
             "--property=Environment=ANSIBLE_CONFIG=/usr/lib/setup-system/ansible.cfg",
-            "/usr/bin/python3",
+            str(NATIVE_PYTHON),
             "-I",
             "-B",
-            "/usr/bin/ansible-playbook",
+            str(NATIVE_ANSIBLE),
             "-i",
             "localhost,",
             "-c",
@@ -91,28 +98,51 @@ def append(username: str, before: str, after: str) -> None:
     verify_effective_access(observed)
 
 
+@cli.command("check-existing")
+def check_existing(username: str, expected_fingerprint: str) -> None:
+    """Confirm the reviewed account still exists before granting access."""
+    require_installed_resource(Path(__file__), f"{RELATIVE}/grant.py")
+    account = observe(username)
+    if account.member or fingerprint(account) != expected_fingerprint:
+        raise typer.Exit(1)
+
+
+def _confirmation() -> GrantConfirmation:
+    data = sys.stdin.buffer.read(ADMIN_REQUEST_BYTES + 1)
+    if len(data) > ADMIN_REQUEST_BYTES:
+        raise ValueError("Administrative confirmation exceeds the supported size.")
+    return GrantConfirmation.model_validate_json(data)
+
+
+@cli.command("grant-sudo")
+def grant_sudo() -> None:
+    """Apply one authenticated, reviewed sudo membership change."""
+    confirmed = _confirmation()
+    append(confirmed.username, confirmed.before_digest, confirmed.after_digest)
+
+
+@cli.command("verify-sudo")
+def verify_sudo() -> None:
+    """Check that the confirmed account still has effective sudo access."""
+    confirmed = _confirmation()
+    account = observe(confirmed.username)
+    if (
+        not account.member
+        or fingerprint(account) != confirmed.before_digest
+        or confirmed.after_digest != confirmed.before_digest
+    ):
+        raise ValueError("Sudo membership or identity changed since confirmation.")
+    verify_policy()
+    verify_effective_access(account)
+
+
 def main() -> None:
-    if len(sys.argv) == 4 and sys.argv[1] == "check-existing":
-        require_installed_resource(Path(__file__), f"{RELATIVE}/grant.py")
-        account = observe(sys.argv[2])
-        if account.member or fingerprint(account) != sys.argv[3]:
-            sys.exit(1)
-    elif len(sys.argv) == 2 and sys.argv[1] in ("grant-sudo", "verify-sudo"):
-        data = sys.stdin.buffer.read(ADMIN_REQUEST_BYTES + 1)
-        if len(data) > ADMIN_REQUEST_BYTES:
-            raise ValueError("Administrative confirmation exceeds the supported size.")
-        confirmed = GrantConfirmation.model_validate_json(data)
-        if sys.argv[1] == "grant-sudo":
-            append(confirmed.username, confirmed.before_digest, confirmed.after_digest)
-        else:
-            account = observe(confirmed.username)
-            if (
-                not account.member
-                or fingerprint(account) != confirmed.before_digest
-                or confirmed.after_digest != confirmed.before_digest
-            ):
-                raise ValueError("Sudo membership or identity changed since confirmation.")
-            verify_policy()
-            verify_effective_access(account)
-    else:
-        sys.exit(2)
+    try:
+        cli()
+    except (OSError, ValueError, ValidationError, subprocess.SubprocessError):
+        typer.echo(
+            f"Error [{ErrorCode.NATIVE_EXECUTOR_UNAVAILABLE.value}]: "
+            "The reviewed administrative operation could not complete.",
+            err=True,
+        )
+        raise SystemExit(1) from None

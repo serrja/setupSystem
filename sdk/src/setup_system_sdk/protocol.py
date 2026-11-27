@@ -85,7 +85,8 @@ class Exchange:
             self.calls.add(message.call_id)
 
     def encode(self, message: Message) -> bytes:
-        line = message.model_dump_json().encode() + b"\n"
+        # Optional error presentation fields stay absent for older 3.x workers.
+        line = message.model_dump_json(exclude_none=True).encode() + b"\n"
         self._account(message, len(line))
         return line
 

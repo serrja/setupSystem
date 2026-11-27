@@ -1,17 +1,17 @@
 """Verify the installed host and its workspace dependencies outside the checkout."""
 
-import argparse
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dist", type=Path)
-    dist = parser.parse_args().dist.resolve()
+def main(dist: Annotated[Path, typer.Argument()]) -> None:
+    dist = dist.resolve()
     checker = Path(__file__).with_name("verify-installed.py").resolve()
     (theme,) = dist.glob("setup_system_desktop_theme-*.whl")
     (sdk,) = dist.glob("setup_system_sdk-*.whl")
@@ -77,4 +77,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

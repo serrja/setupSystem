@@ -1,4 +1,4 @@
-# Administrative access
+# 🔐 Administrative access
 
 The configurator opens as an ordinary user. Read-only inspection and saved preferences are available before authentication. Open **Administration**, choose **Grant sudo access** and select an existing interactive login.
 

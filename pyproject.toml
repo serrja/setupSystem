@@ -32,7 +32,7 @@ dependencies = [
 ]
 
 [project.scripts]
-setup-system = "setup_system.entrypoint:main"
+setup-system = "setup_system.__main__:main"
 
 [dependency-groups]
 dev = [

@@ -6,6 +6,13 @@ from typing import Annotated
 
 import anyio
 import typer
+from platformdirs import user_state_path
+from setup_system_sdk.enums.errors import ErrorCode
+from setup_system_sdk.schemas.errors import Error
+
+from setup_system.errors import OperationError, normalize_failure
+from setup_system.journal import Journal
+from setup_system.ui.error_presenter import show_cli
 
 cli = typer.Typer(
     add_completion=False,
@@ -23,6 +30,14 @@ async def _open() -> None:
     from setup_system.app import SetupApp
     from setup_system.bootstrap import runtime
 
+    if not os.isatty(0) or not os.isatty(1):
+        raise OperationError(
+            Error(
+                code=ErrorCode.CONFIGURATION_INVALID,
+                message="An interactive terminal is required.",
+                hint="Start setup-system in a terminal, or use --help for commands.",
+            )
+        )
     async with runtime() as services:
         app = SetupApp(services)
         await app.run_async()
@@ -65,12 +80,19 @@ async def _migrate() -> None:
 def migrate_command() -> None:
     """Upgrade the selected database under its exclusive schema lease."""
     _user()
-    try:
-        anyio.run(_migrate, backend="asyncio")
-    except (OSError, ValueError) as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(1) from None
+    anyio.run(_migrate, backend="asyncio")
 
 
 def main() -> None:
-    cli()
+    try:
+        cli()
+    except Exception as failure:
+        detail = normalize_failure(failure, stage="startup")
+        try:
+            Journal(user_state_path("setup-system") / "diagnostics").record_failure(
+                detail, failure, stage="startup"
+            )
+        except Exception:
+            pass
+        show_cli(detail)
+        raise SystemExit(1) from None

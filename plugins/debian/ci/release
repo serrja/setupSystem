@@ -24,13 +24,14 @@ gh attestation verify "$stage/host/"*.whl --repo "$GITHUB_REPOSITORY" \
     --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
 unset GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
 uv build --all-packages --wheel --out-dir "$stage/wheels"
-PYTHONPATH="$root/docker" uv run --locked --package setup-system python "$plugin/tooling/catalog.py" \
-    --wheels "$stage/wheels" --output "$stage/catalog"
+uv run --locked --package setup-system python -m plugins.debian.tooling.catalog \
+    --wheels "$stage/wheels" --host-wheel "$stage/host/"*.whl --output "$stage/catalog"
 releases=()
 for manifest in "$stage/catalog/"*.json; do releases+=(--release "$manifest"); done
 uv run --locked --package setup-system python "$plugin/packaging/build.py" \
     --source "$GITHUB_SHA" --version "$version" --output "$output" --host-wheel "$stage/host/"*.whl \
-    --sdk-wheel "$stage/wheels/"setup_system_sdk-*.whl "${releases[@]}"
+    --sdk-wheel "$stage/wheels/"setup_system_sdk-*.whl --runtime-assets "$stage/catalog/runtime" \
+    "${releases[@]}"
 python3 "$plugin/tooling/verify_native.py" "$output/$name"
 (cd "$output" && sha256sum "$name" > "$name.sha256")
 cp "$output/$name.sha256" "$4"

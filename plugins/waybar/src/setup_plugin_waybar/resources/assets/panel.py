@@ -298,9 +298,12 @@ def run(profile: Path) -> int:
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) != 2:
-            raise ValueError("Usage: panel.py PROFILE_DIRECTORY")
-        raise SystemExit(run(Path(sys.argv[1])))
+        import argparse
+
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("profile_directory", type=Path)
+        arguments = parser.parse_args()
+        raise SystemExit(run(arguments.profile_directory))
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Panel stopped: {type(error).__name__}: {error}", file=sys.stderr)
         raise SystemExit(4) from None

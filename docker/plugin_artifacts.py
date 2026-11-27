@@ -1,6 +1,5 @@
 """Create a release descriptor for a primary wheel and its compatible locked wheels."""
 
-import argparse
 import hashlib
 import json
 import os
@@ -10,11 +9,13 @@ import zipfile
 from collections import deque
 from email.parser import BytesParser
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import unquote, urlsplit
 
 import anyio
 import httpx
-from packaging.markers import Environment
+import typer
+from packaging.markers import Environment, default_environment
 from packaging.requirements import Requirement
 from packaging.tags import Tag, sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -28,7 +29,7 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-async def generate(
+async def locked_closure(
     primary: Path,
     sdk: Path,
     lock: Path,
@@ -36,7 +37,7 @@ async def generate(
     *,
     target_tags: tuple[Tag, ...] | None = None,
     environment: Environment | None = None,
-) -> dict[str, object]:
+) -> list[dict[str, str]]:
     projects = {p["name"]: p for p in tomllib.loads(lock.read_text())["package"]}
     local = {parse_wheel_filename(p.name)[0]: p for p in (primary, sdk)}
     for name, project in projects.items():
@@ -95,11 +96,21 @@ async def generate(
                 headers = BytesParser().parsebytes(dist.read(metadata), headersonly=True)
             for value in headers.get_all("Requires-Dist", []):
                 dep = Requirement(value)
-                if dep.marker and not any(
-                    dep.marker.evaluate({**(environment or {}), "extra": extra})
-                    for extra in extras | {""}
-                ):
-                    continue
+                if dep.marker:
+                    applies = False
+                    for extra in extras | {""}:
+                        marker_environment = {
+                            key: str(value)
+                            for key, value in (
+                                environment if environment is not None else default_environment()
+                            ).items()
+                        }
+                        marker_environment["extra"] = extra
+                        if dep.marker.evaluate(marker_environment):
+                            applies = True
+                            break
+                    if not applies:
+                        continue
                 dependency = canonicalize_name(dep.name)
                 if (
                     dep.url
@@ -108,6 +119,21 @@ async def generate(
                 ):
                     raise ValueError(f"Incompatible or unpinned dependency {dep.name}")
                 pending.append((dependency, frozenset(dep.extras)))
+    return [{"name": path.name, "sha256": expected} for path, expected in reviewed.values()]
+
+
+async def generate(
+    primary: Path,
+    sdk: Path,
+    lock: Path,
+    out: Path,
+    *,
+    target_tags: tuple[Tag, ...] | None = None,
+    environment: Environment | None = None,
+) -> dict[str, object]:
+    wheels = await locked_closure(
+        primary, sdk, lock, out, target_tags=target_tags, environment=environment
+    )
     with zipfile.ZipFile(primary) as wheel:
         (member,) = [
             n for n in wheel.namelist() if len(Path(n).parts) == 2 and n.endswith("/manifest.json")
@@ -115,7 +141,7 @@ async def generate(
         manifest = Manifest.model_validate_json(wheel.read(member))
     return {
         "manifest": manifest.model_dump(mode="json"),
-        "wheels": [{"name": path.name, "sha256": expected} for path, expected in reviewed.values()],
+        "wheels": wheels,
     }
 
 
@@ -144,10 +170,15 @@ def publish(path: Path, content: bytes, expected: str) -> None:
         os.link(staged.name, path)
 
 
+def main(
+    primary: Annotated[Path, typer.Option("--primary")],
+    sdk: Annotated[Path, typer.Option("--sdk")],
+    output: Annotated[Path, typer.Option("--output")],
+    lock: Annotated[Path, typer.Option("--lock")] = Path("uv.lock"),
+) -> None:
+    """Write a reviewed plugin release descriptor and its locked wheel closure."""
+    anyio.run(emit, primary, sdk, lock, output, backend="asyncio")
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    for option in ("primary", "sdk", "output"):
-        parser.add_argument("--" + option, type=Path, required=True)
-    parser.add_argument("--lock", type=Path, default=Path("uv.lock"))
-    args = parser.parse_args()
-    anyio.run(emit, args.primary, args.sdk, args.lock, args.output, backend="asyncio")
+    typer.run(main)
