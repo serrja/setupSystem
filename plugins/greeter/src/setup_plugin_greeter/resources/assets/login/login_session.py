@@ -138,10 +138,15 @@ def session(
 
 def main() -> int:
     try:
-        if sys.argv[1:] != [str(REGISTRY)]:
+        import argparse
+
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("registry", type=Path)
+        arguments = parser.parse_args()
+        if arguments.registry != REGISTRY:
             raise ValueError("Expected the installed system login registry")
-        arguments, environment = session(Path(sys.argv[1]))
-        os.execve(arguments[0], arguments, environment)
+        command, environment = session(arguments.registry)
+        os.execve(command[0], command, environment)
     except (KeyError, OSError, ValueError):
         print(
             "The authenticated desktop session is unavailable; "

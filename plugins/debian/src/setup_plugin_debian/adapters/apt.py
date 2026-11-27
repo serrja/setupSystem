@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
+import typer
 from pydantic import Field, model_validator
 from setup_system_sdk.downloads import GITHUB_RELEASE_HOSTS, DownloadPolicy, read_https
 from setup_system_sdk.enums.lifecycle import LifecycleAction, PackageAction, ServiceAction
@@ -23,7 +24,12 @@ from setup_system_sdk.releases import GithubRelease
 from setup_system_sdk.schemas.common import Identifier, Inputs
 from setup_system_sdk.schemas.operation import Plan, Resource, Result
 
-from setup_plugin_debian.adapters.layout import INSTALLED, require_installed_resource, resource_root
+from setup_plugin_debian.adapters.layout import (
+    INSTALLED,
+    NATIVE_PYTHON,
+    require_installed_resource,
+    resource_root,
+)
 from setup_plugin_debian.adapters.native import run_native_play
 from setup_plugin_debian.adapters.platform import current_target
 from setup_plugin_debian.adapters.service_policy import defer_services
@@ -577,7 +583,7 @@ def privileged(approval: Approval) -> None:
         receipt = stage / "approval.json"
         receipt.write_text(approval.model_dump_json())
         receipt.chmod(0o600)
-        hook = f"/usr/bin/python3 -I -B -m setup_plugin_debian.adapters.apt check {stage}"
+        hook = f"{NATIVE_PYTHON} -I -B -m setup_plugin_debian.adapters.apt check {stage}"
         if removing:
             subprocess.run(
                 [
@@ -585,7 +591,7 @@ def privileged(approval: Approval) -> None:
                     "-o",
                     "DPkg::Pre-Install-Pkgs::=" + hook,
                     "-o",
-                    "DPkg::Tools::Options::/usr/bin/python3::Version=3",
+                    f"DPkg::Tools::Options::{NATIVE_PYTHON}::Version=3",
                     "--assume-yes",
                     "remove",
                     "--",
@@ -609,7 +615,7 @@ def privileged(approval: Approval) -> None:
             "-o",
             "DPkg::Pre-Install-Pkgs::=" + hook,
             "-o",
-            "DPkg::Tools::Options::/usr/bin/python3::Version=3",
+            f"DPkg::Tools::Options::{NATIVE_PYTHON}::Version=3",
             "--assume-yes",
             "--no-remove",
             "--no-install-recommends",
@@ -657,7 +663,7 @@ def check(stage: Path) -> None:
         guard = package_file.parent.parent / "adapters" / packages.removal_guard
         require_installed_resource(guard, guard.relative_to(INSTALLED).as_posix())
         run_command(
-            ["/usr/bin/python3", "-I", "-B", str(guard)],
+            [str(NATIVE_PYTHON), "-I", "-B", str(guard)],
             timeout=30,
             stdin=subprocess.DEVNULL,
             env=apt_environment(INSTALLED),
@@ -766,13 +772,30 @@ def service_plan(action: str, packages: Packages) -> Plan:
     )
 
 
+cli = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
+
+
+@cli.command("apply")
+def apply_command() -> None:
+    """Apply a bounded, approved package transaction from standard input."""
+    raw = sys.stdin.buffer.read(262145)
+    if len(raw) > 262144:
+        raise ValueError("Package approval exceeds request size limit")
+    privileged(Authorization.model_validate_json(raw).approval)
+
+
+@cli.command("check")
+def check_command(path: Path) -> None:
+    """Check the reviewed package state for a transaction hook."""
+    check(path)
+
+
 if __name__ == "__main__":
-    if sys.argv[1:] == ["apply"]:
-        raw = sys.stdin.buffer.read(262145)
-        if len(raw) > 262144:
-            raise ValueError("Package approval exceeds request size limit")
-        privileged(Authorization.model_validate_json(raw).approval)
-    elif len(sys.argv) == 3 and sys.argv[1] == "check":
-        check(Path(sys.argv[2]))
-    else:
-        sys.exit(2)
+    try:
+        cli()
+    except Exception:
+        typer.echo(
+            "Error [native_executor_unavailable]: Package operation did not complete.",
+            err=True,
+        )
+        raise SystemExit(1) from None

@@ -4,6 +4,6 @@ Section: admin
 Priority: optional
 Maintainer: setupSystem maintainers <noreply@github.com>
 Homepage: https://github.com/serrja/setupSystem
-Depends: python3 (>= 3.13), python3-textual (>= 2.1), python3-mdit-py-plugins, python3-pydantic (>= 2.10), python3-pydantic-settings (>= 2.8.1), python3-aiofiles, python3-aiosqlite, python3-sqlalchemy (>= 2.0.40), python3-greenlet, python3-alembic (>= 1.13.2), python3-keyring, python3-typer (>= 0.15.2), python3-httpx (>= 0.27), python3-anyio, python3-tenacity, python3-cryptography (>= 43), python3-tomlkit (>= 0.13), python3-pexpect, python3-platformdirs, python3-packaging, python3-jinja2, python3-yaml, ansible-core (>= 2.18), git, ca-certificates, make, util-linux, sudo
+Depends: python3 (>= 3.13), python3 (<< 3.14), ca-certificates, util-linux, sudo
 Description: Textual configurator for Debian workstations
  Prepare a supported Debian system and configure the current user's workspace.

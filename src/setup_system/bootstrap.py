@@ -1,7 +1,7 @@
 """Own host services and their asynchronous lifetime."""
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +18,7 @@ from setup_system.application.providers import ProviderBroker
 from setup_system.application.recovery import RecoveryService
 from setup_system.configuration.profiles import SettingsStore
 from setup_system.configuration.settings import Settings
+from setup_system.errors import OperationError, normalize_failure
 from setup_system.infrastructure.database.engine import create_engine, session_factory
 from setup_system.infrastructure.database.migrations import runtime_schema
 from setup_system.infrastructure.database.uow import UnitOfWork
@@ -33,6 +34,7 @@ class Runtime:
     plugins: PluginService
     operations: OperationService
     recovery: RecoveryService
+    journal: Journal
 
 
 @asynccontextmanager
@@ -61,11 +63,18 @@ async def runtime(settings: Settings | None = None) -> AsyncIterator[Runtime]:
     # A provider worker may run while its consumer holds a worker permit.
     broker = ProviderBroker(registry, client())
     try:
-        async with (
-            runtime_schema(engine),
-            httpx.AsyncClient(trust_env=False) as http,
-            anyio.create_task_group() as tasks,
-        ):
+        async with AsyncExitStack() as stack:
+            try:
+                await stack.enter_async_context(runtime_schema(engine))
+            except Exception as failure:
+                detail = normalize_failure(failure, stage="database")
+                try:
+                    await journal.emit_failure(detail, failure, stage="database")
+                except Exception:
+                    pass
+                raise OperationError(detail) from None
+            http = await stack.enter_async_context(httpx.AsyncClient(trust_env=False))
+            tasks = await stack.enter_async_context(anyio.create_task_group())
             plugins = PluginService(
                 registry,
                 broker,
@@ -76,6 +85,7 @@ async def runtime(settings: Settings | None = None) -> AsyncIterator[Runtime]:
                 DownloadClient(http),
                 TrustPolicy(hosts=GITHUB_RELEASE_HOSTS),
                 options.catalogs,
+                journal,
             )
             for item in await plugins.catalog():
                 if item.manifest and not item.disabled and not item.reason:
@@ -99,7 +109,7 @@ async def runtime(settings: Settings | None = None) -> AsyncIterator[Runtime]:
                 tasks,
             )
             try:
-                yield Runtime(plugins, operations, RecoveryService(uow, operations))
+                yield Runtime(plugins, operations, RecoveryService(uow, operations), journal)
             finally:
                 for token in operations.pending.values():
                     token.set()

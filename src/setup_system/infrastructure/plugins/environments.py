@@ -29,14 +29,17 @@ from pydantic import Field
 from setup_system_sdk import PLUGIN_GROUP, UI_GROUP
 from setup_system_sdk.blocking import run_sync
 from setup_system_sdk.downloads import DownloadClient
+from setup_system_sdk.enums.errors import ErrorCode
 from setup_system_sdk.files import retirement_checkpoint as checkpoint
 from setup_system_sdk.files.generations import bounded_file as _local_file
 from setup_system_sdk.files.generations import private_storage as _private
 from setup_system_sdk.operations import Executor
 from setup_system_sdk.processes import ProcessSpec, current_processes
 from setup_system_sdk.schemas.common import Identifier, Inputs
+from setup_system_sdk.schemas.errors import Error
 from setup_system_sdk.schemas.manifest import Manifest
 
+from setup_system.errors import OperationError, normalize_failure
 from setup_system.infrastructure.plugins import uv_runtime
 from setup_system.infrastructure.plugins.discovery import (
     EXPANDED_BYTES,
@@ -227,11 +230,37 @@ async def _run(argv: list[str], cwd: Path, step: EnvironmentStep) -> None:
                 "UV_NO_PROGRESS": "1",
             },
             discard_stdout=True,
-            discard_stderr=True,
+            stderr_limit=4096,
         )
     )
     if result.returncode:
-        raise ValueError(f"Plugin activation failed while {step.value} (exit {result.returncode})")
+        missing = re.search(
+            rb"ModuleNotFoundError: No module named ['\"]([a-zA-Z_][a-zA-Z0-9_.]{0,127})['\"]",
+            result.stderr,
+        )
+        module = (
+            missing.group(1).decode("ascii")
+            if missing and step is EnvironmentStep.BACKEND
+            else None
+        )
+        raise OperationError(
+            Error(
+                code=ErrorCode.DEPENDENCY_MISSING if module else ErrorCode.ACTIVATION_FAILED,
+                message=(
+                    f"The plugin backend requires the missing module {module}."
+                    if module
+                    else f"Plugin activation failed while {step.value}."
+                ),
+                hint="Activate a release with a complete reviewed dependency closure."
+                if module
+                else "Review the selected release and retry after correcting this stage.",
+                context={
+                    "stage": step.name.lower(),
+                    "exit_code": str(result.returncode),
+                    **({"module": module} if module else {}),
+                },
+            )
+        )
 
 
 def verify_dependencies(
@@ -452,9 +481,14 @@ async def install_release(
                     await report(f"Loading reviewed wheels: {completed}/{wheel_count}")
 
             await report(f"Loading reviewed wheels: 0/{wheel_count}")
-            async with anyio.create_task_group() as group:
-                for index, wheel in enumerate(selected.wheels):
-                    group.start_soon(fetch, index, wheel)
+            try:
+                async with anyio.create_task_group() as group:
+                    for index, wheel in enumerate(selected.wheels):
+                        group.start_soon(fetch, index, wheel)
+            except Exception as failure:
+                raise OperationError(
+                    normalize_failure(failure, stage="download", component="wheel")
+                ) from failure
             contents = [(wheel, fetched.pop(wheel.name)) for wheel in selected.wheels]
             await report("Verifying wheel contents and dependency closure.")
             validation = asyncio.create_task(run_sync(_verify_layout, contents, stage, selected))
@@ -463,10 +497,19 @@ async def install_release(
             except asyncio.CancelledError:
                 await validation
                 raise
+            except Exception as failure:
+                raise OperationError(
+                    normalize_failure(failure, stage="integrity", component="wheel")
+                ) from failure
             venv = generation / "venv"
             python = venv / "bin/python"
-            await report("Preparing the isolated plugin installer.")
-            uv = await uv_runtime.executable(stage)
+            await report("Checking the verified uv runtime for this plugin environment.")
+            try:
+                uv = await uv_runtime.executable(stage)
+            except Exception as failure:
+                raise OperationError(
+                    normalize_failure(failure, stage="uv", component="uv")
+                ) from failure
             args = [
                 uv,
                 "--offline",
@@ -527,9 +570,8 @@ async def install_release(
                     "-I",
                     "-B",
                     "-c",
-                    "import sys; from setup_system_sdk.worker import load_backend; "
-                    "load_backend(sys.argv[1])",
-                    selected.manifest.id,
+                    "from setup_system_sdk.worker import load_backend; "
+                    f"load_backend({selected.manifest.id!r})",
                 ],
                 stage,
                 EnvironmentStep.BACKEND,
@@ -550,9 +592,18 @@ async def install_release(
         except asyncio.CancelledError:
             # Once pointer publication starts, report its verified outcome.
             await publication
+        except Exception:
+            # A failed fsync may follow a completed replace. Read back before cleanup.
+            try:
+                current = await run_sync(_local_file, root / "active.json", 4096)
+            except (OSError, ValueError):
+                current = None
+            if current != pointer.model_dump_json().encode():
+                raise
         committed = True
         return state
     finally:
         if not committed:
             # The UUID directory was made by this call and has never been published.
-            await run_sync(shutil.rmtree, generation)
+            with anyio.CancelScope(shield=True):
+                await run_sync(shutil.rmtree, generation)

@@ -1709,10 +1709,14 @@ version = "2.0.0"
 source = { editable = "plugins/administration" }
 dependencies = [
     { name = "setup-system-sdk" },
+    { name = "typer" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "setup-system-sdk", editable = "sdk" }]
+requires-dist = [
+    { name = "setup-system-sdk", editable = "sdk" },
+    { name = "typer", specifier = ">=0.15.2,<1" },
+]
 
 [[package]]
 name = "setup-system-plugin-chatgpt"
@@ -1747,12 +1751,14 @@ source = { editable = "plugins/codex" }
 dependencies = [
     { name = "pydantic" },
     { name = "setup-system-sdk" },
+    { name = "tomlkit" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "setup-system-sdk", editable = "sdk" },
+    { name = "tomlkit", specifier = ">=0.13,<1" },
 ]
 
 [[package]]
@@ -1763,6 +1769,7 @@ dependencies = [
     { name = "ansible-core" },
     { name = "pexpect" },
     { name = "setup-system-sdk" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -1779,6 +1786,7 @@ requires-dist = [
     { name = "ansible-core", specifier = ">=2.18,<3" },
     { name = "pexpect", specifier = ">=4.9,<5" },
     { name = "setup-system-sdk", editable = "sdk" },
+    { name = "typer", specifier = ">=0.15.2,<1" },
 ]
 
 [package.metadata.requires-dev]

@@ -1,4 +1,4 @@
-# Linux execution boundaries
+# 🔐 Linux execution boundaries
 
 Run `setup-system` in an interactive terminal as the normal workstation account. The shell owns active plugin operations. Use **Inspect** to read local facts. A plan can query release metadata, simulate packages and render files in a temporary run directory. **Save** writes the current plugin settings. [Configuration](../../../docs/configuration.md)
 

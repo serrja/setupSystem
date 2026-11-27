@@ -7,7 +7,7 @@
     - name: Recheck account identity immediately before the public user module
       ansible.builtin.command:
         argv:
-          - /usr/bin/python3
+          - /var/lib/setup-system/active/native/bin/python
           - -I
           - -B
           - /usr/lib/setup-system/plugins/administration/setup_plugin_administration/adapters/entrypoint.py

@@ -1,4 +1,4 @@
-# Terminal and shell
+# 🖥️ Terminal and shell
 
 Press **Super+Enter** in the managed Hyprland session to open Foot with the desktop palette and fonts. [Desktop theme](../../hyprland/docs/theme.md) · [Fonts](../../hyprland/docs/fonts.md)
 

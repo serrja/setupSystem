@@ -11,5 +11,5 @@
       ansible.builtin.raw: >-
         /usr/bin/printf %s {{ setup_system_payload }} |
         /usr/bin/base64 --decode |
-        /usr/bin/python3 -I -B -m setup_plugin_debian.adapters.cleanup
+        /var/lib/setup-system/active/native/bin/python -I -B -m setup_plugin_debian.adapters.cleanup
       changed_when: true

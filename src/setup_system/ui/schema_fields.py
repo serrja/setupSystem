@@ -18,7 +18,8 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Label, Select, SelectionList, Static, Switch
 
-from setup_system.errors import OperationError
+from setup_system.errors import OperationError, normalize_failure
+from setup_system.ui.error_presenter import error_line
 from setup_system.ui.plugin_dialogs import SecretPrompt
 
 type Choices = Callable[[str, str], Awaitable[list[str]]]
@@ -271,11 +272,8 @@ class ValueEditor(Vertical):
         await asyncio.sleep(0.15)
         try:
             options = await self.choices(provider, query)
-        except OperationError as exc:
-            self.error_label.update(exc.detail.message)
-            return
-        except (ValueError, OSError):
-            self.error_label.update("Finish the related fields and request choices again.")
+        except Exception as failure:
+            self.error_label.update(error_line(normalize_failure(failure, stage="choices")))
             return
         if isinstance(self.control, SelectionList):
             selected = self._selection(self.control)

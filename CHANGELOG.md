@@ -4,6 +4,9 @@ User-visible changes and compatibility notes for setupSystem.
 
 ## 🛠️ Unreleased
 
+- Bundle pinned uv and architecture-specific locked wheel closures in the Debian package; prepare separate host and native runtimes without APT Python libraries.
+- Declare Codex's `tomlkit` dependency, report activation stages and safe diagnostic IDs, and show controls from each plugin's available features.
+- Use typed CLI parsing for project Python entry points while preserving their commands and exit behavior.
 - Bind step readback to applied receipts, retain resource reservations for unfinished work and allow a new rollback after a proven effect-free cancellation.
 - Retain reviewed generation receipts and use confirmed executor identities in recovery. A compatible provider can be updated with installed consumers.
 - Track the active operation in the plugin page and refresh dependent choices with unsaved form settings.

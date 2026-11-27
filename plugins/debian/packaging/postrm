@@ -1,0 +1,10 @@
+#!/bin/sh
+# Remove package-managed Python runtimes only after an explicit package purge.
+set -eu
+if [ "${1:-}" = purge ]; then
+    if [ -d /var/lib/setup-system ] && [ ! -L /var/lib/setup-system ] &&
+        [ "$(stat -c '%u:%g:%a' /var/lib/setup-system)" = 0:0:755 ]; then
+        rm -f -- /var/lib/setup-system/active
+        rm -rf -- /var/lib/setup-system/runtimes
+    fi
+fi

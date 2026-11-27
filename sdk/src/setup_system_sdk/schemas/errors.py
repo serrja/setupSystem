@@ -11,7 +11,9 @@ class Error(Inputs):
 
     code: ErrorCode
     message: str = Field(min_length=1, max_length=512)
+    hint: str | None = Field(default=None, min_length=1, max_length=256)
     field: tuple[str | int, ...] = Field(default=(), max_length=32)
     operation_id: UUID | None = None
+    diagnostic_id: UUID | None = None
     retryable: bool = False
     context: dict[str, str] = Field(default_factory=dict, max_length=8)
